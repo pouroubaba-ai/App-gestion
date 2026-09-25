@@ -400,5 +400,28 @@ export async function rattacherCompte(uid: string, email: string): Promise<numbe
    */
   const miens = await getDocs(query(
     collection(db, 'membres'), where('compteUid', '==', uid)));
-  return miens.docs.filter(d => (d.data() as Membre).actif !== false).length;
+  const actifs = miens.docs
+    .map(d => d.data() as Membre)
+    .filter(m => m.actif !== false);
+
+  /**
+   * Le membre hérite de l'activité où il travaille.
+   *
+   * Presque toutes les règles demandent « de quelle maison es-tu ? », et
+   * la réponse se lit sur le profil. Un membre qui n'en portait pas se
+   * voyait refuser chaque lecture : il était bien inscrit sur un site,
+   * mais le serveur ne pouvait pas le rattacher à une activité, donc ne
+   * lui ouvrait rien. Il arrivait devant un écran vide.
+   *
+   * L'invitation porte l'activité — c'est le gérant qui l'a posée. On la
+   * recopie sur le compte, là où les règles savent la lire.
+   */
+  const activiteId = actifs.find(m => m.activiteId)?.activiteId;
+  if (activiteId) {
+    try {
+      await setDoc(doc(db, 'users', uid), { activiteId }, { merge: true });
+    } catch { /* la connexion suivante réessaiera */ }
+  }
+
+  return actifs.length;
 }

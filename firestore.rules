@@ -204,6 +204,15 @@ service cloud.firestore {
              admin reste impossible, et c'est tout ce qui compte. */
           || (resource.data.get('role', '') == 'admin'
             && request.resource.data.get('role', '') == 'membre'));
+      /* Poser son activité quand on n'en avait pas : un membre l'hérite du
+         site où on l'a inscrit. Sans elle, les règles ne savent pas de
+         quelle maison il est et lui refusent tout. Le rôle ne bouge pas
+         dans ce geste, et une activité déjà posée ne se change plus. */
+      allow update: if connecte() && uid == monUid()
+        && resource != null
+        && resource.data.get('activiteId', '') == ''
+        && request.resource.data.get('activiteId', '') != ''
+        && request.resource.data.get('role', '') == resource.data.get('role', '');
       allow delete: if false;
     }
 
