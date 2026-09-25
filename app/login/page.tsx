@@ -1,7 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
-import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '@/lib/firebase';
 import { rattacherCompte } from '@/lib/roles';
 import { useRouter } from 'next/navigation';
@@ -21,6 +21,38 @@ export default function LoginPage() {
     try {
       if (tab === 'login') {
         const cred = await signInWithEmailAndPassword(auth, email, password);
+
+        /**
+         * Rattraper une inscription restée à mi-chemin.
+         *
+         * Créer un compte se fait en deux écritures : celle de Firebase
+         * Auth, puis le profil. Entre les deux, une panne ou un refus
+         * laisse un compte qui existe sans rien être — et le réessayer
+         * bute sur « cette adresse est déjà prise ». La personne est
+         * coincée : ni dedans, ni dehors.
+         *
+         * La connexion finit donc le travail quand le profil manque. On
+         * cherche l'invitation, et c'est elle qui dit ce que ce compte
+         * est — membre d'un site, ou propriétaire de sa maison.
+         */
+        const ref = doc(db, 'users', cred.user.uid);
+        const dejaLa = await getDoc(ref);
+        if (!dejaLa.exists()) {
+          const invite = await rattacherCompte(cred.user.uid, email);
+          await setDoc(ref, {
+            uid: cred.user.uid,
+            email,
+            nom: email,
+            role: invite > 0 ? 'membre' : 'admin',
+            ...(invite > 0 ? {} : { adminUid: cred.user.uid }),
+            createdAt: serverTimestamp(),
+          });
+        } else if (dejaLa.data()?.role === 'membre') {
+          /* Un membre invité sur un second site après coup : son profil
+             existe déjà, mais l'invitation attend encore son nom. */
+          try { await rattacherCompte(cred.user.uid, email); } catch { /* elle attendra */ }
+        }
+
         /* La racine décide : elle enverra vers l'activité si elle manque,
            vers les sites sinon. */
         router.push('/');
@@ -66,7 +98,26 @@ export default function LoginPage() {
         router.push(invite > 0 ? '/site' : '/activite');
       }
     } catch (err: any) {
-      setError(err.message);
+      /* Les messages de Firebase sont écrits pour un développeur. Ceux
+         qu'on rencontre vraiment méritent d'être dits en clair — surtout
+         « adresse déjà prise », qui arrive à qui a déjà un compte sans le
+         savoir et qu'il faut envoyer vers la connexion, pas laisser
+         devant un mur. */
+      const code = err?.code ?? '';
+      setError(
+        code === 'auth/email-already-in-use'
+          ? 'Cette adresse a déjà un compte. Passez par « Se connecter ».'
+        : code === 'auth/invalid-credential' || code === 'auth/wrong-password'
+          ? 'Adresse ou mot de passe incorrect.'
+        : code === 'auth/user-not-found'
+          ? 'Aucun compte à cette adresse. Créez-en un.'
+        : code === 'auth/weak-password'
+          ? 'Mot de passe trop court : six caractères au minimum.'
+        : code === 'auth/invalid-email'
+          ? 'Cette adresse n’est pas valide.'
+        : code === 'auth/network-request-failed'
+          ? 'Pas de réseau. Réessayez.'
+        : err?.message ?? 'La connexion a échoué.');
     } finally {
       setLoading(false);
     }

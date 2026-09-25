@@ -126,6 +126,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setProfile({ ...p, activiteId: a.id });
         }
       }
+      /**
+       * Le profil apprend qu'il est propriétaire.
+       *
+       * Les règles Firestore le demandent souvent — à chaque écriture, à
+       * chaque lecture d'un site. Sans ce champ, chacune doit aller lire
+       * l'activité : une requête de plus, un aller-retour de plus, et
+       * l'app rame dès qu'elle est loin du serveur.
+       *
+       * On le pose ici parce que c'est le seul endroit où la réponse est
+       * déjà connue sans rien relire : l'activité vient d'être chargée.
+       * Les comptes créés depuis l'écran d'inscription l'ont déjà ; ceux
+       * d'avant le reçoivent à leur prochaine ouverture.
+       */
+      if (a && a.adminUid === u.uid && !(p as { adminUid?: string }).adminUid) {
+        try {
+          await setDoc(ref, { adminUid: u.uid }, { merge: true });
+        } catch {
+          /* Sans lui, tout marche encore — seulement un peu plus
+             lentement. On réessaiera à la prochaine ouverture. */
+        }
+      }
+
       setActivite(a);
       setLoading(false);
     });
