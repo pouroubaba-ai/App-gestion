@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
 import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '@/lib/firebase';
-import { rattacherCompte } from '@/lib/roles';
+import { rattacherCompte, sitesDuCompte } from '@/lib/roles';
 import { useRouter } from 'next/navigation';
 
 export default function LoginPage() {
@@ -91,9 +91,25 @@ export default function LoginPage() {
           }
         }
 
-        /* La racine décide : elle enverra vers l'activité si elle manque,
-           vers les sites sinon. */
-        router.push('/');
+        /**
+         * Aller droit au but quand on sait déjà où.
+         *
+         * La racine sait décider, mais elle doit d'abord chercher les
+         * sites du compte — un aller-retour d'un demi-seconde pendant
+         * lequel on voit son spinner. Ce battement se remarque : on passe
+         * par une page pour en atteindre une autre.
+         *
+         * Ici la réponse est souvent déjà là. Le rattachement vient de
+         * lire les membres de ce compte ; s'il n'en a qu'un, c'est son
+         * site. On y va directement, et la racine ne sert plus que pour
+         * les cas qu'elle seule tranche.
+         */
+        let destination = '/';
+        try {
+          const ids = await sitesDuCompte(cred.user.uid);
+          if (ids.length === 1) destination = `/site/${ids[0]}`;
+        } catch { /* la racine s'en chargera */ }
+        router.push(destination);
       } else {
         const cred = await createUserWithEmailAndPassword(auth, email, password);
 
@@ -149,7 +165,17 @@ export default function LoginPage() {
          * Un rechargement complet repart du profil réel. C'est un peu plus
          * lent, une fois dans la vie d'un compte.
          */
-        window.location.href = invite > 0 ? '/site' : '/activite';
+        /* Un membre n'a le plus souvent qu'un site : l'envoyer sur la
+           liste le ferait traverser un écran qui se redirige aussitôt. */
+        let ou = '/activite';
+        if (invite > 0) {
+          ou = '/site';
+          try {
+            const ids = await sitesDuCompte(cred.user.uid);
+            if (ids.length === 1) ou = `/site/${ids[0]}`;
+          } catch { /* la liste fera l'affaire */ }
+        }
+        window.location.href = ou;
       }
     } catch (err: any) {
       /* Les messages de Firebase sont écrits pour un développeur. Ceux
