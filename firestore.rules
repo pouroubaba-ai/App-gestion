@@ -186,8 +186,24 @@ service cloud.firestore {
       /* Le rôle et l'activité se posent à l'inscription et ne se changent
          plus d'ici : se dire admin, ou se rattacher à l'activité d'un
          autre, tiendrait en une ligne de console. */
+      /**
+       * `resource != null` d'abord.
+       *
+       * Une écriture sur un document absent s'évalue parfois comme un
+       * update : le SDK ne sait pas toujours si le document existe, et
+       * envoie alors les deux hypothèses. `resource.data` vaut null, la
+       * comparaison échoue, et l'écriture est refusée — alors que
+       * `create` l'aurait acceptée. C'est exactement ce qui empêchait un
+       * compte neuf d'écrire son propre profil.
+       */
       allow update: if connecte() && uid == monUid()
-        && request.resource.data.get('role', '') == resource.data.get('role', '');
+        && (resource == null
+          || request.resource.data.get('role', '') == resource.data.get('role', '')
+          /* Se dégrader d'admin à membre : la réparation d'un rattachement
+             raté. On ne peut que descendre, jamais monter — se nommer
+             admin reste impossible, et c'est tout ce qui compte. */
+          || (resource.data.get('role', '') == 'admin'
+            && request.resource.data.get('role', '') == 'membre'));
       allow delete: if false;
     }
 

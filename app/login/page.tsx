@@ -47,10 +47,32 @@ export default function LoginPage() {
             ...(invite > 0 ? {} : { adminUid: cred.user.uid }),
             createdAt: serverTimestamp(),
           });
-        } else if (dejaLa.data()?.role === 'membre') {
-          /* Un membre invité sur un second site après coup : son profil
-             existe déjà, mais l'invitation attend encore son nom. */
-          try { await rattacherCompte(cred.user.uid, email); } catch { /* elle attendra */ }
+        } else {
+          /* Le profil existe : on rattache quand même, car une invitation
+             peut être arrivée depuis — un second site, un rôle ajouté. */
+          let miens = 0;
+          try { miens = await rattacherCompte(cred.user.uid, email); }
+          catch { miens = 0; }
+
+          /**
+           * Réparer un « admin » qui n'en est pas un.
+           *
+           * Un profil `admin` sans activité, alors que ce compte est
+           * membre quelque part, ne peut venir que d'un rattachement
+           * raté : à l'inscription, l'échec de la recherche passait pour
+           * « personne ne l'a invité ». La personne se retrouvait
+           * propriétaire d'une activité qui n'existe pas, devant un écran
+           * vide.
+           *
+           * On ne dégrade jamais un vrai propriétaire : celui-là a une
+           * activité, et la condition l'écarte.
+           */
+          const p = dejaLa.data();
+          if (miens > 0 && p?.role === 'admin' && !p?.activiteId) {
+            try {
+              await setDoc(ref, { role: 'membre' }, { merge: true });
+            } catch { /* il faudra le corriger à la main */ }
+          }
         }
 
         /* La racine décide : elle enverra vers l'activité si elle manque,
