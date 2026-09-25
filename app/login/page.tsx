@@ -137,7 +137,19 @@ export default function LoginPage() {
           ...(invite > 0 ? {} : { adminUid: cred.user.uid }),
           createdAt: serverTimestamp(),
         });
-        router.push(invite > 0 ? '/site' : '/activite');
+        /**
+         * Un vrai chargement, pas une navigation.
+         *
+         * Le profil vient d'être écrit, mais le contexte d'authentification
+         * l'avait déjà cherché — et ne l'avait pas trouvé, puisqu'il
+         * n'existait pas encore. `router.push` ne relance pas cette
+         * lecture : le nouveau membre arrivait devant « Mon activité » et
+         * « 0 / 0 site », alors que tout était correct en base.
+         *
+         * Un rechargement complet repart du profil réel. C'est un peu plus
+         * lent, une fois dans la vie d'un compte.
+         */
+        window.location.href = invite > 0 ? '/site' : '/activite';
       }
     } catch (err: any) {
       /* Les messages de Firebase sont écrits pour un développeur. Ceux
