@@ -388,5 +388,17 @@ export async function rattacherCompte(uid: string, email: string): Promise<numbe
     await deleteDoc(doc(db, 'membres', d.id));
   }));
 
-  return aPoser.length;
+  /**
+   * Ce que ce compte a, une fois le rattachement fait.
+   *
+   * On ne compte pas ce qu'on vient de poser, mais ce qui existe : un
+   * rattachement réussi puis une inscription interrompue laissait un
+   * membre bien accroché et un profil manquant. La connexion suivante
+   * rappelait cette fonction, ne trouvait plus d'invitation à poser —
+   * elles l'étaient déjà — et concluait « personne ne l'a invité ».
+   * L'employé devenait propriétaire, pour avoir réussi du premier coup.
+   */
+  const miens = await getDocs(query(
+    collection(db, 'membres'), where('compteUid', '==', uid)));
+  return miens.docs.filter(d => (d.data() as Membre).actif !== false).length;
 }

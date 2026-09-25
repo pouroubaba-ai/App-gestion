@@ -55,14 +55,26 @@ service cloud.firestore {
      * `let` dans une fonction ne coûte qu'une lecture par requête :
      * Firestore mémorise le résultat pour la durée de l'évaluation.
      */
+    function aUnProfil() {
+      return connecte()
+        && exists(/databases/$(database)/documents/users/$(monUid()));
+    }
+
     function profil() {
       return get(/databases/$(database)/documents/users/$(monUid())).data;
     }
 
+    /**
+     * L'activité de celui qui demande, ou '' s'il n'en a pas encore.
+     *
+     * Au premier instant d'un compte, le profil n'existe pas : il va
+     * s'écrire, mais l'invitation doit d'abord être trouvée. Toute
+     * fonction qui lit le profil doit donc supporter son absence — un
+     * `get` sur un document manquant fait échouer la règle entière, et
+     * pas seulement la branche où il se trouve.
+     */
     function monActivite() {
-      return connecte()
-        && exists(/databases/$(database)/documents/users/$(monUid()))
-        ? profil().get('activiteId', '') : '';
+      return aUnProfil() ? profil().get('activiteId', '') : '';
     }
 
     function aUneActivite() {
@@ -81,8 +93,7 @@ service cloud.firestore {
      * échoue. Un `||` s'arrête dès qu'il a sa réponse.
      */
     function suisProprietaire() {
-      return connecte()
-        && exists(/databases/$(database)/documents/users/$(monUid()))
+      return aUnProfil()
         && (profil().get('adminUid', '') == monUid()
           || (profil().get('role', '') == 'admin'
             && profil().get('activiteId', '') != ''
@@ -114,7 +125,7 @@ service cloud.firestore {
     /* Le site appartient-il à ma maison ? Une lecture du site, une du
        profil — pas davantage. */
     function monSite(siteId) {
-      return siteId != '' && siteExiste(siteId)
+      return siteId != '' && connecte() && siteExiste(siteId)
         && (memeActivite(siteDe(siteId).get('activiteId', ''))
           || siteDe(siteId).get('userId', '') == monUid());
     }
@@ -132,9 +143,12 @@ service cloud.firestore {
      * ne s'est pas connectée. C'est exactement ce qu'on veut.
      */
     function monRoleSur(siteId) {
-      let ref = /databases/$(database)/documents/membres/$(siteId + '_' + monUid());
-      return exists(ref) && get(ref).data.get('actif', true) == true
-        ? get(ref).data.get('role', '') : '';
+      return siteId != '' && connecte()
+        && exists(/databases/$(database)/documents/membres/$(siteId + '_' + monUid()))
+        && get(/databases/$(database)/documents/membres/$(siteId + '_' + monUid()))
+             .data.get('actif', true) == true
+        ? get(/databases/$(database)/documents/membres/$(siteId + '_' + monUid()))
+            .data.get('role', '') : '';
     }
 
     /* Travailler sur ce site : le propriétaire entre partout chez lui, un
@@ -163,7 +177,11 @@ service cloud.firestore {
        Le rôle et l'activité se posent à l'inscription et ne se changent
        plus depuis le navigateur. */
     match /users/{uid} {
-      allow read: if connecte() && (uid == monUid() || suisProprietaire());
+      /* Son propre profil d'abord, et sans condition : c'est la première
+         chose que l'app lit, souvent avant qu'il existe. Le test du
+         propriétaire vient après, quand le sien est là pour répondre. */
+      allow read: if connecte()
+        && (uid == monUid() || suisProprietaire());
       allow create: if connecte() && uid == monUid();
       /* Le rôle et l'activité se posent à l'inscription et ne se changent
          plus d'ici : se dire admin, ou se rattacher à l'activité d'un
@@ -251,19 +269,29 @@ service cloud.firestore {
        * administrateur.
        */
       allow list: if connecte();
-      allow create: if
-        /* Le rattachement à la première connexion : on recopie sa propre
-           invitation sous son nom définitif. Le nom du document le
-           prouve — il porte l'uid de celui qui écrit, et lui seul peut
-           donc se nommer ainsi. */
-        (connecte() && id == siteEnvoye() + '_' + monUid()
+      /**
+       * Deux façons de créer un membre.
+       *
+       * Le rattachement d'abord, et sans lire le profil : au premier
+       * instant d'un compte il n'existe pas, et une règle qui le lit
+       * échoue alors entièrement — pas seulement la branche concernée.
+       * Le nom du document suffit à prouver le droit : il porte l'uid de
+       * celui qui écrit, que lui seul peut fournir.
+       *
+       * L'invitation ensuite, posée par qui dirige le site.
+       */
+      allow create: if connecte() && (
+        (id == siteEnvoye() + '_' + monUid()
           && request.resource.data.get('compteUid', '') == monUid())
         || (monSite(siteEnvoye())
-          && (suisProprietaire() || monRoleSur(siteEnvoye()) == 'gerant'));
+          && (suisProprietaire() || monRoleSur(siteEnvoye()) == 'gerant')));
       /* Le rattachement efface l'invitation qu'il vient de recopier. Une
          invitation n'appartient à personne tant qu'aucun compte ne la
          porte — d'où le `compteUid == null` : on ne prend que ce qui
          attend, jamais le membre d'un autre. */
+      /* Une invitation qu'aucun compte ne porte n'appartient à personne :
+         celui qui vient de la recopier sous son nom l'efface. Ce test ne
+         lit pas le profil, qui n'existe pas encore à cet instant. */
       allow update, delete: if connecte()
         && (resource.data.get('compteUid', null) == null
           || (monSite(siteDuDoc())
