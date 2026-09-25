@@ -1,0 +1,393 @@
+rules_version = '2';
+
+/**
+ * Les règles de la base.
+ *
+ * Tout ce que l'app vérifie — qui reconnaît un écart, qui ouvre le tiroir,
+ * qui voit quel site — vit dans le navigateur, et le navigateur appartient
+ * à celui qui l'utilise. Ouvrir la console suffit à contourner un bouton
+ * caché. Ces règles sont la seule barrière que personne ne peut retirer :
+ * c'est le serveur qui refuse.
+ *
+ * Le principe tient en une phrase : on ne touche qu'aux données de son
+ * activité, et à l'intérieur, qu'à celles de ses sites.
+ *
+ * Une limite qu'il faut connaître : lire un document et lister une
+ * collection sont deux questions différentes. Firestore valide une
+ * requête avant de l'exécuter, sans savoir ce qu'elle rapportera ; une
+ * règle de liste ne peut donc pas examiner les documents. Les lectures
+ * unitaires (`get`) vérifient le site ; les listes (`list`) se bornent à
+ * « avoir une activité ». Un membre de la maison peut donc, en console,
+ * lister une collection entière. Il ne peut rien y écrire hors de son
+ * site, et ne voit rien d'une autre activité que par cette liste-là.
+ * Fermer cela demanderait de porter l'activité sur chaque document et
+ * d'exiger le filtre correspondant — un changement de modèle.
+ *
+ * Ce qu'elles ne font pas : rejouer toute la logique métier. Un écart qui
+ * dépasse le solde, un mouvement au mauvais motif — cela reste au code.
+ * Les règles ferment ce qui serait grave : lire la caisse d'un autre,
+ * écrire chez un concurrent, se nommer gérant soi-même.
+ */
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------------------------------------------------------------
+    // Ce qu'on sait de celui qui demande
+    // ---------------------------------------------------------------
+
+    function connecte() {
+      return request.auth != null;
+    }
+
+    function monUid() {
+      return request.auth.uid;
+    }
+
+    /* Le profil porte l'activité : c'est lui qui rattache un compte à une
+       maison. Sans profil, on n'est nulle part. */
+    function monProfil() {
+      return get(/databases/$(database)/documents/users/$(monUid())).data;
+    }
+
+    function monActivite() {
+      return monProfil().get('activiteId', '');
+    }
+
+    function aUneActivite() {
+      return connecte()
+        && exists(/databases/$(database)/documents/users/$(monUid()))
+        && monActivite() != '';
+    }
+
+    /* Le propriétaire : celui que l'activité nomme. Il n'est membre
+       d'aucun site et entre partout chez lui. */
+    function suisProprietaire() {
+      return aUneActivite()
+        && exists(/databases/$(database)/documents/activites/$(monActivite()))
+        && get(/databases/$(database)/documents/activites/$(monActivite()))
+             .data.adminUid == monUid();
+    }
+
+    /* La même activité : la frontière que rien ne franchit. Deux
+       commerçants sur la même base ne se voient jamais. */
+    function memeActivite(activiteId) {
+      return aUneActivite() && activiteId == monActivite();
+    }
+
+    // ---------------------------------------------------------------
+    // Les sites, et ce qu'on y fait
+    // ---------------------------------------------------------------
+
+    function siteDe(siteId) {
+      return get(/databases/$(database)/documents/sites/$(siteId)).data;
+    }
+
+    function siteExiste(siteId) {
+      return exists(/databases/$(database)/documents/sites/$(siteId));
+    }
+
+    /* Le site appartient-il à ma maison ? Un site porte son activité ;
+       les vieux documents portaient l'uid du propriétaire. */
+    function monSite(siteId) {
+      return aUneActivite() && siteExiste(siteId)
+        && (siteDe(siteId).get('activiteId', '') == monActivite()
+          || siteDe(siteId).get('userId', '') == monUid());
+    }
+
+    /**
+     * Mon rôle sur ce site, ou '' si je n'y travaille pas.
+     *
+     * Le membre se nomme {siteId}_{uid} : c'est ce qui rend la lecture
+     * possible. Une règle ne requête pas — elle ne sait pas chercher
+     * « le membre dont le compteUid vaut X » — mais elle lit sans peine
+     * un document dont le chemin se déduit de la question posée.
+     *
+     * Une invitation non encore rattachée garde un identifiant
+     * automatique : elle ne donne donc aucun droit tant que la personne
+     * ne s'est pas connectée. C'est exactement ce qu'on veut.
+     */
+    function monRoleSur(siteId) {
+      let ref = /databases/$(database)/documents/membres/$(siteId + '_' + monUid());
+      return exists(ref) && get(ref).data.get('actif', true) == true
+        ? get(ref).data.get('role', '') : '';
+    }
+
+    /* Travailler sur ce site : le propriétaire entre partout chez lui, un
+       membre seulement là où il est inscrit et actif. Le rôle précis
+       relève du code ; la règle dit qu'on n'est pas un inconnu. */
+    function travailleSur(siteId) {
+      return monSite(siteId)
+        && (suisProprietaire() || monRoleSur(siteId) != '');
+    }
+
+    /* Le site que porte le document, avant ou après écriture. */
+    function siteDuDoc() {
+      return resource != null ? resource.data.get('siteId', '') : '';
+    }
+
+    function siteEnvoye() {
+      return request.resource.data.get('siteId', '');
+    }
+
+    // ---------------------------------------------------------------
+    // Les comptes
+    // ---------------------------------------------------------------
+
+    /* Chacun lit son profil. L'écriture ne porte que sur soi : sans cela,
+       on se rattacherait à l'activité d'un autre en une ligne de console.
+       Le rôle et l'activité se posent à l'inscription et ne se changent
+       plus depuis le navigateur. */
+    match /users/{uid} {
+      allow read: if connecte() && (uid == monUid() || suisProprietaire());
+      allow create: if connecte() && uid == monUid();
+      /* Le rôle et l'activité se posent à l'inscription et ne se changent
+         plus d'ici : se dire admin, ou se rattacher à l'activité d'un
+         autre, tiendrait en une ligne de console. */
+      allow update: if connecte() && uid == monUid()
+        && request.resource.data.get('role', '') == resource.data.get('role', '');
+      allow delete: if false;
+    }
+
+    /* L'activité : son propriétaire seul la modifie. Ses membres la lisent
+       — le nom s'affiche partout, et `adminUid` sert à reconnaître le
+       propriétaire. */
+    match /activites/{id} {
+      allow get: if connecte()
+        && (resource.data.adminUid == monUid() || memeActivite(id));
+      /* L'app cherche « l'activité dont je suis l'admin » à la première
+         connexion : la requête porte sur son propre uid. */
+      allow list: if connecte();
+      allow create: if connecte()
+        && request.resource.data.adminUid == monUid();
+      allow update: if connecte() && resource.data.adminUid == monUid()
+        && request.resource.data.adminUid == monUid();
+      allow delete: if false;
+    }
+
+    /**
+     * Les sites d'une activité.
+     *
+     * Créer ou supprimer un site revient au propriétaire : c'est ouvrir ou
+     * fermer une boutique. Le gérant l'exploite, il ne décide pas de son
+     * existence.
+     */
+    match /sites/{id} {
+      allow get: if aUneActivite()
+        && (resource.data.get('activiteId', '') == monActivite()
+          || resource.data.get('userId', '') == monUid());
+      allow list: if aUneActivite();
+      allow create: if suisProprietaire()
+        && request.resource.data.get('activiteId', '') == monActivite();
+      allow update: if monSite(id)
+        && request.resource.data.get('activiteId', '')
+          == resource.data.get('activiteId', '');
+      allow delete: if suisProprietaire() && monSite(id);
+    }
+
+    /**
+     * Qui travaille où, et à quel titre.
+     *
+     * C'est la collection la plus sensible de la base : y écrire, c'est se
+     * distribuer un rôle. Le propriétaire et le gérant du site en
+     * décident, personne d'autre — et jamais sur un site qui n'est pas de
+     * la maison.
+     */
+    match /membres/{id} {
+      /**
+       * Lire un membre, et lister les membres : deux questions.
+       *
+       * `get` connaît le document et peut donc l'examiner. `list` ne le
+       * peut pas : Firestore valide une requête sans savoir ce qu'elle
+       * rapportera, et refuse dès qu'une règle interroge `resource.data`.
+       * Une liste se borne donc par ce que la requête demande, pas par ce
+       * qu'elle reçoit — et ici, par l'activité de celui qui la pose.
+       *
+       * L'app cherche les membres par adresse au rattachement, et par
+       * site ailleurs. Dans les deux cas elle reste dans sa maison ; c'est
+       * la frontière que cette règle tient.
+       */
+      allow get: if aUneActivite()
+        && (resource.data.get('compteUid', '') == monUid()
+          || monSite(resource.data.get('siteId', '')));
+      allow list: if aUneActivite();
+      allow create: if monSite(siteEnvoye())
+        && (suisProprietaire() || monRoleSur(siteEnvoye()) == 'gerant'
+          /* Le rattachement à la première connexion : on recopie sa
+             propre invitation sous son nom définitif. Seulement la
+             sienne, et seulement si elle existe. */
+          || request.resource.data.get('compteUid', '') == monUid());
+      allow update, delete: if monSite(siteDuDoc())
+        && (suisProprietaire() || monRoleSur(siteDuDoc()) == 'gerant'
+          || resource.data.get('compteUid', null) == null);
+    }
+
+    // ---------------------------------------------------------------
+    // La caisse
+    // ---------------------------------------------------------------
+
+    /**
+     * Le registre : un fait s'enregistre, il ne s'annote pas.
+     *
+     * Aucune modification, aucune suppression. Une erreur se corrige par
+     * une contrepassation — une écriture de plus, qui dit ce qui s'est
+     * passé. Effacer une ligne ferait mentir la suite des soldes, et
+     * surtout laisserait disparaître l'argent sans trace.
+     */
+    match /mouvements_caisse/{id} {
+      /* `get` examine le document ; `list` ne le peut pas — Firestore
+         valide une requête sans savoir ce qu'elle rapportera. La liste se
+         borne donc à l'activité, et le document à son site. */
+      allow get: if travailleSur(resource.data.get('siteId', ''));
+      allow list: if aUneActivite();
+      allow create: if travailleSur(siteEnvoye());
+      allow update, delete: if false;
+    }
+
+    /**
+     * Ce qui attend le tiroir.
+     *
+     * Celui qui déclare crée ; le caissier tranche, et cela passe par une
+     * mise à jour. On ne supprime pas : une déclaration refusée a eu lieu,
+     * et le refus fait partie de l'histoire.
+     */
+    match /mouvements_attente/{id} {
+      /* `get` examine le document ; `list` ne le peut pas — Firestore
+         valide une requête sans savoir ce qu'elle rapportera. La liste se
+         borne donc à l'activité, et le document à son site. */
+      allow get: if travailleSur(resource.data.get('siteId', ''));
+      allow list: if aUneActivite();
+      allow create: if travailleSur(siteEnvoye())
+        && request.resource.data.get('userId', '') == monUid();
+      allow update: if travailleSur(siteDuDoc());
+      allow delete: if false;
+    }
+
+    /**
+     * Les écarts de caisse.
+     *
+     * La règle « jamais son propre constat » se tient ici aussi, et non
+     * seulement dans le code : reconnaître son propre manque reviendrait à
+     * se décharger soi-même. Le serveur refuse que le constatant se nomme
+     * reconnaisseur.
+     *
+     * Le constat lui-même ne bouge plus : seul son état se tranche.
+     */
+    match /ecarts_caisse/{id} {
+      /* `get` examine le document ; `list` ne le peut pas — Firestore
+         valide une requête sans savoir ce qu'elle rapportera. La liste se
+         borne donc à l'activité, et le document à son site. */
+      allow get: if travailleSur(resource.data.get('siteId', ''));
+      allow list: if aUneActivite();
+      allow create: if travailleSur(siteEnvoye())
+        && request.resource.data.get('parUid', '') == monUid()
+        && request.resource.data.get('etat', '') == 'en_attente'
+        && request.resource.data.get('montant', 0) > 0;
+      /* Trancher, et rien d'autre : le montant, le sens et l'auteur du
+         constat sont figés. Et jamais par celui qui a constaté. */
+      allow update: if travailleSur(siteDuDoc())
+        && resource.data.get('parUid', '') != monUid()
+        && resource.data.get('etat', '') == 'en_attente'
+        && request.resource.data.get('parUid', '') == resource.data.get('parUid', '')
+        && request.resource.data.get('montant', 0) == resource.data.get('montant', 0)
+        && request.resource.data.get('sens', '') == resource.data.get('sens', '')
+        && request.resource.data.get('reconnuParUid', '') == monUid();
+      allow delete: if false;
+    }
+
+    // ---------------------------------------------------------------
+    // Le reste : même frontière, moins de cérémonie
+    // ---------------------------------------------------------------
+
+    /**
+     * Les collections rattachées à un site.
+     *
+     * Elles portent toutes `siteId` : marchandise, dossiers, recouvrement,
+     * paie. La règle est la même — on y travaille si le site est de sa
+     * maison et qu'on y est inscrit. Le détail de qui fait quoi reste au
+     * code, qui le sait mieux qu'une règle.
+     */
+    match /{col}/{id} {
+      allow get: if col in [
+          'achats', 'ventes', 'lignes_vente', 'transferts', 'preparations',
+          'receptions', 'mouvements', 'mouvements_stock', 'produits_site',
+          'missions_paiement', 'versements', 'documents',
+          'recouvrement_journal', 'recouvrement_suivis',
+          'recouvrement_versements', 'recouvrement_config',
+          'recouvrement_config_defaut',
+          'employes', 'employe_avances', 'employe_avance_configs',
+          'employe_prelevements', 'employe_remunerations',
+          'employe_rem_configs', 'employe_rem_assignations',
+          'employe_versements'
+        ]
+        && travailleSur(resource.data.get('siteId', ''));
+
+      /* La liste ne sait pas ce qu'elle rapportera : on la borne à la
+         maison, le site se vérifie à chaque document lu et à chaque
+         écriture. */
+      allow list: if aUneActivite();
+
+      allow create: if col in [
+          'achats', 'ventes', 'lignes_vente', 'transferts', 'preparations',
+          'receptions', 'mouvements', 'mouvements_stock', 'produits_site',
+          'missions_paiement', 'versements', 'documents',
+          'recouvrement_journal', 'recouvrement_suivis',
+          'recouvrement_versements', 'recouvrement_config',
+          'recouvrement_config_defaut',
+          'employes', 'employe_avances', 'employe_avance_configs',
+          'employe_prelevements', 'employe_remunerations',
+          'employe_rem_configs', 'employe_rem_assignations',
+          'employe_versements'
+        ]
+        && travailleSur(siteEnvoye());
+
+      allow update, delete: if col in [
+          'achats', 'ventes', 'lignes_vente', 'transferts', 'preparations',
+          'receptions', 'mouvements', 'mouvements_stock', 'produits_site',
+          'missions_paiement', 'versements', 'documents',
+          'recouvrement_journal', 'recouvrement_suivis',
+          'recouvrement_versements', 'recouvrement_config',
+          'recouvrement_config_defaut',
+          'employes', 'employe_avances', 'employe_avance_configs',
+          'employe_prelevements', 'employe_remunerations',
+          'employe_rem_configs', 'employe_rem_assignations',
+          'employe_versements'
+        ]
+        && travailleSur(siteDuDoc());
+    }
+
+    /**
+     * Le fichier commun de la maison : produits, partenaires, catégories.
+     *
+     * Il ne dépend d'aucun site — un produit se vend partout — mais
+     * appartient à une activité. Un transfert le suppose : les deux
+     * boutiques parlent du même article.
+     */
+    match /produits/{id} {
+      allow get: if memeActivite(resource.data.get('activiteId', ''));
+      allow list: if aUneActivite();
+      allow create: if memeActivite(request.resource.data.get('activiteId', ''));
+      allow update, delete: if memeActivite(resource.data.get('activiteId', ''));
+    }
+
+    match /partenaires/{id} {
+      allow get: if memeActivite(resource.data.get('activiteId', ''));
+      allow list: if aUneActivite();
+      allow create: if memeActivite(request.resource.data.get('activiteId', ''));
+      allow update, delete: if memeActivite(resource.data.get('activiteId', ''));
+    }
+
+    match /categories_partenaire/{id} {
+      allow get: if memeActivite(resource.data.get('activiteId', ''));
+      allow list: if aUneActivite();
+      allow create: if memeActivite(request.resource.data.get('activiteId', ''));
+      allow update, delete: if memeActivite(resource.data.get('activiteId', ''));
+    }
+
+    /* Tout le reste est fermé. Une collection qu'on ajoutera demain
+       n'entrera pas dans la base par oubli : il faudra l'écrire ici, et
+       donc se demander qui a le droit d'y toucher. */
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
