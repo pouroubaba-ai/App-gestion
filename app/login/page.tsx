@@ -38,21 +38,28 @@ export default function LoginPage() {
         const ref = doc(db, 'users', cred.user.uid);
         const dejaLa = await getDoc(ref);
         if (!dejaLa.exists()) {
-          const invite = await rattacherCompte(cred.user.uid, email);
+          const r = await rattacherCompte(cred.user.uid, email);
           await setDoc(ref, {
             uid: cred.user.uid,
             email,
             nom: email,
-            role: invite > 0 ? 'membre' : 'admin',
-            ...(invite > 0 ? {} : { adminUid: cred.user.uid }),
+            role: r.nb > 0 ? 'membre' : 'admin',
+            /* L'activité vient de l'invitation : sans elle, les règles ne
+               savent pas de quelle maison est ce compte et lui refusent
+               toute lecture. */
+            ...(r.activiteId ? { activiteId: r.activiteId } : {}),
+            ...(r.nb > 0 ? {} : { adminUid: cred.user.uid }),
             createdAt: serverTimestamp(),
           });
         } else {
           /* Le profil existe : on rattache quand même, car une invitation
              peut être arrivée depuis — un second site, un rôle ajouté. */
           let miens = 0;
-          try { miens = await rattacherCompte(cred.user.uid, email); }
-          catch { miens = 0; }
+          let sonActivite: string | null = null;
+          try {
+            const r = await rattacherCompte(cred.user.uid, email);
+            miens = r.nb; sonActivite = r.activiteId;
+          } catch { miens = 0; }
 
           /**
            * Réparer un « admin » qui n'en est pas un.
@@ -70,8 +77,17 @@ export default function LoginPage() {
           const p = dejaLa.data();
           if (miens > 0 && p?.role === 'admin' && !p?.activiteId) {
             try {
-              await setDoc(ref, { role: 'membre' }, { merge: true });
+              await setDoc(ref, {
+                role: 'membre',
+                ...(sonActivite ? { activiteId: sonActivite } : {}),
+              }, { merge: true });
             } catch { /* il faudra le corriger à la main */ }
+          } else if (miens > 0 && sonActivite && !p?.activiteId) {
+            /* Membre sans activité : même cause, l'écran reste vide tant
+               qu'elle manque. */
+            try {
+              await setDoc(ref, { activiteId: sonActivite }, { merge: true });
+            } catch { /* la prochaine fois */ }
           }
         }
 
@@ -95,8 +111,11 @@ export default function LoginPage() {
          * de réseau ne doit pas distribuer les droits.
          */
         let invite = 0;
+        let sonActivite: string | null = null;
         try {
-          invite = await rattacherCompte(cred.user.uid, email);
+          const r = await rattacherCompte(cred.user.uid, email);
+          invite = r.nb;
+          sonActivite = r.activiteId;
         } catch (e) {
           /* Le compte d'authentification existe déjà : le laisser sans
              profil vaut mieux qu'un profil faux. Il se reconnectera, et
@@ -114,6 +133,7 @@ export default function LoginPage() {
           email,
           nom: email,
           role: invite > 0 ? 'membre' : 'admin',
+          ...(sonActivite ? { activiteId: sonActivite } : {}),
           ...(invite > 0 ? {} : { adminUid: cred.user.uid }),
           createdAt: serverTimestamp(),
         });

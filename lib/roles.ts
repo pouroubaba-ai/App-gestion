@@ -353,7 +353,9 @@ export async function retirerMembre(membreId: string): Promise<void> {
  * on pose son identifiant sur les membres qui portent son adresse — c'est lui
  * qui servira ensuite, l'adresse pouvant changer.
  */
-export async function rattacherCompte(uid: string, email: string): Promise<number> {
+export async function rattacherCompte(
+  uid: string, email: string,
+): Promise<{ nb: number; activiteId: string | null }> {
   const snap = await getDocs(query(
     collection(db, 'membres'),
     where('email', '==', email.trim().toLowerCase())));
@@ -416,12 +418,12 @@ export async function rattacherCompte(uid: string, email: string): Promise<numbe
    * L'invitation porte l'activité — c'est le gérant qui l'a posée. On la
    * recopie sur le compte, là où les règles savent la lire.
    */
-  const activiteId = actifs.find(m => m.activiteId)?.activiteId;
-  if (activiteId) {
-    try {
-      await setDoc(doc(db, 'users', uid), { activiteId }, { merge: true });
-    } catch { /* la connexion suivante réessaiera */ }
-  }
-
-  return actifs.length;
+  /* On la rend plutôt que de l'écrire : à l'inscription, le profil
+     n'existe pas encore, et l'écrire ici créerait un document que le
+     profil complet écraserait aussitôt. C'est à celui qui écrit le
+     profil de la porter. */
+  return {
+    nb: actifs.length,
+    activiteId: actifs.find(m => m.activiteId)?.activiteId ?? null,
+  };
 }

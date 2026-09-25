@@ -82,11 +82,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
            n'aura jamais. */
         if (p.role === 'admin' && !p.activiteId) {
           try {
-            const poses = await rattacherCompte(u.uid, u.email ?? '');
+            const r = await rattacherCompte(u.uid, u.email ?? '');
             const sites = await sitesDuCompte(u.uid);
-            if (poses > 0 || sites.length > 0) {
-              p = { ...p, role: 'membre' };
-              await setDoc(ref, { role: 'membre' }, { merge: true });
+            if (r.nb > 0 || sites.length > 0) {
+              /* L'activité avec le rôle : sans elle, les règles ne savent
+                 pas de quelle maison il est et lui refusent tout. */
+              p = { ...p, role: 'membre',
+                ...(r.activiteId ? { activiteId: r.activiteId } : {}) };
+              await setDoc(ref, {
+                role: 'membre',
+                ...(r.activiteId ? { activiteId: r.activiteId } : {}),
+              }, { merge: true });
             }
           } catch { /* hors ligne : on garde le profil tel quel */ }
         }
@@ -95,15 +101,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
            compte existe : on pose l'identifiant sur ces invitations, et le
            compte devient membre au lieu de fonder une activité à lui. */
         let invite = 0;
-        try { invite = await rattacherCompte(u.uid, u.email ?? ''); }
-        catch { invite = 0; }
+        let sonActivite: string | null = null;
+        try {
+          const r = await rattacherCompte(u.uid, u.email ?? '');
+          invite = r.nb; sonActivite = r.activiteId;
+        } catch { invite = 0; }
 
         p = {
           uid: u.uid,
           email: u.email ?? '',
           nom: u.email ?? '',
           role: invite > 0 ? 'membre' : 'admin',
-          activiteId: null,
+          /* L'invitation porte l'activité : un membre en hérite, et sans
+             elle les règles lui refusent toute lecture. */
+          activiteId: sonActivite,
         };
         await setDoc(ref, { ...p, createdAt: serverTimestamp() });
       }
