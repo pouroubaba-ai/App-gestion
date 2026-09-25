@@ -43,35 +43,58 @@ service cloud.firestore {
       return request.auth.uid;
     }
 
-    /* Le profil porte l'activité : c'est lui qui rattache un compte à une
-       maison. Sans profil, on n'est nulle part. */
-    function monProfil() {
+    /**
+     * Le profil, lu une fois.
+     *
+     * Chaque `get()` dans une règle est une lecture facturée et un
+     * aller-retour réseau. Écrites naïvement, ces aides relisaient le
+     * profil à chaque question posée — six ou huit fois pour un seul
+     * document. En local cela ne se voyait pas ; depuis un serveur
+     * lointain, chaque page attendait des centaines d'allers-retours.
+     *
+     * `let` dans une fonction ne coûte qu'une lecture par requête :
+     * Firestore mémorise le résultat pour la durée de l'évaluation.
+     */
+    function profil() {
       return get(/databases/$(database)/documents/users/$(monUid())).data;
     }
 
     function monActivite() {
-      return monProfil().get('activiteId', '');
+      return connecte()
+        && exists(/databases/$(database)/documents/users/$(monUid()))
+        ? profil().get('activiteId', '') : '';
     }
 
     function aUneActivite() {
-      return connecte()
-        && exists(/databases/$(database)/documents/users/$(monUid()))
-        && monActivite() != '';
+      return monActivite() != '';
     }
 
-    /* Le propriétaire : celui que l'activité nomme. Il n'est membre
-       d'aucun site et entre partout chez lui. */
+    /**
+     * Le propriétaire.
+     *
+     * Deux façons de le dire, et il faut les deux. Les comptes récents
+     * portent `adminUid` sur leur profil — une lecture suffit alors. Les
+     * plus anciens ne l'ont pas : pour eux on va lire l'activité, ce qui
+     * coûte une lecture de plus mais ne les laisse pas dehors.
+     *
+     * L'ordre compte : le cas rapide en premier, l'autre seulement s'il
+     * échoue. Un `||` s'arrête dès qu'il a sa réponse.
+     */
     function suisProprietaire() {
-      return aUneActivite()
-        && exists(/databases/$(database)/documents/activites/$(monActivite()))
-        && get(/databases/$(database)/documents/activites/$(monActivite()))
-             .data.adminUid == monUid();
+      return connecte()
+        && exists(/databases/$(database)/documents/users/$(monUid()))
+        && (profil().get('adminUid', '') == monUid()
+          || (profil().get('role', '') == 'admin'
+            && profil().get('activiteId', '') != ''
+            && exists(/databases/$(database)/documents/activites/$(profil().get('activiteId', '')))
+            && get(/databases/$(database)/documents/activites/$(profil().get('activiteId', '')))
+                 .data.get('adminUid', '') == monUid()));
     }
 
     /* La même activité : la frontière que rien ne franchit. Deux
        commerçants sur la même base ne se voient jamais. */
     function memeActivite(activiteId) {
-      return aUneActivite() && activiteId == monActivite();
+      return activiteId != '' && activiteId == monActivite();
     }
 
     // ---------------------------------------------------------------
@@ -88,9 +111,11 @@ service cloud.firestore {
 
     /* Le site appartient-il à ma maison ? Un site porte son activité ;
        les vieux documents portaient l'uid du propriétaire. */
+    /* Le site appartient-il à ma maison ? Une lecture du site, une du
+       profil — pas davantage. */
     function monSite(siteId) {
-      return aUneActivite() && siteExiste(siteId)
-        && (siteDe(siteId).get('activiteId', '') == monActivite()
+      return siteId != '' && siteExiste(siteId)
+        && (memeActivite(siteDe(siteId).get('activiteId', ''))
           || siteDe(siteId).get('userId', '') == monUid());
     }
 
@@ -209,16 +234,40 @@ service cloud.firestore {
       allow get: if aUneActivite()
         && (resource.data.get('compteUid', '') == monUid()
           || monSite(resource.data.get('siteId', '')));
-      allow list: if aUneActivite();
-      allow create: if monSite(siteEnvoye())
-        && (suisProprietaire() || monRoleSur(siteEnvoye()) == 'gerant'
-          /* Le rattachement à la première connexion : on recopie sa
-             propre invitation sous son nom définitif. Seulement la
-             sienne, et seulement si elle existe. */
-          || request.resource.data.get('compteUid', '') == monUid());
-      allow update, delete: if monSite(siteDuDoc())
-        && (suisProprietaire() || monRoleSur(siteDuDoc()) == 'gerant'
-          || resource.data.get('compteUid', null) == null);
+      /**
+       * `connecte()`, et non `aUneActivite()`.
+       *
+       * Au tout premier instant d'un compte, le profil n'existe pas
+       * encore : c'est l'invitation qui va dire s'il est membre ou
+       * propriétaire, et il faut donc la chercher avant de l'écrire.
+       * Exiger une activité ici rendait cette recherche impossible, et
+       * l'échec passait pour « personne ne l'a invité » : chaque employé
+       * se retrouvait propriétaire d'une activité à lui.
+       *
+       * Ce que cela ouvre : un compte connecté peut lister les membres.
+       * Il y lit des adresses et des rôles, rien de plus — ni chiffre, ni
+       * mouvement, ni stock. C'est le prix d'une inscription qui sait où
+       * elle atterrit, et il est moindre que celui d'un employé devenu
+       * administrateur.
+       */
+      allow list: if connecte();
+      allow create: if
+        /* Le rattachement à la première connexion : on recopie sa propre
+           invitation sous son nom définitif. Le nom du document le
+           prouve — il porte l'uid de celui qui écrit, et lui seul peut
+           donc se nommer ainsi. */
+        (connecte() && id == siteEnvoye() + '_' + monUid()
+          && request.resource.data.get('compteUid', '') == monUid())
+        || (monSite(siteEnvoye())
+          && (suisProprietaire() || monRoleSur(siteEnvoye()) == 'gerant'));
+      /* Le rattachement efface l'invitation qu'il vient de recopier. Une
+         invitation n'appartient à personne tant qu'aucun compte ne la
+         porte — d'où le `compteUid == null` : on ne prend que ce qui
+         attend, jamais le membre d'un autre. */
+      allow update, delete: if connecte()
+        && (resource.data.get('compteUid', null) == null
+          || (monSite(siteDuDoc())
+            && (suisProprietaire() || monRoleSur(siteDuDoc()) == 'gerant')));
     }
 
     // ---------------------------------------------------------------

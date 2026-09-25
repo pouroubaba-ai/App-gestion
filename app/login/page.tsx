@@ -27,12 +27,33 @@ export default function LoginPage() {
       } else {
         const cred = await createUserWithEmailAndPassword(auth, email, password);
 
-        /* Un gérant a pu inviter cette adresse avant que le compte existe.
-           Dans ce cas le compte rejoint un site : il ne fonde pas d'activité,
-           et on ne lui en demande pas le nom. */
+        /**
+         * Inviter d'abord, décider ensuite.
+         *
+         * Un gérant a pu inviter cette adresse avant que le compte
+         * existe ; dans ce cas la personne rejoint un site et ne fonde
+         * pas d'activité. Il faut donc chercher l'invitation avant
+         * d'écrire le profil, puisque c'est elle qui dit le rôle.
+         *
+         * Et si cette recherche échoue, on ne décide rien. Elle échouait
+         * en silence et l'échec valait « personne ne l'a invité » : un
+         * employé devenait propriétaire de sa propre activité. Une panne
+         * de réseau ne doit pas distribuer les droits.
+         */
         let invite = 0;
-        try { invite = await rattacherCompte(cred.user.uid, email); }
-        catch { invite = 0; }
+        try {
+          invite = await rattacherCompte(cred.user.uid, email);
+        } catch (e) {
+          /* Le compte d'authentification existe déjà : le laisser sans
+             profil vaut mieux qu'un profil faux. Il se reconnectera, et
+             le rattachement se refera — cette fois depuis un compte
+             connecté, ce que les règles acceptent. */
+          setError(
+            'Compte créé, mais votre invitation n’a pas pu être vérifiée. '
+            + 'Connectez-vous : elle sera retrouvée.');
+          setLoading(false);
+          return;
+        }
 
         await setDoc(doc(db, 'users', cred.user.uid), {
           uid: cred.user.uid,
