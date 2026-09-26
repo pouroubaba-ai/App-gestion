@@ -128,7 +128,39 @@ function statutLigne(l: LigneRemuneration): { label: string; color: string } {
 /* Génère les prochaines lignes manquantes pour une assignation.
    Règle : une nouvelle instance démarre quand dateFin de la dernière est <= aujourd'hui,
    peu importe si elle est soldée ou non. */
-async function genererLignesManquantes(
+/**
+ * Une génération à la fois, par employé.
+ *
+ * La fiche se charge deux fois — `user` s'initialise après le premier
+ * rendu, et React monte deux fois en développement. Les deux passages
+ * lisaient zéro ligne existante et créaient chacun la première
+ * rémunération : l'employé devait 200 000 pour un salaire de 100 000.
+ *
+ * Le second appel retrouve ici la promesse du premier et l'attend, au
+ * lieu de générer à son tour.
+ */
+const generationsEnCours = new Map<string, Promise<LigneRemuneration[]>>();
+
+function genererLignesManquantes(
+  assignation: AssignationRemuneration,
+  lignesExistantes: LigneRemuneration[],
+  employeId: string, siteId: string, userId: string,
+  contexteAvance?: {
+    config: AvanceConfig;
+    avances: Avance[];
+  },
+): Promise<LigneRemuneration[]> {
+  const cle = `${employeId}:${assignation.id}`;
+  const enCours = generationsEnCours.get(cle);
+  if (enCours) return enCours;
+  const promesse = genererVraiment(
+    assignation, lignesExistantes, employeId, siteId, userId, contexteAvance,
+  ).finally(() => generationsEnCours.delete(cle));
+  generationsEnCours.set(cle, promesse);
+  return promesse;
+}
+
+async function genererVraiment(
   assignation: AssignationRemuneration,
   lignesExistantes: LigneRemuneration[],
   employeId: string, siteId: string, userId: string,

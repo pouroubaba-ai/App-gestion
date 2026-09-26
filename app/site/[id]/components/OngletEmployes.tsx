@@ -176,17 +176,14 @@ export default function OngletEmployes({ siteId, userId, sites, titre }: Props) 
         createdAt: serverTimestamp(),
       });
     }
-    const mensuel = assignsTemp
-      .filter(a => a.actif && a.intervalleJours)
-      .reduce((s, a) => s + (a.valeur / a.intervalleJours) * 30, 0);
-    const nouvel: Employe = {
-      id: ref.id, nom: nomEdit.trim(), fonction: fonctionEdit.trim(),
-      contact: contactEdit.trim(), etat: etatEdit,
-      remunerationConfiguree: mensuel > 0 ? Math.round(mensuel) : undefined,
-      totalRemuneration: 0, verseRemuneration: 0, resteRemuneration: 0,
-      totalAvance: 0, verseAvance: 0, resteAvance: 0,
-    };
-    setEmployes(prev => [...prev, nouvel]);
+    /* On relit plutôt que de recopier.
+     *
+     * La ligne était fabriquée ici avec des zéros, alors qu'une
+     * assignation active fait naître aussitôt une première rémunération :
+     * la liste annonçait « Total 0 · Soldé » pendant que la fiche du même
+     * employé affichait 100 000 à verser. Deux façons de connaître la
+     * même chose finissent toujours par se contredire. */
+    await charger();
     setSaving(false);
     setModalOuvert(false);
   }
