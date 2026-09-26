@@ -799,3 +799,28 @@ export async function dejaEngage(
   }
   return compte;
 }
+
+/**
+ * Les retours clients confirmés, réduits à ce qu'un tableau de bord lit.
+ *
+ * Un retour déclaré n'est pas un retour fait : tant que la marchandise
+ * n'est pas revenue, rien n'a été rendu et il n'y a rien à retrancher des
+ * ventes. Seul l'état final compte donc — celui où la marchandise a
+ * changé de mains.
+ *
+ * Côté fournisseur, ce qu'on rend n'a jamais été vendu : l'inscrire à
+ * côté des ventes mêlerait deux gestes opposés. Cet écran ne parle que de
+ * ce qui est sorti puis revenu.
+ */
+export async function retoursClientsConfirmes(portee: Portee): Promise<
+  { date: string; montant: number; siteId: string | null }[]
+> {
+  const dossiers = await chargerRetours(portee);
+  return dossiers
+    .filter(d => d.type === 'client' && d.etat === etatFinal('client'))
+    .map(d => ({
+      date: d.date,
+      montant: d.valeurTotale ?? 0,
+      siteId: d.siteId ?? null,
+    }));
+}

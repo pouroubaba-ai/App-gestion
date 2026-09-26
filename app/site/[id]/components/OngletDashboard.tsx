@@ -14,11 +14,15 @@ import { useSites, FiltreSite, type PropsPortee } from './ContexteSites';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { lireParSite, sitesDe } from '@/lib/portee';
 import VentesCard from './finance/VentesCard';
+import {
+  chargerAttente, totauxEnAttente, type MouvementAttente,
+} from '@/lib/attente-caisse';
+import { retoursClientsConfirmes } from '@/lib/retours-dossiers';
 import VentesBeneficeChart from './finance/VentesBeneficeChart';
 import DepensesChart from './finance/DepensesChart';
 import CreancesDettesCard from './finance/CreancesDettesCard';
 import {
-  Loader2,
+  Loader2, Hourglass,
 } from 'lucide-react';
 
 interface Props extends PropsPortee {
@@ -102,8 +106,16 @@ export default function OngletDashboard({ siteId, userId, onNaviguer, sites, tit
   const [creance, setCreance] = useState(0);
   /* Ce qui reste dû sur chaque vente, avec sa date : « à encaisser » suit
      le filtre, là où la créance totale dit tout ce qu'on attend. */
+  /* Ce qui attend le tiroir : déclaré par quelqu'un, pas encore constaté
+     par le caissier. Le tableau de bord le montrait nulle part — il
+     fallait ouvrir « Fonds disponible » pour savoir qu'on attendait. */
+  const [attente, setAttente] = useState<MouvementAttente[]>([]);
   const [restesVentes, setRestesVentes] = useState<
     { date: string | null; reste: number; siteId: string | null }[]>([]);
+  /* Ce que les clients ont rendu. Seuls les retours confirmés comptent :
+     tant que la marchandise n'est pas revenue, rien n'a été rendu. */
+  const [retours, setRetours] = useState<
+    { date: string; montant: number; siteId: string | null }[]>([]);
   const [dette, setDette] = useState(0);
   const [loading, setLoading] = useState(true);
   /* Ce qui s'est passé aujourd'hui : c'est la question qu'on se pose en
@@ -211,6 +223,8 @@ export default function OngletDashboard({ siteId, userId, onNaviguer, sites, tit
       const soldes = await soldesDuSite(ctx.portee);
       const cr = totalRole(soldes, 'client').reste;
       restesDesVentes(ctx.portee).then(setRestesVentes).catch(() => setRestesVentes([]));
+      chargerAttente(ctx.portee).then(setAttente).catch(() => setAttente([]));
+      retoursClientsConfirmes(ctx.portee).then(setRetours).catch(() => setRetours([]));
       /* Fournisseurs et employés : deux créanciers, une seule dette. */
       const de = totalRole(soldes, 'fournisseur').reste + detteEmpTotale;
 
@@ -281,14 +295,37 @@ export default function OngletDashboard({ siteId, userId, onNaviguer, sites, tit
      dû. Les deux se rapportent désormais aux mêmes ventes, donc leur
      somme fait le total vendu — ce qui n'était pas le cas tant que la
      créance courante servait de reste. */
-  const encaisse = Math.max(0, totalVentes - resteAEncaisser);
+  /* Ce qui est revenu sur la période, au prix du document d'origine. */
+  const totalRetours = retours
+    .filter(r => dansPeriode(r.date))
+    .reduce((s, r) => s + r.montant, 0);
 
-  /* Découpage de l'axe des abscisses selon la période choisie. */
+  /* Encaissé : ce qui a été vendu moins ce qui en reste dû — mais borné
+     par ce qui reste vendable.
+     
+     Un retour éteint la dette sans qu'un franc ne rentre : le reste tombe,
+     et l'encaissé, qui se déduit de lui, monterait d'autant. L'écran
+     annoncerait un encaissement que personne n'a fait. On le plafonne donc
+     à ce qui n'a pas été rendu, exactement comme la carte partenaire borne
+     le versé. */
+  const encaisse = Math.min(
+    Math.max(0, totalVentes - resteAEncaisser),
+    Math.max(0, totalVentes - totalRetours));
+
+  /* Découpage de l'axe des abscisses selon la période choisie.
+   *
+   * Les retours suivent les mêmes tranches que les ventes : deux
+   * découpages différents mettraient un retour de mardi sous la vente de
+   * mercredi, et la courbe rouge ne voudrait plus rien dire. */
+  const somme = (liste: { montant: number }[]) =>
+    liste.reduce((n, x) => n + x.montant, 0);
+
   const serie = (() => {
     const now = new Date();
     if (periode === 'jour') {
       /* pas de granularité horaire sur les mouvements : on borne à la journée */
-      return [{ label: "Aujourd'hui", a: totalVentes, b: totalBenefice }];
+      return [{ label: "Aujourd'hui", a: totalVentes, b: totalBenefice,
+                r: totalRetours }];
     }
     if (periode === 'semaine') {
       return JOURS.map((label, i) => {
@@ -296,7 +333,8 @@ export default function OngletDashboard({ siteId, userId, onNaviguer, sites, tit
         d.setDate(d.getDate() + i);
         const cle = iso(d);
         const jour = ventes.filter(v => v.date === cle);
-        return { label, a: jour.reduce((s, v) => s + v.montant, 0), b: jour.reduce((s, v) => s + v.benefice, 0) };
+        return { label, a: jour.reduce((s, v) => s + v.montant, 0), b: jour.reduce((s, v) => s + v.benefice, 0),
+                 r: somme(retours.filter(x => x.date === cle)) };
       });
     }
     if (periode === 'mois') {
@@ -304,20 +342,28 @@ export default function OngletDashboard({ siteId, userId, onNaviguer, sites, tit
         const deb = new Date(debut); deb.setDate(1 + i * 7);
         const fin = new Date(debut); fin.setDate(1 + (i + 1) * 7);
         const bloc = ventes.filter(v => v.date >= iso(deb) && v.date < iso(fin));
-        return { label: `S${i + 1}`, a: bloc.reduce((s, v) => s + v.montant, 0), b: bloc.reduce((s, v) => s + v.benefice, 0) };
+        return { label: `S${i + 1}`, a: bloc.reduce((s, v) => s + v.montant, 0), b: bloc.reduce((s, v) => s + v.benefice, 0),
+                 r: somme(retours.filter(x => x.date >= iso(deb) && x.date < iso(fin))) };
       });
     }
     if (periode === 'annee') {
       return MOIS.map((label, i) => {
         const prefixe = `${now.getFullYear()}-${String(i + 1).padStart(2, '0')}`;
         const bloc = ventes.filter(v => (v.date ?? '').startsWith(prefixe));
-        return { label, a: bloc.reduce((s, v) => s + v.montant, 0), b: bloc.reduce((s, v) => s + v.benefice, 0) };
+        return { label, a: bloc.reduce((s, v) => s + v.montant, 0), b: bloc.reduce((s, v) => s + v.benefice, 0),
+                 r: somme(retours.filter(x => (x.date ?? '').startsWith(prefixe))) };
       });
     }
-    const annees = [...new Set(ventes.map(v => (v.date ?? '').slice(0, 4)).filter(Boolean))].sort();
+    /* Une année où l'on n'a que rendu existe aussi : la lire des seules
+       ventes la ferait disparaître de l'axe. */
+    const annees = [...new Set([
+      ...ventes.map(v => (v.date ?? '').slice(0, 4)),
+      ...retours.map(r => (r.date ?? '').slice(0, 4)),
+    ].filter(Boolean))].sort();
     return annees.map(an => {
       const bloc = ventes.filter(v => (v.date ?? '').startsWith(an));
-      return { label: an, a: bloc.reduce((s, v) => s + v.montant, 0), b: bloc.reduce((s, v) => s + v.benefice, 0) };
+      return { label: an, a: bloc.reduce((s, v) => s + v.montant, 0), b: bloc.reduce((s, v) => s + v.benefice, 0),
+               r: somme(retours.filter(x => (x.date ?? '').startsWith(an))) };
     });
   })();
 
@@ -344,11 +390,20 @@ export default function OngletDashboard({ siteId, userId, onNaviguer, sites, tit
     const ventesS = v.reduce((n, x) => n + x.montant, 0);
     const beneficeS = v.reduce((n, x) => n + x.benefice, 0);
     const sol = soldesParSite[id] ?? { creance: 0, dette: 0 };
+    /* Le même plafond que sur la vue d'ensemble : une créance éteinte par
+       de la marchandise ne fait pas un encaissement. */
+    const retoursS = retours
+      .filter(r => r.siteId === id && dansPeriode(r.date))
+      .reduce((n, r) => n + r.montant, 0);
     return {
       ventes: ventesS,
       benefice: beneficeS,
-      /* Encaissé : ce qui a été vendu moins ce qui reste dû. */
-      encaisse: Math.max(0, ventesS - sol.creance),
+      retours: retoursS,
+      /* Encaissé : ce qui a été vendu moins ce qui reste dû, borné par ce
+         qui n'a pas été rendu. */
+      encaisse: Math.min(
+        Math.max(0, ventesS - sol.creance),
+        Math.max(0, ventesS - retoursS)),
       creance: sol.creance,
       dette: sol.dette,
       fonds: soldeCaisse(mouvementsCaisse.filter(m => m.siteId === id)),
@@ -408,7 +463,7 @@ export default function OngletDashboard({ siteId, userId, onNaviguer, sites, tit
               /* Rien vendu, rien dû, rien en caisse : le dire vaut mieux que
                  six zéros alignés qu'il faut lire pour comprendre. */
               const dort = c.ventes === 0 && c.creance === 0
-                && c.dette === 0 && c.fonds === 0;
+                && c.dette === 0 && c.fonds === 0 && c.retours === 0;
 
               return (
                 /* La carte dit d'où l'on vient : la fiche du site rend
@@ -456,7 +511,16 @@ export default function OngletDashboard({ siteId, userId, onNaviguer, sites, tit
                           le reste dû est ce qui manque à la barre. */}
                       <div className="mt-4">
                         <div className="mb-1.5 flex items-baseline justify-between gap-2 text-xs">
-                          <span className="text-gray-400">Encaissé</span>
+                          <span className="text-gray-400">
+                            Encaissé
+                            {/* Le retour explique un encaissé plus bas que
+                                le vendu : sans lui, l'écart n'a pas de nom. */}
+                            {c.retours > 0 && (
+                              <span className="ml-1 font-semibold text-red-500">
+                                · Retours {formatMontant(c.retours)}
+                              </span>
+                            )}
+                          </span>
                           <span className="font-bold text-gray-900 dark:text-gray-100">
                             {formatMontant(c.encaisse)}
                             <span className="ml-1 font-medium text-gray-400">{taux} %</span>
@@ -503,9 +567,54 @@ export default function OngletDashboard({ siteId, userId, onNaviguer, sites, tit
         benefice={totalBenefice}
         encaisse={encaisse}
         reste={resteAEncaisser}
+        retours={totalRetours}
         fonds={fonds}
         onNaviguer={onNaviguer}
       />
+
+      {/* Ce qui attend le tiroir, en pleine largeur sous les trois cartes.
+          Elle ne paraît que lorsqu'il y a quelque chose à confirmer : une
+          carte à zéro en permanence finirait par ne plus être lue, et
+          c'est justement celle qu'il faut voir. */}
+      {(() => {
+        const t = totauxEnAttente(attente);
+        if (t.nb === 0) return null;
+        return (
+          <button type="button"
+            onClick={() => onNaviguer('fonds')}
+            className="w-full rounded-2xl border border-amber-200 bg-amber-50/60 p-4 text-left transition-colors hover:bg-amber-50 dark:border-amber-900/40 dark:bg-amber-900/10 dark:hover:bg-amber-900/20">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-amber-600 dark:text-amber-400">
+                  <Hourglass size={12} /> À confirmer
+                </p>
+                <p className="mt-0.5 text-[12px] text-gray-500 dark:text-gray-400">
+                  {t.nb} mouvement{t.nb > 1 ? 's' : ''} déclaré{t.nb > 1 ? 's' : ''},
+                  en attente du caissier.
+                </p>
+              </div>
+              <div className="flex shrink-0 gap-2">
+                <div className="rounded-xl bg-white px-3 py-2 dark:bg-gray-900">
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">
+                    Entrées
+                  </p>
+                  <p className={`${hankenGrotesk.className} text-[17px] font-bold leading-6 text-green-600`}>
+                    {formatMontant(t.entrees)}
+                  </p>
+                </div>
+                <div className="rounded-xl bg-white px-3 py-2 dark:bg-gray-900">
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">
+                    Sorties
+                  </p>
+                  <p className={`${hankenGrotesk.className} text-[17px] font-bold leading-6 text-red-500`}>
+                    {formatMontant(t.sorties)}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </button>
+        );
+      })()}
 
       {/* La courbe s'étire avec la place disponible : sur un grand écran elle
           poussait les deux cartes de droite hors de vue. Une hauteur bornée
@@ -513,7 +622,7 @@ export default function OngletDashboard({ siteId, userId, onNaviguer, sites, tit
       <div className="grid min-h-0 grid-cols-1 gap-3 lg:grid-cols-[1.7fr_1fr]">
         <div className="min-h-[280px] max-h-[420px]">
           <VentesBeneficeChart donnees={serie.map(s => ({
-            jour: s.label, ventes: s.a, benefice: s.b,
+            jour: s.label, ventes: s.a, benefice: s.b, retours: s.r,
           }))} />
         </div>
         <div className="grid min-h-0 max-h-[420px] grid-rows-2 gap-3">

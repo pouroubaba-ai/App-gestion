@@ -9,6 +9,13 @@ export interface PointSerie {
   jour: string;
   ventes: number;
   benefice: number;
+  /**
+   * Ce qui est revenu sur la période.
+   *
+   * Absent tant qu'aucun retour n'a eu lieu : une courbe plate à zéro
+   * occuperait la légende et le bas du graphique pour ne rien dire.
+   */
+  retours?: number;
 }
 
 const WIDTH = 380;
@@ -49,7 +56,12 @@ export default function VentesBeneficeChart({ donnees }: { donnees: PointSerie[]
     );
   }
 
-  const SCALE_MAX = echelle(Math.max(...data.map(d => Math.max(d.ventes, d.benefice))));
+  /* La courbe des retours ne se dessine que s'il y en a eu : sinon elle
+     collerait à l'axe et brouillerait la lecture des deux autres. */
+  const avecRetours = data.some(d => (d.retours ?? 0) > 0);
+
+  const SCALE_MAX = echelle(Math.max(...data.map(
+    d => Math.max(d.ventes, d.benefice, d.retours ?? 0))));
   const TICKS = [0, 0.25, 0.5, 0.75, 1].map(f => Math.round(SCALE_MAX * f));
 
   const plotWidth = WIDTH - PADDING_LEFT - PADDING_RIGHT;
@@ -59,7 +71,8 @@ export default function VentesBeneficeChart({ donnees }: { donnees: PointSerie[]
     const x = PADDING_LEFT + i * slotWidth;
     const ventesY = BASELINE - (d.ventes / SCALE_MAX) * CHART_HEIGHT;
     const beneficeY = BASELINE - (d.benefice / SCALE_MAX) * CHART_HEIGHT;
-    return { ...d, x, ventesY, beneficeY };
+    const retoursY = BASELINE - ((d.retours ?? 0) / SCALE_MAX) * CHART_HEIGHT;
+    return { ...d, x, ventesY, beneficeY, retoursY };
   });
 
   const ticks = TICKS.map((v) => ({
@@ -69,6 +82,7 @@ export default function VentesBeneficeChart({ donnees }: { donnees: PointSerie[]
 
   const ventesLine = points.map((p) => `${p.x},${p.ventesY}`).join(' L ');
   const beneficeLine = points.map((p) => `${p.x},${p.beneficeY}`).join(' L ');
+  const retoursLine = points.map((p) => `${p.x},${p.retoursY}`).join(' L ');
   const ventesArea = `M ${ventesLine} L ${points[points.length - 1].x},${BASELINE} L ${points[0].x},${BASELINE} Z`;
 
   return (
@@ -83,6 +97,11 @@ export default function VentesBeneficeChart({ donnees }: { donnees: PointSerie[]
         <span className="flex items-center gap-1.5 text-[11px] text-neutral-500">
           <span className="h-2 w-2 rounded-sm bg-teal-500" /> Bénéfice
         </span>
+        {avecRetours && (
+          <span className="flex items-center gap-1.5 text-[11px] text-neutral-500">
+            <span className="h-2 w-2 rounded-sm bg-red-500" /> Retours
+          </span>
+        )}
       </div>
 
       <div className="flex min-h-0 flex-1 items-center">
@@ -141,11 +160,26 @@ export default function VentesBeneficeChart({ donnees }: { donnees: PointSerie[]
             strokeLinecap="round"
           />
 
+          {avecRetours && (
+            <path
+              d={`M ${retoursLine}`}
+              fill="none"
+              stroke="#ef4444"
+              strokeWidth="2.5"
+              strokeLinejoin="round"
+              strokeLinecap="round"
+            />
+          )}
+
           {points.map((p, i) => (
             <circle key={`pv-${i}`} cx={p.x} cy={p.ventesY} r="4" fill="#fff" stroke="#4f46e5" strokeWidth="2.5" />
           ))}
           {points.map((p, i) => (
             <circle key={`pb-${i}`} cx={p.x} cy={p.beneficeY} r="3.5" fill="#fff" stroke="#14b8a6" strokeWidth="2.5" />
+          ))}
+
+          {avecRetours && points.map((p, i) => (
+            <circle key={`pr-${i}`} cx={p.x} cy={p.retoursY} r="3.5" fill="#fff" stroke="#ef4444" strokeWidth="2.5" />
           ))}
 
           {points.map((p, i) => (

@@ -7,11 +7,22 @@ import { formatMontant } from '@/lib/format';
  * des données du site au lieu d'être écrits en dur.
  */
 export default function VentesCard({
-  ventes, benefice, encaisse, reste, fonds, sousTitreFonds, onNaviguer,
+  ventes, benefice, encaisse, reste, retours = 0, fonds, sousTitreFonds,
+  onNaviguer,
 }: {
   ventes: number;
   benefice: number;
   encaisse: number;
+  /**
+   * Ce que les clients ont rendu sur la période.
+   *
+   * Il ne se retranche pas de l'encaissé : l'argent est bien rentré, et
+   * ce qui repart le fait par la caisse ou par la dette, chacune tenant
+   * déjà son propre compte. On le montre à côté parce qu'il explique un
+   * reste plus petit que prévu — sans lui, la vente et ce qui rentre ne
+   * se recoupent plus et l'écart n'a pas de nom.
+   */
+  retours?: number;
   /**
    * Ce qui reste dû sur les ventes de la période affichée.
    *
@@ -65,6 +76,13 @@ export default function VentesCard({
         </p>
         <p className="mt-1.5 text-xs font-medium text-neutral-400">
           Encaissé {formatMontant(encaisse)}
+          {/* Le retour ne paraît que s'il existe : un « Retours 0 FCFA »
+              permanent ferait lire un incident là où il n'y a rien. */}
+          {retours > 0 ? (
+            <span className="font-semibold text-red-500">
+              {' · '}Retours {formatMontant(retours)}
+            </span>
+          ) : null}
           {/* Ce taux est celui du reste, pas de l'encaissé. Collé derrière
               « Encaissé 0 FCFA », « 100 % des ventes » se lisait comme un
               encaissement total alors qu'il dit l'inverse. */}
