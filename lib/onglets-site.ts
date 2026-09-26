@@ -12,7 +12,7 @@
 import {
   LayoutDashboard, Wallet, RefreshCw, ShoppingCart, ArrowLeftRight, Package,
   Handshake, CalendarClock, Users, History, ClipboardList, Settings, HandCoins,
-  ListOrdered, ShieldCheck, Undo2,
+  ListOrdered, ShieldCheck, Undo2, SlidersHorizontal,
 } from 'lucide-react';
 import { ongletsDuRole, type RoleSite } from './roles';
 
@@ -20,7 +20,7 @@ export type Onglet =
   | 'dashboard' | 'fonds' | 'cycle-vente' | 'achats' | 'transferts'
   | 'inventaire' | 'partenaires' | 'recouvrements' | 'employes'
   | 'historique' | 'audit' | 'configuration' | 'remises' | 'retours'
-  | 'mouvements' | 'autorisations';
+  | 'mouvements' | 'mouvements-stock' | 'autorisations';
 
 export const ONGLETS_SITE: { key: Onglet; label: string; icon: React.ElementType }[] = [
   /* Constater */
@@ -41,6 +41,11 @@ export const ONGLETS_SITE: { key: Onglet; label: string; icon: React.ElementType
      cycle plutôt que de vivre à part. */
   { key: 'retours',        label: 'Retours',          icon: Undo2 },
   { key: 'inventaire',     label: 'Inventaire',       icon: Package },
+  /* Les mouvements de stock ont leur page, et non un recoin de
+     l'inventaire : le responsable des commandes n'ouvre pas l'inventaire,
+     et c'est pourtant lui qui va compter au rayon puis confirmer. Les y
+     enterrer les lui rendrait invisibles. */
+  { key: 'mouvements-stock', label: 'Mouvements de stock', icon: SlidersHorizontal },
 
   /* Ceux qui doivent, ceux à qui l'on doit */
   { key: 'partenaires',    label: 'Partenaires',      icon: Handshake },

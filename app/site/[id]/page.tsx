@@ -18,6 +18,7 @@ import OngletRemises from './components/OngletRemises';
 import OngletRetours from './components/OngletRetours';
 import OngletEmployes from './components/OngletEmployes';
 import OngletInventaire from './components/OngletInventaire';
+import ListeMouvementsStock from './components/ListeMouvementsStock';
 import OngletDashboard from './components/OngletDashboard';
 import OngletConfiguration from './components/OngletConfiguration';
 import OngletFonds from './components/OngletFonds';
@@ -54,7 +55,8 @@ interface Site {
 const ONGLETS_PRETS: Onglet[] = [
   'dashboard', 'fonds', 'mouvements', 'autorisations',
   'partenaires', 'recouvrements',
-  'employes', 'cycle-vente', 'achats', 'transferts', 'inventaire', 'historique',
+  'employes', 'cycle-vente', 'achats', 'transferts', 'inventaire',
+  'mouvements-stock', 'historique',
   'remises',
   'retours',
   'configuration',
@@ -302,6 +304,10 @@ export default function SiteFichePage() {
             <OngletAutorisations siteId={siteId} userId={user!.uid} />
           )}
           {ongletCourant === 'inventaire' && <OngletInventaire siteId={siteId} userId={user!.uid} />}
+          {ongletCourant === 'mouvements-stock' && (
+            <ListeMouvementsStock
+              portee={siteId} siteEcriture={siteId} ensemble={false} />
+          )}
           {ongletCourant === 'transferts' && <OngletTransferts siteId={siteId} userId={user!.uid} role={role} />}
           {ongletCourant === 'achats' && (
             <OngletAchats siteId={siteId} userId={user!.uid} role={role} />

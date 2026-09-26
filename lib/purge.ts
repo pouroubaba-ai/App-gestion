@@ -145,6 +145,16 @@ export async function viderExploitation(
   complet = false,
   /** L'activité dont on vide les produits, au vidage complet. */
   activiteId?: string | null,
+  /**
+   * Garder la maison debout : sites, membres et comptes.
+   *
+   * Entre « l'exploitation », qui laisse le catalogue et les partenaires,
+   * et « tout », qui détruit jusqu'aux boutiques et à leurs accès, il
+   * manquait le cas réel : repartir d'une base vide sans avoir à
+   * recréer ses sites ni réinviter son équipe. Les comptes ne sont
+   * jamais touchés par cette purge, de toute façon.
+   */
+  garderLaMaison = false,
 ): Promise<BilanPurge> {
   const bilan: BilanPurge = {
     parCollection: {}, total: 0, produitsRemisAZero: 0, refuses: {},
@@ -176,6 +186,12 @@ export async function viderExploitation(
     for (const siteId of siteIds) {
       await traiter('transferts', champ, siteId, simuler, bilan);
     }
+  }
+
+  if (complet && garderLaMaison) {
+    /* Les boutiques et leurs accès restent : c'est tout ce qu'on garde.
+       Le stock, lui, est parti avec les détentions. */
+    return bilan;
   }
 
   if (complet) {

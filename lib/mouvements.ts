@@ -150,11 +150,18 @@ export async function enregistrerMouvement(saisie: SaisieMouvement): Promise<Mou
     valeurTotale: saisie.valeurUnitaire * qteUnites,
     /* Un transfert déplace de la valeur sans la réaliser : ni bénéfice ni perte.
        Une perte détruit le stock : elle coûte son coût moyen.
-       Une vente réalise la marge entre le prix obtenu et le coût moyen. */
+       Une vente réalise la marge entre le prix obtenu et le coût moyen.
+       Une sortie sans prix — un don, un usage interne — ne réalise rien :
+       la marchandise a servi, elle n'est pas perdue. La formule de la
+       marge lui donnait pourtant `0 − coût`, soit exactement le calcul
+       d'une perte : la distinction s'effondrait à l'écriture, et tout ce
+       qui sortait gratuitement grevait le bénéfice. */
     ...(saisie.sens === 'sortie' && saisie.motif !== 'transfert' ? {
       coutMoyenAlors: coutAvant,
       benefice: saisie.motif === 'perte'
         ? -coutAvant * qteUnites
+        : saisie.valeurUnitaire <= 0
+        ? 0
         : (saisie.valeurUnitaire - coutAvant) * qteUnites,
     } : {}),
     partenaireId: saisie.partenaireId ?? null,

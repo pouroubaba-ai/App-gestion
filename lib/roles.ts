@@ -63,7 +63,7 @@ const ONGLETS_PAR_ROLE: Record<RoleSite, string[] | null> = {
   gerant: [
     'dashboard', 'fonds', 'partenaires', 'recouvrements', 'employes',
     'cycle-vente', 'achats', 'transferts', 'retours', 'inventaire',
-    'historique', 'remises', 'audit',
+    'mouvements-stock', 'historique', 'remises', 'audit',
   ],
   /* Il ne voit pas le fond de caisse — ce tiroir n'est pas le sien — mais
      il doit savoir ce qu'il porte : « Mes remises » dit ce qu'il a encaissé
@@ -76,7 +76,13 @@ const ONGLETS_PAR_ROLE: Record<RoleSite, string[] | null> = {
      marchandise, le même geste à l'envers. Il les traite sans les ouvrir
      — décider qu'une marchandise repart éteint une dette ou fait sortir
      de l'argent, et cela revient à qui répond du site. */
-  commandes: ['cycle-vente', 'achats', 'transferts', 'retours'],
+  /* Le mouvement de stock suit la même règle que le retour : le gérant
+     déclare ce qui manque, le responsable va compter au rayon et
+     confirme. Sans cet onglet il ne verrait jamais ce qu'on lui demande
+     de constater. */
+  commandes: [
+    'cycle-vente', 'achats', 'transferts', 'retours', 'mouvements-stock',
+  ],
   /* Trois écrans pour un seul métier : ce qu'il y a dans le tiroir, ce qui
      y est passé, ce qui attend d'y entrer. Le caissier travaille au
      téléphone et ne fait que cela : empilés sur une page, le registre

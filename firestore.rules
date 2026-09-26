@@ -474,6 +474,28 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    /**
+     * Les mouvements de stock déclarés.
+     *
+     * Même forme qu'un retour, et pour la même raison : celui qui
+     * déclare une perte ne doit pas être celui qui la constate. La règle
+     * tient les deux bouts — l'auteur ne change jamais, et le
+     * confirmateur ne peut pas être lui.
+     */
+    match /ajustements/{id} {
+      allow get: if travailleSur(resource.data.get('siteId', ''));
+      allow list: if aUneActivite();
+      allow create: if travailleSur(siteEnvoye())
+        && request.resource.data.get('parUid', '') == monUid()
+        && request.resource.data.get('etat', '') == 'declare';
+      allow update: if travailleSur(siteDuDoc())
+        && request.resource.data.get('parUid', '') == resource.data.get('parUid', '')
+        && (request.resource.data.get('confirmeParUid', '') == ''
+          || request.resource.data.get('confirmeParUid', '') != resource.data.get('parUid', ''));
+      /* Un mouvement annulé reste au registre : il raconte une tentative. */
+      allow delete: if false;
+    }
+
     // ---------------------------------------------------------------
     // Le reste : même frontière, moins de cérémonie
     // ---------------------------------------------------------------

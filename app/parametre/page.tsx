@@ -41,7 +41,12 @@ export default function ParametrePage() {
   const [purgeFaite, setPurgeFaite] = useState<BilanPurge | null>(null);
   const [erreurPurge, setErreurPurge] = useState('');
   /* Ce qu'on efface : ce que la boutique a fait, ou tout ce qu'elle a. */
-  const [complet, setComplet] = useState(false);
+  /* Trois étendues, trois intentions : repartir d'un compte propre,
+     tout vider en gardant ses boutiques et son équipe, ou tout raser. */
+  type Etendue = 'exploitation' | 'maison' | 'tout';
+  const [etendue, setEtendue] = useState<Etendue>('exploitation');
+  const complet = etendue !== 'exploitation';
+  const garderLaMaison = etendue === 'maison';
 
   /** Les sites de l'activité : c'est sur eux que porte la purge. */
   async function sitesDeLActivite(): Promise<string[]> {
@@ -56,7 +61,8 @@ export default function ParametrePage() {
     setPurgeEnCours(true); setErreurPurge(''); setPurgeFaite(null);
     try {
       setBilan(await viderExploitation(
-        await sitesDeLActivite(), true, complet, activite?.id ?? null));
+        await sitesDeLActivite(), true, complet, activite?.id ?? null,
+        garderLaMaison));
     } catch (e: any) { setErreurPurge(e?.message ?? 'Échec de la lecture.'); }
     finally { setPurgeEnCours(false); }
   }
@@ -68,7 +74,8 @@ export default function ParametrePage() {
     setPurgeEnCours(true); setErreurPurge('');
     try {
       const fait = await viderExploitation(
-        await sitesDeLActivite(), false, complet, activite?.id ?? null);
+        await sitesDeLActivite(), false, complet, activite?.id ?? null,
+        garderLaMaison);
       setPurgeFaite(fait);
       setBilan(null);
       setConfirmation('');
@@ -235,13 +242,14 @@ export default function ParametrePage() {
               bilan ne dit pas ce qu'on croit. */}
           <div className="mt-3 flex items-center rounded-xl bg-white p-1 dark:bg-gray-900">
             {([
-              { cle: false, label: 'Exploitation' },
-              { cle: true, label: 'Tout' },
+              { cle: 'exploitation' as const, label: 'Exploitation' },
+              { cle: 'maison' as const, label: 'Garder la maison' },
+              { cle: 'tout' as const, label: 'Tout' },
             ]).map(o => (
-              <button key={String(o.cle)}
-                onClick={() => { setComplet(o.cle); setBilan(null); setPurgeFaite(null); setConfirmation(''); }}
-                className={`flex-1 rounded-lg px-3 py-1.5 text-xs font-bold transition-all ${
-                  complet === o.cle
+              <button key={o.cle}
+                onClick={() => { setEtendue(o.cle); setBilan(null); setPurgeFaite(null); setConfirmation(''); }}
+                className={`flex-1 rounded-lg px-2 py-1.5 text-[11px] font-bold transition-all ${
+                  etendue === o.cle
                     ? 'bg-red-600 text-white'
                     : 'text-gray-400 hover:text-gray-600'}`}>
                 {o.label}
@@ -250,12 +258,18 @@ export default function ParametrePage() {
           </div>
 
           <p className="mt-2.5 text-xs text-gray-500 dark:text-gray-400">
-            {complet
+            {etendue === 'tout'
               ? <>Efface <span className="font-bold">tout</span> : l'activité de
                 tous les sites, mais aussi les produits, partenaires,
                 employés, configurations, et les sites eux-mêmes. Seuls
                 l'activité et ton compte restent — il faudra recréer les
                 sites.</>
+              : etendue === 'maison'
+              ? <>Efface <span className="font-bold">tout</span> sauf la maison :
+                l'activité, les sites, les membres et les comptes restent
+                debout. Produits, partenaires, employés, configurations et
+                toute l'exploitation partent. Tu retrouves une base vide sans
+                avoir à recréer tes boutiques ni à réinviter ton équipe.</>
               : <>Efface ce que l'activité a fait — ventes, achats, transferts,
                 caisse, versements, recouvrements — sur tous ses sites, et
                 remet les stocks à zéro. Les sites, produits, partenaires et

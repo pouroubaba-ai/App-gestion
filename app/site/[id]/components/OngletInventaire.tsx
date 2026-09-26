@@ -7,7 +7,7 @@ import { useRouter } from 'next/navigation';
 import { enregistrerStockInitial } from '@/lib/mouvements';
 import { formatMontant } from '@/lib/format';
 import { hankenGrotesk } from './finance/font';
-import { Loader2, Plus, X, Check, Trash2, ChevronDown, ArrowUpDown, Filter } from 'lucide-react';
+import { Loader2, Plus, X, Check, Trash2, ChevronDown, ArrowUpDown, Filter, Download } from 'lucide-react';
 import { ChampRecherche } from '@/components/Champs';
 import { ouvrirPartout, detentionsDe, type ProduitSite } from '@/lib/produits-site';
 import { etatsDepuisMouvements, etatDe, etatDuProduit } from '@/lib/cout-moyen';
@@ -17,6 +17,7 @@ import {
 } from './ContexteSites';
 import { lireParSite } from '@/lib/portee';
 import { auteurCourant } from '@/lib/auteur';
+import { chargerCatalogue, catalogueReprise } from '@/lib/reprise-catalogue';
 
 /** Emballage : un conditionnement exprimé en unités de base (ex. Carton = 12 pièces). */
 interface Emballage {
@@ -221,6 +222,32 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
   const ctx = useSites(siteId, sites);
   /* Un produit naît pour l'activité : il lui faut son identifiant. */
   const { activite } = useAuth();
+  /* Échafaudage d'essai : garnir une activité neuve pour l'éprouver à
+     plusieurs. Les deux boutons partent avec le test — ils ne sont pas
+     une fonctionnalité de l'app. */
+  const [reprise, setReprise] = useState(false);
+  const [repriseFaite, setRepriseFaite] = useState<string | null>(null);
+
+  async function reprendreCatalogue() {
+    if (!activite?.id || reprise) return;
+    setReprise(true);
+    try {
+      const sites = ctx.sites.length > 0
+        ? ctx.sites.map(x => x.id)
+        : (ctx.siteEcriture ? [ctx.siteEcriture] : []);
+      const r = await chargerCatalogue({
+        activiteId: activite.id,
+        siteIds: sites,
+        userId,
+        produits: catalogueReprise(),
+      });
+      setRepriseFaite(`${r.crees} produit${r.crees > 1 ? 's' : ''} chargé${r.crees > 1 ? 's' : ''}.`);
+      await charger();
+    } catch (e: any) {
+      setRepriseFaite(e?.message ?? 'Chargement impossible.');
+    }
+    setReprise(false);
+  }
   const router = useRouter();
   const [produits, setProduits] = useState<Produit[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
@@ -859,6 +886,15 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
                 })}
               </div>
             )}
+            {/* Le catalogue d'essai : visible tant que le rayon est vide,
+                puisqu'il ne sert qu'à garnir une activité neuve. */}
+            {produits.length === 0 && activite?.id && (
+              <button onClick={reprendreCatalogue} disabled={reprise}
+                className="flex shrink-0 items-center gap-1.5 rounded-xl border border-gray-200 px-3 py-2 text-xs font-bold text-gray-600 transition-colors hover:bg-gray-50 disabled:opacity-40 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
+                {reprise ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
+                Charger les produits
+              </button>
+            )}
             {/* Le produit appartient à la maison : on le crée aussi depuis
                 la vue d'ensemble, où se tient le catalogue. */}
             {(ctx.siteEcriture || ctx.ensemble) && (
@@ -870,11 +906,24 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
           </div>
         )}
 
+        {repriseFaite && (
+          <p className="mb-3 rounded-xl bg-gray-50 p-2.5 text-[12px] text-gray-600 dark:bg-gray-800/50 dark:text-gray-300">
+            {repriseFaite}
+          </p>
+        )}
+
         {/* Rayon vide : le bouton reste, c'est par lui qu'on le garnit.
             Enfermé dans la ligne de recherche — qui n'existe qu'une fois
             des produits saisis — il rendait le premier impossible. */}
         {produits.length === 0 && (ctx.siteEcriture || ctx.ensemble) && (
-          <div className="mb-4 flex">
+          <div className="mb-4 flex flex-wrap gap-2">
+            {activite?.id && (
+              <button onClick={reprendreCatalogue} disabled={reprise}
+                className="flex items-center gap-1.5 rounded-xl border border-gray-200 px-3 py-2 text-xs font-bold text-gray-600 transition-colors hover:bg-gray-50 disabled:opacity-40 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
+                {reprise ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
+                Charger les produits
+              </button>
+            )}
             <button onClick={ouvrirModal}
               className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-3 py-2 text-xs font-bold text-white transition-colors hover:bg-indigo-700">
               <Plus size={12} /> Nouveau produit
