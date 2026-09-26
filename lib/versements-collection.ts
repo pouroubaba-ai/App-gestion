@@ -48,7 +48,11 @@ export type MotifVersement =
      « règlement » le dirait mal : rien n'a été payé, quelque chose a été
      rendu, et celui qui relit ses comptes doit pouvoir faire la
      différence. */
-  | 'retour_marchandise';
+  | 'retour_marchandise'
+  /* Deux dettes réciproques s'annulent à hauteur de la plus petite. Rien
+     ne circule : c'est du papier contre du papier, et l'appeler
+     « règlement » ferait croire qu'un tiroir s'est ouvert. */
+  | 'compensation';
 
 export const LIBELLES_MOTIF_VERSEMENT: Record<MotifVersement, string> = {
   avance: 'Avance',
@@ -57,6 +61,7 @@ export const LIBELLES_MOTIF_VERSEMENT: Record<MotifVersement, string> = {
   recouvrement: 'Recouvrement',
   remboursement: 'Remboursement',
   retour_marchandise: 'Retour de marchandise',
+  compensation: 'Compensation',
 };
 
 export interface Versement {

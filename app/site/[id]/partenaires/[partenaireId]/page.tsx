@@ -6,6 +6,12 @@ import {
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/lib/auth-context';
+import { roleSurSite, type RoleSite } from '@/lib/roles';
+import { auteurCourant } from '@/lib/auteur';
+import {
+  simulerCompensation, compenser, peutCompenser,
+  type ApercuCompensation,
+} from '@/lib/compensation';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { formatMontant } from '@/lib/format';
 import { soldeTiers, type SoldeTiers } from '@/lib/soldes';
@@ -51,7 +57,13 @@ interface Site {
 }
 
 export default function FichePartenairePage() {
-  const { user } = useAuth();
+  const { user, activite, profile } = useAuth();
+  /* La compensation engage la maison des deux côtés : elle revient à qui
+     répond des comptes. */
+  const [roleSite, setRoleSite] = useState<RoleSite | null>(null);
+  const [apercuComp, setApercuComp] = useState<ApercuCompensation | null>(null);
+  const [compEnCours, setCompEnCours] = useState(false);
+  const [compMsg, setCompMsg] = useState('');
   const router = useRouter();
   const params = useParams();
   const searchParams = useSearchParams();
@@ -103,6 +115,54 @@ export default function FichePartenairePage() {
   /* Suppression */
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+
+  useEffect(() => {
+    if (!user) return;
+    roleSurSite(user.uid, siteId, activite?.adminUid)
+      .then(setRoleSite)
+      .catch(() => setRoleSite(null));
+  }, [user, siteId, activite?.adminUid]);
+
+  /* Ce qu'une compensation ferait, avant de la faire : on ne demande pas
+     de confirmer une écriture qu'on ne voit pas. */
+  useEffect(() => {
+    if (!partenaire?.rolesFournisseur || !partenaire?.rolesClient) return;
+    simulerCompensation({ siteId, partenaireId })
+      .then(setApercuComp)
+      .catch(() => setApercuComp(null));
+  }, [siteId, partenaireId, partenaire?.rolesFournisseur,
+      partenaire?.rolesClient, partenaire?.dette, partenaire?.creance]);
+
+  async function lancerCompensation() {
+    if (!user || compEnCours) return;
+    setCompEnCours(true); setCompMsg('');
+    try {
+      const a = await auteurCourant(siteId, user.uid, profile?.nom ?? user.email);
+      const r = await compenser({
+        siteId, partenaireId,
+        partenaireNom: partenaire?.nom ?? null,
+        userId: user.uid,
+        date: new Date().toISOString().slice(0, 10),
+        utilisateurNom: a.utilisateurNom,
+        utilisateurFonction: a.utilisateurFonction,
+        roleSite: roleSite,
+      });
+      setCompMsg(`${formatMontant(r.compense)} compensés de chaque côté.`);
+      /* On relit les deux soldes : ils se déduisent des factures moins
+         les versements, et deux versements viennent d'être écrits. */
+      const [f, c] = await Promise.all([
+        soldeTiers(siteId, partenaireId, 'fournisseur'),
+        soldeTiers(siteId, partenaireId, 'client'),
+      ]);
+      setSoldes({ fournisseur: f, client: c });
+      setPartenaire(prev => prev
+        ? { ...prev, dette: f.reste, creance: c.reste } : prev);
+      setApercuComp(await simulerCompensation({ siteId, partenaireId }));
+    } catch (e: any) {
+      setCompMsg(e?.message ?? 'Compensation impossible.');
+    }
+    setCompEnCours(false);
+  }
 
   useEffect(() => {
     if (!user) return;
@@ -178,6 +238,20 @@ export default function FichePartenairePage() {
   async function sauvegarder() {
     if (!nom.trim()) { setErreur('Nom requis.'); return; }
     if (!rolesFournisseur && !rolesClient) { setErreur('Sélectionnez au moins un rôle.'); return; }
+    /* Un bouton verrouillé n'est pas une permission : le rôle se
+       contrôle aussi à l'écriture. Retirer « fournisseur » à un tiers
+       dont les achats existent rendrait ces documents orphelins — ils
+       désigneraient un fournisseur que la fiche ne reconnaît plus. */
+    if (!rolesFournisseur && (soldes?.fournisseur.total ?? 0) > 0) {
+      setErreur('Ce partenaire a des achats : son rôle de fournisseur ne '
+        + 'peut plus être retiré.');
+      return;
+    }
+    if (!rolesClient && (soldes?.client.total ?? 0) > 0) {
+      setErreur('Ce partenaire a des ventes : son rôle de client ne peut '
+        + 'plus être retiré.');
+      return;
+    }
     setSaving(true); setErreur('');
     try {
       const updates = {
@@ -364,6 +438,49 @@ export default function FichePartenairePage() {
           })()}
         </div>
 
+        {/* La compensation : deux dettes réciproques s'annulent.
+            Elle ne paraît que lorsqu'il y en a une de chaque côté —
+            proposer d'annuler un solde contre rien n'aurait pas de sens. */}
+        {apercuComp && apercuComp.compensable > 0 && peutCompenser(roleSite) && (
+          <div className="mb-4 rounded-2xl border border-indigo-200 bg-indigo-50/40 p-4 dark:border-indigo-900/40 dark:bg-indigo-900/10">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-xs font-bold uppercase tracking-wide text-indigo-600 dark:text-indigo-400">
+                  Compensation possible
+                </p>
+                <p className="mt-0.5 text-sm text-gray-600 dark:text-gray-300">
+                  Il doit {formatMontant(apercuComp.creance)}, on lui doit{' '}
+                  {formatMontant(apercuComp.dette)}.{' '}
+                  <span className="font-bold text-gray-900 dark:text-gray-100">
+                    {formatMontant(apercuComp.compensable)}
+                  </span>{' '}
+                  s’annulent de chaque côté.
+                  {apercuComp.reste > 0 && (
+                    <> Restera {formatMontant(apercuComp.reste)}{' '}
+                      {apercuComp.resteCote === 'client'
+                        ? 'à recouvrer' : 'à payer'}.</>
+                  )}
+                </p>
+                <p className="mt-0.5 text-[11px] text-gray-400">
+                  Aucun argent ne circule : la caisse ne voit rien passer.
+                </p>
+              </div>
+              <button type="button" onClick={lancerCompensation}
+                disabled={compEnCours}
+                className="flex shrink-0 items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-xs font-bold text-white transition-colors hover:bg-indigo-700 disabled:opacity-40">
+                {compEnCours && <Loader2 size={13} className="animate-spin" />}
+                Compenser
+              </button>
+            </div>
+          </div>
+        )}
+
+        {compMsg && (
+          <p className="mb-4 rounded-xl bg-gray-50 p-2.5 text-[12px] text-gray-600 dark:bg-gray-800/50 dark:text-gray-300">
+            {compMsg}
+          </p>
+        )}
+
         {/* Recouvrement */}
         <SectionRecouvrement
           partenaireId={partenaireId}
@@ -464,8 +581,18 @@ export default function FichePartenairePage() {
             <p className="text-xs font-bold text-gray-400 uppercase mb-2">Rôle</p>
             <div className="grid grid-cols-2 gap-2 mb-4">
               {(() => {
-                const verrouF = partenaire && (partenaire.dette + (partenaire.verseF || 0)) > 0;
-                const verrouC = partenaire && (partenaire.creance + (partenaire.verseC || 0)) > 0;
+                /* Un rôle se verrouille dès qu'un document existe, pas
+                   seulement tant qu'il reste dû.
+                   Le verrou se fondait sur la dette restante : une fois
+                   soldée — par un versement, un retour ou une
+                   compensation —, le rôle redevenait retirable, et l'on
+                   pouvait ôter « fournisseur » à un tiers dont les achats
+                   sont au registre. `verseF` et `verseC`, eux, n'ont
+                   jamais été écrits : ils valaient toujours zéro et
+                   n'ajoutaient rien. C'est le total des documents qui
+                   dit si le rôle a servi. */
+                const verrouF = (soldes?.fournisseur.total ?? 0) > 0;
+                const verrouC = (soldes?.client.total ?? 0) > 0;
                 return (
                   <>
                     <button
