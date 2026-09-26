@@ -93,8 +93,12 @@ export default function NouvelleVentePage() {
     if (!user) return;
     (async () => {
       const [partSnap, prodSnap] = await Promise.all([
+        /* Le site, pas le compte : `userId` dit qui a inscrit le tiers,
+           pas à qui il appartient. Filtrer dessus privait le gérant des
+           partenaires créés par le propriétaire — il ne pouvait ni leur
+           acheter ni leur vendre, sur un carnet pourtant commun. */
         getDocs(query(collection(db, 'partenaires'),
-          where('siteId', '==', siteId), where('userId', '==', user.uid))),
+          where('siteId', '==', siteId))),
         produitsDuSite(siteId),
       ]);
       /* un partenaire peut cumuler les deux rôles : seul le côté client compte ici */

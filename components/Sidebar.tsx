@@ -8,7 +8,7 @@ import { roleSurSite } from '@/lib/roles';
 import { useTheme } from '@/lib/theme-context';
 import {
   LogOut, ChevronLeft, ChevronRight, ChevronDown, Sun, Moon, MapPin, Settings,
-  LayoutDashboard, Wallet, Handshake, CalendarClock, HandCoins, Users, RefreshCw,
+  LayoutDashboard, Wallet, Handshake, CalendarClock, HandCoins, Users, RefreshCw, Undo2,
   ShoppingCart, ArrowLeftRight, Package, History, UserCog,
 } from 'lucide-react';
 import {
@@ -43,6 +43,7 @@ const nav: NavItem[] = [
   { type: 'link', label: 'Cycle de vente', href: '/ensemble?onglet=cycle-vente', icon: RefreshCw },
   { type: 'link', label: 'Achats', href: '/ensemble?onglet=achats', icon: ShoppingCart },
   { type: 'link', label: 'Transferts', href: '/ensemble?onglet=transferts', icon: ArrowLeftRight },
+  { type: 'link', label: 'Retours', href: '/ensemble?onglet=retours', icon: Undo2 },
   { type: 'link', label: 'Inventaire', href: '/ensemble?onglet=inventaire', icon: Package },
 
   /* Ceux à qui l'on doit, ceux qui nous doivent. Le recouvrement suit les
@@ -272,6 +273,10 @@ export default function Sidebar({
     if (href.includes('onglet=recouvrements')) return attente.recouvrements;
     if (href.includes('onglet=autorisations')) return attente.autorisations;
     if (href.includes('onglet=remises')) return attente.remises;
+    /* Le responsable des commandes traite les trois types : un seul
+       compte sur l'icône lui dit s'il reste quelque chose, sans ouvrir
+       chaque onglet pour le découvrir. */
+    if (href.includes('onglet=retours')) return attente.retours;
     return 0;
   }
 

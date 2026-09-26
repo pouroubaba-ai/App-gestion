@@ -337,8 +337,14 @@ export default function OngletFonds({ siteId, userId, sites, titre }: Props) {
           et tant qu'elle manque le solde affiché ne dit pas le vrai.
 
           Les deux sens sur la même carte quand les deux existent : ce sont
-          deux constats du même comptage. */}
-      {vue === 'fonds' && ecartsAttente.length > 0 && (
+          deux constats du même comptage.
+
+          La bannière ne dépend pas de la carte ouverte. Elle ne l'a pas
+          toujours fait, et c'était une faute : l'écart porte sur le
+          comptage du tiroir, pas sur les entrées ni sur les sorties.
+          Regarder les entrées faisait disparaître l'avertissement, et un
+          manque cessait d'exister parce qu'on regardait ailleurs. */}
+      {ecartsAttente.length > 0 && (
         <button type="button" onClick={() => setFeuilleEcarts(true)}
           className="mb-3 flex w-full items-center justify-between gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-left shadow-sm transition-colors active:bg-amber-100 dark:border-amber-800/30 dark:bg-amber-900/10 dark:active:bg-amber-900/20 sm:p-5">
           <span className="flex min-w-0 items-center gap-3">
@@ -612,19 +618,14 @@ export default function OngletFonds({ siteId, userId, sites, titre }: Props) {
             </div>
           </div>
 
-          {/* Le total du sens ouvert, au-dessus de sa liste : compter les
-              lignes pour savoir combien attend est un travail que l'écran
-              peut faire. La carte porte déjà les deux sens ensemble —
-              ici on ne voit qu'un côté à la fois. */}
+          {/* Le compte des lignes, au-dessus de sa liste. Pas le montant :
+              la carte « À confirmer » le donne déjà, entrées et sorties
+              séparées. Le répéter deux centimètres plus bas n'apprend
+              rien et fait douter qu'il s'agisse du même chiffre. */}
           {attenteVue(sensAttente).length > 0 && (
             <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
               <p className="text-sm font-medium text-gray-500">
                 {attenteVue(sensAttente).length} mouvement{attenteVue(sensAttente).length > 1 ? 's' : ''}
-                {' '}·{' '}
-                <span className={`font-bold ${
-                  sensAttente === 'entree' ? 'text-green-600' : 'text-red-500'}`}>
-                  {formatMontant(sensAttente === 'entree' ? t.entrees : t.sorties)}
-                </span>
               </p>
 
               {/* Deux façons de lire la même file : ligne par ligne, ou par

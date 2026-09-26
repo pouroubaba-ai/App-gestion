@@ -55,7 +55,8 @@ export default function ParametrePage() {
   async function simuler() {
     setPurgeEnCours(true); setErreurPurge(''); setPurgeFaite(null);
     try {
-      setBilan(await viderExploitation(await sitesDeLActivite(), true, complet));
+      setBilan(await viderExploitation(
+        await sitesDeLActivite(), true, complet, activite?.id ?? null));
     } catch (e: any) { setErreurPurge(e?.message ?? 'Échec de la lecture.'); }
     finally { setPurgeEnCours(false); }
   }
@@ -66,7 +67,8 @@ export default function ParametrePage() {
     if (confirmation.trim() !== activite!.nom) return;
     setPurgeEnCours(true); setErreurPurge('');
     try {
-      const fait = await viderExploitation(await sitesDeLActivite(), false, complet);
+      const fait = await viderExploitation(
+        await sitesDeLActivite(), false, complet, activite?.id ?? null);
       setPurgeFaite(fait);
       setBilan(null);
       setConfirmation('');
@@ -269,6 +271,20 @@ export default function ParametrePage() {
                 {purgeFaite.produitsRemisAZero > 0
                   && `, ${purgeFaite.produitsRemisAZero} produit${purgeFaite.produitsRemisAZero > 1 ? 's' : ''} remis à zéro`}.
               </p>
+              {/* Ce qui a résisté se nomme : une purge partielle qu'on tait
+                  laisse croire à une base vide qui ne l'est pas. */}
+              {Object.keys(purgeFaite.refuses).length > 0 && (
+                <div className="mt-2 border-t border-gray-100 pt-2 dark:border-gray-800">
+                  <p className="text-[11px] font-bold text-amber-600 dark:text-amber-400">
+                    La base a refusé d’effacer :
+                  </p>
+                  {Object.entries(purgeFaite.refuses).map(([nom, n]) => (
+                    <p key={nom} className="text-[11px] text-gray-500">
+                      {nom} · {n}
+                    </p>
+                  ))}
+                </div>
+              )}
             </div>
           ) : bilan ? (
             <div className="mt-3 rounded-xl border border-gray-200 bg-white p-3 dark:border-gray-700 dark:bg-gray-900">

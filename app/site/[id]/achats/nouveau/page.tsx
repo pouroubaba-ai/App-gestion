@@ -12,10 +12,9 @@ import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { formatMontant } from '@/lib/format';
 import { Loader2, Check, ShoppingCart } from 'lucide-react';
 import SelecteurProduits, { ProduitChoisissable } from '../../components/SelecteurProduits';
-import { Achat, LigneFlux, referenceFlux, confirmerAchat } from '@/lib/flux-marchandise';
+import { LigneFlux, referenceFlux } from '@/lib/flux-marchandise';
 import { SelectCherchable, ChampNombre } from '@/components/Champs';
 import { estEnsemble, marqueOrigine, racineRetour } from '@/lib/retour';
-import { sansAttendreLeReseau } from '@/lib/reseau';
 import { chargerCaisseDuSite, soldeCaisse } from '@/lib/caisse';
 import { enregistrerVersement } from '@/lib/versements-collection';
 
@@ -77,8 +76,12 @@ export default function NouvelAchatPage() {
     if (!user) return;
     (async () => {
       const [partSnap, prodSnap] = await Promise.all([
+        /* Le site, pas le compte : `userId` dit qui a inscrit le tiers,
+           pas à qui il appartient. Filtrer dessus privait le gérant des
+           partenaires créés par le propriétaire — il ne pouvait ni leur
+           acheter ni leur vendre, sur un carnet pourtant commun. */
         getDocs(query(collection(db, 'partenaires'),
-          where('siteId', '==', siteId), where('userId', '==', user.uid))),
+          where('siteId', '==', siteId))),
         produitsDuSite(siteId),
       ]);
       /* Ce que le tiroir contient : c'est lui qui borne le versement. */
@@ -190,25 +193,17 @@ export default function NouvelAchatPage() {
         });
       }
 
-      /* L'étape de confirmation sert à trancher un écart. En immédiat, le reçu
-         vaut le commandé : aucun écart n'est possible, l'achat se conclut ici même.
-
-         La confirmation lit le stock avant de l'écrire : hors ligne, cette
-         lecture n'aboutit pas. On la laisse se terminer seule plutôt que de
-         figer l'écran — le dossier est créé, le reste suivra. */
-      if (immediat) {
-        const suite = confirmerAchat({
-          /* `donnees` porte zéro : c'est la collection qui a inscrit le
-             versement. La confirmation en a besoin pour savoir s'il faut
-             rendre la monnaie — on le lui redonne ici. */
-          achat: { ...donnees, avanceVersee: verse, id: ref.id } as unknown as Achat,
-          userId: user!.uid, par: user!.uid,
-          /* Qui a conclu l'achat, recopié sur le document : une archive doit
-             pouvoir le dire même quand la fiche de l'employé a changé. */
-          ...(await auteurCourant(siteId, user!.uid, user!.displayName)),
-        });
-        await sansAttendreLeReseau(suite);
-      }
+      /* L'achat immédiat ne se confirme plus tout seul.
+       *
+       * La marchandise est là, le gérant le dit : le dossier naît « reçu ».
+       * Mais c'est la confirmation qui fait entrer le stock et naître la
+       * dette, et ce constat revient au responsable des commandes. Le
+       * faire ici laissait le même homme commander, recevoir et attester
+       * — il suffisait de cocher « Immédiate » pour faire entrer en stock
+       * n'importe quelle marchandise, sans que personne ne la voie.
+       *
+       * Sur un site sans responsable des commandes, le propriétaire
+       * conclut : `peutConfirmerAchat` le prévoit. */
 
       /* Le dossier nait avec l'origine qu'on lui a transmise : il se
          refermera sur l'ecran d'ou l'on est parti. */

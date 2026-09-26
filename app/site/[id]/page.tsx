@@ -15,6 +15,7 @@ import { chargerMissions } from '@/lib/missions';
 import OngletPartenaires from './components/OngletPartenaires';
 import OngletRecouvrements from './components/OngletRecouvrements';
 import OngletRemises from './components/OngletRemises';
+import OngletRetours from './components/OngletRetours';
 import OngletEmployes from './components/OngletEmployes';
 import OngletInventaire from './components/OngletInventaire';
 import OngletDashboard from './components/OngletDashboard';
@@ -55,6 +56,7 @@ const ONGLETS_PRETS: Onglet[] = [
   'partenaires', 'recouvrements',
   'employes', 'cycle-vente', 'achats', 'transferts', 'inventaire', 'historique',
   'remises',
+  'retours',
   'configuration',
 ];
 
@@ -103,10 +105,17 @@ export default function SiteFichePage() {
 
   useEffect(() => {
     if (!user || !siteId) return;
-    getDoc(doc(db, 'sites', siteId)).then(snap => {
-      if (snap.exists()) setSite({ id: snap.id, ...snap.data() } as Site);
-      setLoading(false);
-    });
+    /* Un refus doit s'arrêter quelque part.
+       Sans `catch`, une lecture interdite laissait la promesse rejetée et
+       `loading` à vrai : la page tournait indéfiniment sur son spinner, et
+       rien ne disait pourquoi. Mieux vaut un écran qui dit « ce site ne
+       vous est pas ouvert » qu'un écran qui ne dit rien. */
+    getDoc(doc(db, 'sites', siteId))
+      .then(snap => {
+        if (snap.exists()) setSite({ id: snap.id, ...snap.data() } as Site);
+      })
+      .catch(() => setSite(null))
+      .finally(() => setLoading(false));
   }, [user, siteId]);
 
   /* Le rôle décide des onglets : on le lit avant de dessiner la barre, sinon
@@ -280,6 +289,7 @@ export default function SiteFichePage() {
           {ongletCourant === 'partenaires' && <OngletPartenaires siteId={siteId} userId={user!.uid} roleSite={role} defaultVue={(searchParams.get('vue') as 'clients' | 'fournisseurs') ?? 'clients'} />}
           {ongletCourant === 'recouvrements' && <OngletRecouvrements siteId={siteId} userId={user!.uid} roleSite={role} onCount={setCountRecouvrements} />}
           {ongletCourant === 'remises' && <OngletRemises siteId={siteId} userId={user!.uid} />}
+          {ongletCourant === 'retours' && <OngletRetours siteId={siteId} userId={user!.uid} role={role} />}
           {ongletCourant === 'employes' && <OngletEmployes siteId={siteId} userId={user!.uid} />}
           {ongletCourant === 'dashboard' && <OngletDashboard siteId={siteId} userId={user!.uid} onNaviguer={o => setOnglet(o as Onglet)} />}
           {ongletCourant === 'fonds' && <OngletFonds siteId={siteId} userId={user!.uid} />}
@@ -300,8 +310,14 @@ export default function SiteFichePage() {
           {ongletCourant === 'cycle-vente' && (
             <OngletCycleVente siteId={siteId} userId={user!.uid} role={role} />
           )}
+          {/* L'activité du site, pas celle du compte. Un propriétaire peut
+              en avoir plusieurs — une créée, une autre héritée — et son
+              profil n'en nomme qu'une. Prendre la sienne inscrivait les
+              membres dans une maison où le site n'était pas : toutes leurs
+              lectures étaient ensuite refusées, et leur écran restait
+              blanc. C'est le site qu'on configure. */}
           {ongletCourant === 'configuration' && (
-            <OngletConfiguration siteId={siteId} activiteId={activite?.id ?? site.activiteId} role={role} />
+            <OngletConfiguration siteId={siteId} activiteId={site.activiteId ?? activite?.id} role={role} />
           )}
           {!ONGLETS_PRETS.includes(ongletCourant) && (
             <div className="min-h-64 flex items-center justify-center">

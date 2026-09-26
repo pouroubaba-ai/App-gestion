@@ -582,8 +582,14 @@ export default function FicheVentePage() {
 
   const total = valeurVente(vente.lignes);
   const marge = beneficeAttendu(vente.lignes);
-  const verse = vente.avanceVersee ?? 0;
-  const reste = Math.max(0, total - verse);
+  /* `avanceVersee` porte les deux : l'argent reçu et ce qu'un retour a
+     éteint. On les sépare — la fiche annonçait « versé » une
+     marchandise revenue, et le client passait pour avoir payé. */
+  const retourDoc = versements
+    .filter(v => v.motif === 'retour_marchandise')
+    .reduce((n, v) => n + (v.montant ?? 0), 0);
+  const verse = Math.max(0, (vente.avanceVersee ?? 0) - retourDoc);
+  const reste = Math.max(0, total - verse - retourDoc);
   const expire = devisExpire(vente);
   const suivant = SUITE_VENTE[vente.etat];
 

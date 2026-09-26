@@ -899,14 +899,38 @@ export async function confirmerTransfert(params: {
  * la laisser chez le fournisseur en ferait une dette à suivre, or l'app
  * gère une activité, pas des créances sur des tiers.
  */
+/**
+ * Qui conclut un achat.
+ *
+ * Confirmer fait entrer la marchandise en stock et naître la dette : ce
+ * geste constate un fait, il ne le décide pas. Il revient au responsable
+ * des commandes, qui n'a pas passé la commande — celui qui décide d'une
+ * dépense ne doit pas être celui qui atteste l'avoir reçue.
+ *
+ * Le propriétaire garde la main : sur un site sans responsable des
+ * commandes, personne d'autre ne pourrait conclure, et les achats
+ * s'empileraient sans issue.
+ */
+export function peutConfirmerAchat(roleSite: string | null | undefined): boolean {
+  return roleSite === 'commandes' || roleSite === null || roleSite === undefined;
+}
+
 export async function confirmerAchat(params: {
   achat: Achat;
   userId: string;
   par: string;
   utilisateurNom?: string | null;
   utilisateurFonction?: string | null;
+  /** Le rôle de qui agit ; `null` désigne le propriétaire. */
+  roleSite?: string | null;
 }): Promise<{ retourCaisse: number }> {
   const { achat } = params;
+  /* Un bouton caché n'est pas une permission : la garde tient ici, pas
+     à l'écran. */
+  if (params.roleSite !== undefined && !peutConfirmerAchat(params.roleSite)) {
+    throw new Error(
+      'Confirmer une réception revient au responsable des commandes.');
+  }
   /* Un achat n'a plus que deux états : on reçoit au fil des livraisons, puis
      on confirme. Le palier « reçu » séparait la saisie de l'arbitrage, deux
      gestes qui n'en font plus qu'un depuis que les réceptions s'enregistrent

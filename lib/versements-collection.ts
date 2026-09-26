@@ -43,7 +43,12 @@ export type SensVersement = 'entree' | 'sortie';
  *  - `remboursement`: rendu au tiers, sur un retour ou un trop-perçu
  */
 export type MotifVersement =
-  'avance' | 'vente' | 'reglement' | 'recouvrement' | 'remboursement';
+  'avance' | 'vente' | 'reglement' | 'recouvrement' | 'remboursement'
+  /* La marchandise rendue éteint la dette sans qu'un centime bouge. Un
+     « règlement » le dirait mal : rien n'a été payé, quelque chose a été
+     rendu, et celui qui relit ses comptes doit pouvoir faire la
+     différence. */
+  | 'retour_marchandise';
 
 export const LIBELLES_MOTIF_VERSEMENT: Record<MotifVersement, string> = {
   avance: 'Avance',
@@ -51,6 +56,7 @@ export const LIBELLES_MOTIF_VERSEMENT: Record<MotifVersement, string> = {
   reglement: 'Règlement',
   recouvrement: 'Recouvrement',
   remboursement: 'Remboursement',
+  retour_marchandise: 'Retour de marchandise',
 };
 
 export interface Versement {
@@ -178,9 +184,19 @@ export async function enregistrerVersement(saisie: SaisieVersement): Promise<Ver
     const snap = await getDoc(doc(db, col, dossierId));
     if (snap.exists()) {
       const avance = snap.data().avanceVersee ?? 0;
-      /* Un remboursement défait ce qu'un versement avait réglé ; tout autre
-         motif l'augmente. Le sens du flux ne suffit pas à trancher : un
-         remboursement de fournisseur est une entrée, et il retire pourtant. */
+      /* `avanceVersee` ne porte que de l'argent.
+       *
+       * Un remboursement défait ce qu'un versement avait réglé ; tout
+       * autre motif l'augmente. Le sens du flux ne suffit pas à
+       * trancher : un remboursement de fournisseur est une entrée, et il
+       * retire pourtant.
+       *
+       * Le retour de marchandise, lui, ne touche pas à ce champ. Il
+       * éteint une dette sans qu'un franc ne circule : l'écrire ici
+       * faisait passer des sacs rendus pour un paiement, et l'écran
+       * annonçait « Versé 6 500 » à côté d'un onglet qui disait « Aucun
+       * versement ». Ce qu'un retour éteint se lit sur le retour. */
+      if (saisie.motif === 'retour_marchandise') return { id: ref.id, ...saisie, heure, mouvementCaisseId } as Versement;
       const delta = saisie.motif === 'remboursement' ? -saisie.montant : saisie.montant;
       await updateDoc(doc(db, col, dossierId), {
         avanceVersee: Math.max(0, avance + delta),

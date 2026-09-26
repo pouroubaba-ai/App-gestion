@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { formatMontant } from '@/lib/format';
-import { soldesDuSite, totalRole } from '@/lib/soldes';
+import { soldesDuSite, totalRole, restesDesVentes } from '@/lib/soldes';
 import { chargerVersementsDuSite } from '@/lib/versements-collection';
 import { hankenGrotesk } from './finance/font';
 import {
@@ -100,6 +100,10 @@ export default function OngletDashboard({ siteId, userId, onNaviguer, sites, tit
     window.history.replaceState(null, '', `?${p.toString()}`);
   }
   const [creance, setCreance] = useState(0);
+  /* Ce qui reste dû sur chaque vente, avec sa date : « à encaisser » suit
+     le filtre, là où la créance totale dit tout ce qu'on attend. */
+  const [restesVentes, setRestesVentes] = useState<
+    { date: string | null; reste: number; siteId: string | null }[]>([]);
   const [dette, setDette] = useState(0);
   const [loading, setLoading] = useState(true);
   /* Ce qui s'est passé aujourd'hui : c'est la question qu'on se pose en
@@ -178,7 +182,11 @@ export default function OngletDashboard({ siteId, userId, onNaviguer, sites, tit
          échéance, ils échappaient à toute lecture d'ensemble. */
       const enc: { date: string; montant: number; siteId?: string | null }[] = [];
       for (const v of await chargerVersementsDuSite(ctx.portee)) {
-        if (!(v.montant > 0) || v.motif === 'remboursement') continue;
+        /* Un retour éteint une dette sans qu'un franc ne circule : le
+           compter ici gonflait l'encaissement des ventes et la dépense
+           d'achats avec de l'argent qui n'a jamais bougé. */
+        if (!(v.montant > 0) || v.motif === 'remboursement'
+          || v.motif === 'retour_marchandise') continue;
         if (v.role === 'client') enc.push({ date: v.date, montant: v.montant, siteId: v.siteId ?? null });
         /* l'argent versé au fournisseur : c'est lui, la dépense d'achat */
         else d.push({ date: v.date, motif: 'Achats', montant: v.montant, siteId: v.siteId ?? null });
@@ -202,6 +210,7 @@ export default function OngletDashboard({ siteId, userId, onNaviguer, sites, tit
          la fiche donnait un total qui survivait à leur suppression. */
       const soldes = await soldesDuSite(ctx.portee);
       const cr = totalRole(soldes, 'client').reste;
+      restesDesVentes(ctx.portee).then(setRestesVentes).catch(() => setRestesVentes([]));
       /* Fournisseurs et employés : deux créanciers, une seule dette. */
       const de = totalRole(soldes, 'fournisseur').reste + detteEmpTotale;
 
@@ -257,14 +266,22 @@ export default function OngletDashboard({ siteId, userId, onNaviguer, sites, tit
      caisse. Le registre dit ce qu'il y a dans le tiroir. */
   const fonds = soldeCaisse(mouvementsCaisse);
 
-  /* Encaissé : ce qui est rentré, c'est-à-dire ce qui a été vendu moins ce
-     qui reste dû. On ajoutait auparavant la totalité des ventes, comme si
-     chacune était payée comptant, puis les recouvrements par-dessus — la
-     carte affichait alors le même montant en « à encaisser » et en
-     « encaissé », et un taux de 100 % sur une créance intacte.
-     La créance est un solde courant : elle ne se borne pas à la période,
-     donc l'encaissé de la période ne peut pas descendre sous zéro. */
-  const encaisse = Math.max(0, totalVentes - creance);
+  /* À encaisser : ce qui reste dû sur les ventes de la période.
+   *
+   * La créance totale répond à une autre question — tout ce que les tiers
+   * doivent, quelle que soit la date — et c'est la carte Créances qui la
+   * porte. Les confondre affichait « Ventes 0 · À encaisser 16 000 » sur
+   * une journée sans une seule vente : deux chiffres côte à côte qui ne
+   * parlaient pas de la même période. */
+  const resteAEncaisser = restesVentes
+    .filter(r => dansPeriode(r.date ?? ''))
+    .reduce((s, r) => s + r.reste, 0);
+
+  /* Encaissé : ce qui a été vendu sur la période, moins ce qui en reste
+     dû. Les deux se rapportent désormais aux mêmes ventes, donc leur
+     somme fait le total vendu — ce qui n'était pas le cas tant que la
+     créance courante servait de reste. */
+  const encaisse = Math.max(0, totalVentes - resteAEncaisser);
 
   /* Découpage de l'axe des abscisses selon la période choisie. */
   const serie = (() => {
@@ -485,7 +502,7 @@ export default function OngletDashboard({ siteId, userId, onNaviguer, sites, tit
         ventes={totalVentes}
         benefice={totalBenefice}
         encaisse={encaisse}
-        reste={creance}
+        reste={resteAEncaisser}
         fonds={fonds}
         onNaviguer={onNaviguer}
       />

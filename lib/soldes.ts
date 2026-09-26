@@ -25,8 +25,16 @@ export interface SoldeTiers {
   partenaireId: string;
   /** valeur de ce qui a été reçu ou livré */
   total: number;
-  /** ce qui a été versé là-dessus */
+  /**
+   * Ce qui a été versé là-dessus : de l'argent, et rien d'autre.
+   *
+   * Un retour de marchandise éteint une dette sans qu'un franc ne
+   * circule. Le compter ici ferait croire que le tiers a payé, et l'on
+   * réclamerait moins qu'on n'a encaissé.
+   */
   verse: number;
+  /** ce que la marchandise rendue a éteint, sans argent */
+  retour: number;
   /** ce qui reste dû ; jamais négatif */
   reste: number;
   /** la date du dernier document, pour dire si le compte est encore vivant */
@@ -46,7 +54,7 @@ export interface SoldesParRole {
 
 function vide(partenaireId: string): SoldeTiers {
   return {
-    partenaireId, total: 0, verse: 0, reste: 0,
+    partenaireId, total: 0, verse: 0, retour: 0, reste: 0,
     derniereOperation: null, derniereValeur: 0, ouverts: 0,
   };
 }
@@ -68,13 +76,31 @@ function cumuler(
   total: number,
   verse: number,
   date: string | null,
+  retour = 0,
 ) {
   const e = cible.get(partenaireId) ?? vide(partenaireId);
-  const reste = Math.max(0, total - verse);
+  /* Les deux éteignent la dette, mais on ne les confond pas : l'un est
+     de l'argent reçu, l'autre de la marchandise revenue. */
+  const reste = Math.max(0, total - verse - retour);
+  /* Le payé est borné à ce qui couvre encore cette facture.
+   *
+   * Versé 15 000 puis rendu pour 10 000 sur une facture de 20 000 : les
+   * deux additionnés font 25 000, et la carte annonçait plus que le
+   * total. Les 5 000 de trop ont été remboursés ou reportés sur
+   * d'anciennes dettes — ils ne sont plus sur cette facture, mais cette
+   * carte-ci ne peut pas savoir où ils sont allés.
+   *
+   * On borne donc le payé, pas le retour : la marchandise rendue est un
+   * fait entier, tandis que l'argent, lui, a pu repartir. Rien n'est
+   * caché pour autant — le remboursement laisse un mouvement de caisse,
+   * la répartition laisse des versements sur les factures qu'elle a
+   * éteintes. Ils se lisent là où ils sont, pas ici. */
+  const verseVu = Math.min(verse, Math.max(0, total - retour));
   cible.set(partenaireId, {
     partenaireId,
     total: e.total + total,
-    verse: e.verse + verse,
+    verse: e.verse + verseVu,
+    retour: e.retour + retour,
     reste: e.reste + reste,
     derniereOperation: !date ? e.derniereOperation
       : !e.derniereOperation || date > e.derniereOperation ? date : e.derniereOperation,
@@ -88,9 +114,10 @@ function cumuler(
 
 /** Les soldes de tous les tiers d'un site, des deux côtés. */
 export async function soldesDuSite(siteId: Portee): Promise<SoldesParRole> {
-  const [achDocs, venDocs] = await Promise.all([
+  const [achDocs, venDocs, parRetour] = await Promise.all([
     lireParSite('achats', siteId),
     lireParSite('ventes', siteId),
+    retoursParDossier(siteId),
   ]);
 
   const fournisseur = new Map<string, SoldeTiers>();
@@ -99,20 +126,86 @@ export async function soldesDuSite(siteId: Portee): Promise<SoldesParRole> {
   for (const d of achDocs) {
     const a = d.data() as any;
     if (!a.fournisseurId || !conclu(a, 'fournisseur')) continue;
+    /* `avanceVersee` ne porte que de l'argent : un retour n'y entre
+       plus. Le retirer une seconde fois le comptait deux fois. */
+    const parRet = parRetour.get(d.id) ?? 0;
     cumuler(fournisseur, a.fournisseurId,
-      valeurRecue(a.lignes ?? []), a.avanceVersee ?? 0,
-      a.dateConfirmation ?? a.dateReception ?? a.dateCommande ?? null);
+      valeurRecue(a.lignes ?? []),
+      a.avanceVersee ?? 0,
+      a.dateConfirmation ?? a.dateReception ?? a.dateCommande ?? null,
+      parRet);
   }
 
   for (const d of venDocs) {
     const v = d.data() as any;
     if (!v.clientId || !conclu(v, 'client')) continue;
+    const parRet = parRetour.get(d.id) ?? 0;
     cumuler(client, v.clientId,
-      valeurVente(v.lignes ?? []), v.avanceVersee ?? 0,
-      v.dateLivraison ?? v.dateCommande ?? null);
+      valeurVente(v.lignes ?? []),
+      v.avanceVersee ?? 0,
+      v.dateLivraison ?? v.dateCommande ?? null,
+      parRet);
   }
 
   return { fournisseur, client };
+}
+
+/**
+ * Ce qu'un retour a imputé sur chaque dossier.
+ *
+ * Le versement porte le motif `retour_marchandise` : c'est lui qui
+ * distingue une dette éteinte par de la marchandise d'une dette éteinte
+ * par de l'argent. Sans cette lecture, les deux se ressemblent dans
+ * `avanceVersee` et l'écran annonce un encaissement qui n'a pas eu lieu.
+ */
+async function retoursParDossier(siteId: Portee): Promise<Map<string, number>> {
+  const parDossier = new Map<string, number>();
+  try {
+    const docs = await lireParSite('versements', siteId);
+    for (const d of docs) {
+      const v = d.data() as any;
+      if (v.motif !== 'retour_marchandise') continue;
+      const cle = v.achatId ?? v.venteId;
+      if (!cle) continue;
+      parDossier.set(cle, (parDossier.get(cle) ?? 0) + (v.montant ?? 0));
+    }
+  } catch {
+    /* Sans les versements on ne sait pas séparer : mieux vaut un versé
+       trop large qu'un écran vide. Le reste dû, lui, reste juste. */
+  }
+  return parDossier;
+}
+
+/**
+ * Ce qui reste dû, vente par vente, avec la date de chacune.
+ *
+ * Le total des créances dit ce que les tiers doivent en tout. Sur un
+ * tableau de bord filtré, la question est autre : des ventes de cette
+ * période, combien reste-t-il à encaisser ? Les deux chiffres diffèrent,
+ * et les confondre faisait afficher « Ventes 0 · À encaisser 16 000 »
+ * pour une journée sans la moindre vente.
+ *
+ * Un retour de marchandise éteint la dette sans qu'un franc ne rentre :
+ * il est retiré du versé ailleurs, mais ici il réduit bien le reste — ce
+ * qui n'est plus dû n'est plus à encaisser.
+ */
+export async function restesDesVentes(
+  siteId: Portee,
+): Promise<{ date: string | null; reste: number; siteId: string | null }[]> {
+  const docs = await lireParSite('ventes', siteId);
+  return docs
+    .map(d => {
+      const v = d.data() as any;
+      if (!conclu(v, 'client')) return null;
+      const total = valeurVente(v.lignes ?? []);
+      return {
+        date: v.dateLivraison ?? v.dateCommande ?? null,
+        reste: Math.max(0, total - (v.avanceVersee ?? 0)),
+        siteId: v.siteId ?? null,
+      };
+    })
+    .filter((x): x is { date: string | null; reste: number; siteId: string | null } =>
+      x !== null && x.reste > 0);
 }
 
 /** Le solde d'un seul tiers, quand la page n'en affiche qu'un. */
@@ -125,16 +218,22 @@ export async function soldeTiers(
     where('siteId', '==', siteId),
     where(champ, '==', partenaireId)));
 
+  const parRetour = await retoursParDossier(siteId);
+
   const cible = new Map<string, SoldeTiers>();
   for (const d of snap.docs) {
     const x = d.data() as any;
     if (!conclu(x, role)) continue;
+    /* Même partage que sur la liste : l'argent d'un côté, la
+       marchandise rendue de l'autre. */
+    const parRet = parRetour.get(d.id) ?? 0;
     cumuler(cible, partenaireId,
       role === 'fournisseur' ? valeurRecue(x.lignes ?? []) : valeurVente(x.lignes ?? []),
       x.avanceVersee ?? 0,
       role === 'fournisseur'
         ? (x.dateConfirmation ?? x.dateReception ?? x.dateCommande ?? null)
-        : (x.dateLivraison ?? x.dateCommande ?? null));
+        : (x.dateLivraison ?? x.dateCommande ?? null),
+      parRet);
   }
   return cible.get(partenaireId) ?? vide(partenaireId);
 }
@@ -154,6 +253,7 @@ export function totalRole(soldes: SoldesParRole, role: RoleTiers) {
   return {
     total: liste.reduce((n, s) => n + s.total, 0),
     verse: liste.reduce((n, s) => n + s.verse, 0),
+    retour: liste.reduce((n, s) => n + s.retour, 0),
     reste: liste.reduce((n, s) => n + s.reste, 0),
     ouverts: liste.filter(s => s.reste > 0).length,
     tiers: liste.length,

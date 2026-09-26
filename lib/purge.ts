@@ -55,7 +55,6 @@ const EXPLOITATION = [
  * fois qu'on veut repartir d'un compte propre.
  */
 const STRUCTURE = [
-  'produits',
   /* La détention lie un produit à un site : vider la structure d'un site
      sans elle laisserait des liens vers des produits qu'il ne tient plus. */
   'produits_site',
@@ -76,20 +75,39 @@ export interface BilanPurge {
   total: number;
   /** Les produits dont le stock a été remis à zéro (exploitation seule). */
   produitsRemisAZero: number;
+  /**
+   * Ce que la base a refusé d'effacer, par collection.
+   *
+   * Certaines collections sont protégées en suppression côté serveur. Un
+   * refus faisait échouer la purge entière : soixante-huit documents
+   * annoncés, aucun supprimé, et un « Missing or insufficient
+   * permissions » que rien n'expliquait. On efface désormais tout ce
+   * qu'on peut, et l'on nomme ce qui a résisté — une purge partielle qui
+   * se dit vaut mieux qu'une purge nulle qui se tait. */
+  refuses: Record<string, number>;
 }
 
 /* Firestore refuse un lot de plus de 500 écritures. */
 const LOT = 450;
 
 /** Supprime tous les documents donnés, par lots. */
-async function supprimerTout(docs: { id: string }[], nomCollection: string) {
+async function supprimerTout(
+  docs: { id: string }[], nomCollection: string,
+): Promise<number> {
+  let refuses = 0;
   for (let i = 0; i < docs.length; i += LOT) {
+    const lot = docs.slice(i, i + LOT);
     const batch = writeBatch(db);
-    for (const d of docs.slice(i, i + LOT)) {
-      batch.delete(doc(db, nomCollection, d.id));
+    for (const d of lot) batch.delete(doc(db, nomCollection, d.id));
+    try {
+      await batch.commit();
+    } catch {
+      /* Un lot refusé n'arrête pas la purge : on compte ce qui reste et
+         l'on continue avec le suivant. */
+      refuses += lot.length;
     }
-    await batch.commit();
   }
+  return refuses;
 }
 
 /** Compte, et supprime si on ne simule pas. */
@@ -103,7 +121,15 @@ async function traiter(
   bilan.parCollection[nomCollection] =
     (bilan.parCollection[nomCollection] ?? 0) + snap.size;
   bilan.total += snap.size;
-  if (!simuler) await supprimerTout(snap.docs, nomCollection);
+  if (!simuler) {
+    const refuses = await supprimerTout(snap.docs, nomCollection);
+    if (refuses > 0) {
+      bilan.refuses[nomCollection] =
+        (bilan.refuses[nomCollection] ?? 0) + refuses;
+      bilan.parCollection[nomCollection] -= refuses;
+      bilan.total -= refuses;
+    }
+  }
 }
 
 /**
@@ -117,8 +143,12 @@ export async function viderExploitation(
   siteIds: string[],
   simuler = true,
   complet = false,
+  /** L'activité dont on vide les produits, au vidage complet. */
+  activiteId?: string | null,
 ): Promise<BilanPurge> {
-  const bilan: BilanPurge = { parCollection: {}, total: 0, produitsRemisAZero: 0 };
+  const bilan: BilanPurge = {
+    parCollection: {}, total: 0, produitsRemisAZero: 0, refuses: {},
+  };
   if (siteIds.length === 0) return bilan;
 
   const collections = complet ? [...EXPLOITATION, ...STRUCTURE] : EXPLOITATION;
@@ -127,6 +157,16 @@ export async function viderExploitation(
     for (const siteId of siteIds) {
       await traiter(nomCollection, 'siteId', siteId, simuler, bilan);
     }
+  }
+
+  /* Le produit appartient à l'activité, jamais à un site.
+   *
+   * Il figurait dans la liste vidée par `siteId` — un champ qu'il ne
+   * porte pas. La requête ne ramenait donc rien, et un « vidage complet »
+   * laissait tous les produits en place sans rien dire. On le reprend par
+   * le seul champ qui le désigne. */
+  if (complet && activiteId) {
+    await traiter('produits', 'activiteId', activiteId, simuler, bilan);
   }
 
   /* Un transfert appartient à deux sites : celui qui l'envoie ne le porte
@@ -147,13 +187,19 @@ export async function viderExploitation(
     for (const siteId of siteIds) {
       await traiter('membres', 'siteId', siteId, simuler, bilan);
     }
+    let sitesEffaces = siteIds.length;
     if (!simuler) {
       const batch = writeBatch(db);
       for (const siteId of siteIds) batch.delete(doc(db, 'sites', siteId));
-      await batch.commit();
+      try {
+        await batch.commit();
+      } catch {
+        bilan.refuses.sites = siteIds.length;
+        sitesEffaces = 0;
+      }
     }
-    bilan.parCollection.sites = siteIds.length;
-    bilan.total += siteIds.length;
+    bilan.parCollection.sites = sitesEffaces;
+    bilan.total += sitesEffaces;
     return bilan;
   }
 

@@ -311,6 +311,9 @@ export default function FichePartenairePage() {
           {partenaire.rolesClient && (() => {
             const verse = soldes?.client.verse ?? 0;
             const total = soldes?.client.total ?? 0;
+            /* Le retour ne s'affiche que s'il existe : une ligne à zéro
+               ferait chercher une marchandise rendue qui n'existe pas. */
+            const retour = soldes?.client.retour ?? 0;
             const pct = total > 0 ? Math.min((verse / total) * 100, 100) : 0;
             return (
               <div onClick={() => router.push(`/site/${siteId}/partenaires/${partenaireId}/transactions?role=client`)}
@@ -324,7 +327,10 @@ export default function FichePartenairePage() {
                   <div className="h-1.5 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden mb-1.5">
                     <div className="h-full bg-green-500 rounded-full transition-all" style={{ width: `${pct}%` }} />
                   </div>
-                  <p className="text-xs text-gray-400">Total {formatMontant(total)} · Versé {formatMontant(verse)}</p>
+                  <p className="text-xs text-gray-400">
+                    Total {formatMontant(total)} · Versé {formatMontant(verse)}
+                    {retour > 0 && <> · Retour {formatMontant(retour)}</>}
+                  </p>
                 </div>
               </div>
             );
@@ -332,6 +338,9 @@ export default function FichePartenairePage() {
           {partenaire.rolesFournisseur && (() => {
             const verse = soldes?.fournisseur.verse ?? 0;
             const total = soldes?.fournisseur.total ?? 0;
+            /* Le retour ne s'affiche que s'il existe : une ligne à zéro
+               ferait chercher une marchandise rendue qui n'existe pas. */
+            const retour = soldes?.fournisseur.retour ?? 0;
             const pct = total > 0 ? Math.min((verse / total) * 100, 100) : 0;
             return (
               <div onClick={() => router.push(`/site/${siteId}/partenaires/${partenaireId}/transactions?role=fournisseur`)}
@@ -345,7 +354,10 @@ export default function FichePartenairePage() {
                   <div className="h-1.5 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden mb-1.5">
                     <div className="h-full bg-red-500 rounded-full transition-all" style={{ width: `${pct}%` }} />
                   </div>
-                  <p className="text-xs text-gray-400">Total {formatMontant(total)} · Versé {formatMontant(verse)}</p>
+                  <p className="text-xs text-gray-400">
+                    Total {formatMontant(total)} · Versé {formatMontant(verse)}
+                    {retour > 0 && <> · Retour {formatMontant(retour)}</>}
+                  </p>
                 </div>
               </div>
             );

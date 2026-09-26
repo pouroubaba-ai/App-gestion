@@ -3,7 +3,7 @@ import {
   writeBatch, serverTimestamp,
 } from 'firebase/firestore';
 import { db } from './firebase';
-import { ouvrirDetention } from './produits-site';
+import { ouvrirDetention, detentionDe } from './produits-site';
 import { coutMoyenApresEntree } from './mouvements';
 import { enregistrerVersement } from './versements-collection';
 import type { RoleTiers } from './soldes';
@@ -66,9 +66,27 @@ export async function enregistrerRetour(params: {
   date: string;
   /** ce que le tiers doit encore, pour savoir quoi rembourser */
   resteDu: number;
+  /**
+   * Ne rien écrire côté argent : le stock et les mouvements seulement.
+   *
+   * Un retour ouvert en dossier décide lui-même du règlement — imputer sur
+   * la dette, ou rembourser par la caisse. Sans ce drapeau, `resteDu: 0`
+   * faisait conclure ici « tout est à rembourser », et le versement était
+   * écrit deux fois : une fois ici, une fois par le dossier. Le
+   * fournisseur réclamait le double de ce qu'il avait rendu.
+   */
+  sansReglement?: boolean;
   /** le dossier concerné, quand le retour porte sur un seul */
   achatId?: string | null;
   venteId?: string | null;
+  /**
+   * Le dossier de retour dont ce geste découle.
+   *
+   * Sans lui, le mouvement recopiait le `documentId` du bon d'origine :
+   * l'historique croyait qu'un retour était l'achat qu'il défait, et la
+   * ligne ne menait nulle part — ou pire, vers le mauvais dossier.
+   */
+  dossierRetourId?: string | null;
   reference?: string | null;
   par?: string | null;
   /* Qui a reçu la marchandise rendue. */
@@ -97,6 +115,27 @@ export async function enregistrerRetour(params: {
     if (l.quantite > rendable) {
       throw new Error(
         `Retour supérieur à ce qui reste : ${l.quantite} demandé, ${rendable} possible.`);
+    }
+
+    /* On ne rend pas ce qu'on n'a plus.
+     *
+     * Le bon dit ce qui est entré, pas ce qui est encore là : une
+     * marchandise reçue puis transférée ou vendue ne peut pas repartir
+     * chez le fournisseur. Sans cette garde, le stock passait sous zéro
+     * — un site affichait −21 pièces, ce qui n'existe pas dans un
+     * magasin, et la valeur du stock devenait négative.
+     *
+     * Elle ne vaut que pour ce qui sort. Un retour client fait rentrer
+     * la marchandise : il n'y a rien à vérifier au rayon. */
+    const sortDuSite = params.role === 'fournisseur';
+    if (sortDuSite && m.produitId) {
+      const detention = await detentionDe(params.siteId, m.produitId);
+      const enRayon = detention?.stock ?? 0;
+      if (l.quantite > enRayon) {
+        throw new Error(
+          `${m.produit ?? 'Ce produit'} : ${l.quantite} à rendre, `
+          + `${enRayon} en stock. On ne rend pas ce qu'on n'a plus.`);
+      }
     }
 
     /* Le retour se valorise au prix de l'opération d'origine : rendre une
@@ -143,8 +182,10 @@ export async function enregistrerRetour(params: {
       partenaireNom: params.partenaireNom ?? null,
       achatId: m.achatId ?? null,
       venteId: m.venteId ?? null,
-      documentId: m.documentId ?? null,
-      reference: m.reference ?? null,
+      /* Le retour désigne son propre dossier, pas celui qu'il défait.
+         Le bon d'origine reste atteignable par `achatId`/`venteId`. */
+      documentId: params.dossierRetourId ?? m.documentId ?? null,
+      reference: params.reference ?? m.reference ?? null,
       utilisateurNom: params.utilisateurNom ?? null,
       utilisateurFonction: params.utilisateurFonction ?? null,
       createdAt: serverTimestamp(),
@@ -176,7 +217,9 @@ export async function enregistrerRetour(params: {
 
   /* L'argent se règle après coup : ce qui n'était pas payé cesse d'être dû
      sans qu'un centime bouge, le reste se rembourse par la caisse. */
-  const { deduitDuDu, rembourse } = partageRetour(valeurTotale, params.resteDu);
+  const { deduitDuDu, rembourse } = params.sansReglement
+    ? { deduitDuDu: 0, rembourse: 0 }
+    : partageRetour(valeurTotale, params.resteDu);
   if (rembourse > 0) {
     await enregistrerVersement({
       adminUid: params.adminUid ?? null,

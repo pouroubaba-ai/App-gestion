@@ -30,11 +30,16 @@ export interface EnAttente {
      l'envers des autorisations : le caissier voit ce qu'il doit confirmer,
      celui qui a vendu voit ce qu'il attend. */
   remises: number;
+  /* Les retours qui n'ont pas fini leur cycle, les trois types ensemble.
+     Le responsable des commandes les traite tous : séparer clients,
+     fournisseurs et transferts l'obligerait à ouvrir chaque onglet pour
+     savoir s'il lui reste quelque chose à faire. */
+  retours: number;
 }
 
 export const AUCUNE_ATTENTE: EnAttente = {
   achats: 0, transferts: 0, ventes: 0, recouvrements: 0, autorisations: 0,
-  remises: 0,
+  remises: 0, retours: 0,
 };
 
 /**
@@ -69,6 +74,18 @@ const TRANSFERTS_RECEPTION = ['expedie', 'recu', 'traitement'];
 const VENTES_EN_ATTENTE = ['commande', 'preparation', 'pret'];
 
 /**
+ * L'état final d'un retour, par type.
+ *
+ * Recopié de `ETAPES_RETOUR` : `retours-dossiers` importe déjà ce
+ * fichier, et l'importer en retour formerait un cycle. La règle est
+ * simple et tient en trois lignes — si elle change là-bas, elle doit
+ * changer ici.
+ */
+const FIN_RETOUR: Record<string, string> = {
+  client: 'recu', fournisseur: 'livre', transfert: 'recu',
+};
+
+/**
  * Compte ce qui attend sur une portée.
  *
  * Les quatre lectures partent ensemble : séparées, le sidebar s'animerait
@@ -91,7 +108,8 @@ export async function compterEnAttente(
      reçoit. Chacun agit à son tour — on lit donc les deux bouts, en ne
      retenant de chacun que les étapes qui lui réclament un geste, et sans
      compter deux fois un dossier dont les deux sites sont dans la portée. */
-  const [achats, sortants, entrants, ventes, echeances, attente, missions] =
+  const [achats, sortants, entrants, ventes, echeances, attente, missions,
+    retoursDocs] =
     await Promise.all([
       lireParSite('achats', portee),
       lireParSite('transferts', portee, 'siteSourceId'),
@@ -102,7 +120,16 @@ export async function compterEnAttente(
       /* Elles servent au compte du porteur : ce qu'on lui a confié à
          emporter, et qui n'est ni soldé ni annulé. */
       lireParSite('missions_paiement', portee),
+      lireParSite('retours_dossiers', portee),
     ]);
+
+  /* Un retour attend tant qu'il n'a pas atteint son dernier état. Annulé,
+     il ne réclame plus rien. Les trois types se comptent ensemble : c'est
+     la même personne qui les traite. */
+  const retours = retoursDocs.filter(d => {
+    const r = d.data() as any;
+    return r.etat !== 'annule' && r.etat !== FIN_RETOUR[r.type];
+  }).length;
 
   const transfertsVus = new Set<string>();
   for (const d of sortants) {
@@ -145,6 +172,7 @@ export async function compterEnAttente(
           return m.userId === monUid && m.etat === 'en_attente';
         }).length
       : 0,
+    retours,
   };
 }
 

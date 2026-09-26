@@ -218,8 +218,24 @@ export async function usageDansLActivite(params: {
  * refait le rapprochement à sa façon.
  */
 export async function produitsDuSite(siteId: string): Promise<any[]> {
+  /* Les produits de CETTE maison, et d'aucune autre.
+   *
+   * La collection était lue entière, sans filtre. Les règles laissent
+   * passer la liste — elles ne savent pas ce qu'elle rapportera — mais
+   * refusent d'écrire sur le produit d'une autre activité : l'article
+   * apparaissait dans le sélecteur, se vendait, et la livraison échouait
+   * sur un « Missing or insufficient permissions » que rien n'expliquait.
+   * Un écran qui propose ce qu'on ne peut pas écrire ment à celui qui
+   * saisit. */
+  const snapSite = await getDoc(doc(db, 'sites', siteId));
+  const activiteId = snapSite.data()?.activiteId ?? null;
+
   const [snapProd, dets, mvts] = await Promise.all([
-    getDocs(collection(db, 'produits')),
+    activiteId
+      ? getDocs(query(collection(db, 'produits'),
+          where('activiteId', '==', activiteId)))
+      : getDocs(query(collection(db, 'produits'),
+          where('activiteId', '==', '__aucune__'))),
     getDocs(query(collection(db, 'produits_site'), where('siteId', '==', siteId))),
     /* Le coût moyen se déduit des entrées : stocké, il part du stock
        courant, et une sortie pas encore écrite le fausse durablement. */

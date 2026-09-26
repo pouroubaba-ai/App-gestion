@@ -12,14 +12,14 @@
 import {
   LayoutDashboard, Wallet, RefreshCw, ShoppingCart, ArrowLeftRight, Package,
   Handshake, CalendarClock, Users, History, ClipboardList, Settings, HandCoins,
-  ListOrdered, ShieldCheck,
+  ListOrdered, ShieldCheck, Undo2,
 } from 'lucide-react';
 import { ongletsDuRole, type RoleSite } from './roles';
 
 export type Onglet =
   | 'dashboard' | 'fonds' | 'cycle-vente' | 'achats' | 'transferts'
   | 'inventaire' | 'partenaires' | 'recouvrements' | 'employes'
-  | 'historique' | 'audit' | 'configuration' | 'remises'
+  | 'historique' | 'audit' | 'configuration' | 'remises' | 'retours'
   | 'mouvements' | 'autorisations';
 
 export const ONGLETS_SITE: { key: Onglet; label: string; icon: React.ElementType }[] = [
@@ -37,6 +37,9 @@ export const ONGLETS_SITE: { key: Onglet; label: string; icon: React.ElementType
   { key: 'cycle-vente',    label: 'Cycle de vente',   icon: RefreshCw },
   { key: 'achats',         label: 'Achats',           icon: ShoppingCart },
   { key: 'transferts',     label: 'Transferts',       icon: ArrowLeftRight },
+  /* Le retour défait ce que les trois précédents ont fait : il suit le
+     cycle plutôt que de vivre à part. */
+  { key: 'retours',        label: 'Retours',          icon: Undo2 },
   { key: 'inventaire',     label: 'Inventaire',       icon: Package },
 
   /* Ceux qui doivent, ceux à qui l'on doit */

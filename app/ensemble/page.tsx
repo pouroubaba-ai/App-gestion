@@ -22,6 +22,7 @@ import OngletFonds from '@/app/site/[id]/components/OngletFonds';
 import OngletPartenaires from '@/app/site/[id]/components/OngletPartenaires';
 import OngletRecouvrements from '@/app/site/[id]/components/OngletRecouvrements';
 import OngletRemises from '@/app/site/[id]/components/OngletRemises';
+import OngletRetours from '@/app/site/[id]/components/OngletRetours';
 import OngletEmployes from '@/app/site/[id]/components/OngletEmployes';
 import OngletCycleVente from '@/app/site/[id]/components/OngletCycleVente';
 import OngletAchats from '@/app/site/[id]/components/OngletAchats';
@@ -32,7 +33,7 @@ import OngletHistorique from '@/app/site/[id]/components/OngletHistorique';
 export type OngletEnsemble =
   | 'dashboard' | 'fonds' | 'partenaires' | 'recouvrements' | 'employes'
   | 'cycle-vente' | 'achats' | 'transferts' | 'inventaire' | 'historique'
-  | 'remises';
+  | 'remises' | 'retours';
 
 /* Le titre de la page. Il vit ici, sur le header, et non dans chaque
    onglet : celui-ci sert aussi la fiche d'un site, où le nom du site tient
@@ -45,6 +46,8 @@ const TITRES: Record<OngletEnsemble, string> = {
   /* Le propriétaire vend lui aussi : ces ventes attendent la caisse comme
      celles de ses gérants, et il n'avait nulle part où les suivre. */
   remises: 'Mes remises',
+  /* Le propriétaire décide des retours de toutes ses boutiques. */
+  retours: 'Retours',
   employes: 'Employés',
   'cycle-vente': 'Cycle de vente',
   achats: 'Achats',
@@ -164,6 +167,7 @@ function Ensemble() {
             )}
             {onglet === 'recouvrements' && <OngletRecouvrements {...commun} />}
             {onglet === 'remises' && <OngletRemises {...commun} />}
+            {onglet === 'retours' && <OngletRetours {...commun} role={null} />}
             {onglet === 'employes' && <OngletEmployes {...commun} />}
             {onglet === 'cycle-vente' && <OngletCycleVente {...commun} />}
             {onglet === 'achats' && <OngletAchats {...commun} />}

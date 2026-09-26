@@ -28,6 +28,7 @@ import {
 import {
   Achat, EtatAchat, LIBELLES_ACHAT,
   valeurEnvoyee, valeurRecue, ecartValeur, aUnEcart, lignesEnEcart, confirmerAchat,
+  peutConfirmerAchat,
   VersementAchat, peutAnnulerDossier, type Role,
 } from '@/lib/flux-marchandise';
 import { estEnsemble, retourHistorique } from '@/lib/retour';
@@ -289,7 +290,9 @@ export default function FicheAchatPage() {
      faire — et que le stock, lui, n'entre qu'à la fin. */
   const peutReceptionner = achat.etat === 'en_attente';
   const peutTraiter = achat.etat === 'recu';
-  const peutConfirmer = achat.etat === 'traitement';
+  /* Confirmer constate l'arrivée de la marchandise : c'est le geste du
+     responsable des commandes, jamais celui qui a passé la commande. */
+  const peutConfirmer = achat.etat === 'traitement' && peutConfirmerAchat(role);
   /* Rien n'est appliqué au stock avant la confirmation : tant qu'elle n'a pas
      eu lieu, une quantité mal comptée doit pouvoir être reprise. On compte
      pendant le traitement — c'est là qu'on vérifie ce qui est arrivé. */
@@ -342,6 +345,7 @@ export default function FicheAchatPage() {
       });
 
       const { retourCaisse } = await confirmerAchat({
+        roleSite: role,
         achat: { ...achat!, lignes }, userId: user!.uid, par: user!.uid,
         ...(await auteurCourant(achat!.siteId, user!.uid, user!.displayName)),
       });
@@ -579,6 +583,13 @@ export default function FicheAchatPage() {
                 className="flex items-center gap-1.5 px-4 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-sm font-bold rounded-xl transition-colors">
                 {enCours ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Confirmer
               </button>
+            )}
+            {/* Un écran muet laisse croire à une panne : on dit qui
+                attend le geste plutôt que de masquer sans rien. */}
+            {achat.etat === 'traitement' && !peutConfirmerAchat(role) && (
+              <span className="text-xs font-medium text-gray-400">
+                Le responsable des commandes confirme cette réception.
+              </span>
             )}
           </div>
           </div>
@@ -959,9 +970,12 @@ export default function FicheAchatPage() {
             )}
             <div className="flex items-baseline gap-2">
               <span className="flex flex-wrap items-center gap-1.5 text-gray-400 shrink-0">
-                {/* la ligne additionne avances et règlements : « Versé » les couvre
-                    tous les deux, « Avance » n'en nommait qu'un */}
-                Versé
+                {/* « Réglé » et non « Versé » : la ligne additionne les
+                    avances, les règlements, et les retours de marchandise
+                    qui éteignent la dette sans qu'un franc ne circule.
+                    Dire « versé » ferait croire qu'on a tout payé. */}
+                {versements.some(v => v.motif === 'retour_marchandise')
+                  ? 'Réglé' : 'Versé'}
                 {/* des boutons pâles passaient inaperçus : ils portent une action */}
                 <button onClick={() => setModalAvance(true)}
                   className="flex items-center gap-1 px-2 py-0.5 rounded-lg text-xs font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-900/30 dark:hover:bg-indigo-900/50 transition-colors">
@@ -1010,7 +1024,13 @@ export default function FicheAchatPage() {
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50">
           <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-xl w-full max-w-md max-h-[85vh] flex flex-col">
             <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 dark:border-gray-800">
-              <p className="text-sm font-bold text-gray-900 dark:text-gray-100">Versements</p>
+              {/* Pas « Versements » : un retour de marchandise éteint une
+                  dette sans qu'un franc ne circule. Les ranger sous le
+                  même mot laissait croire que le fournisseur avait été
+                  payé, alors qu'on lui a rendu ses sacs. */}
+              <p className="text-sm font-bold text-gray-900 dark:text-gray-100">
+                Ce qui a réglé ce bon
+              </p>
               <button onClick={() => setModalAvance(false)} className="text-gray-400 hover:text-gray-600">
                 <X size={18} />
               </button>
@@ -1018,7 +1038,7 @@ export default function FicheAchatPage() {
 
             <div className="flex-1 overflow-y-auto p-5">
               {versements.length === 0 ? (
-                <p className="text-xs text-gray-400 text-center py-6">Aucun versement.</p>
+                <p className="text-xs text-gray-400 text-center py-6">Rien pour l’instant.</p>
               ) : (
                 <div className="flex flex-col gap-1.5">
                   {versements.map(v => (
@@ -1026,7 +1046,13 @@ export default function FicheAchatPage() {
                       <span className="flex items-center gap-2 min-w-0">
                         <span className="text-gray-500">{formatDate(v.date)}</span>
                         {/* avance ou règlement : l'un était récupérable, l'autre non */}
-                        <span className={`px-1.5 rounded text-[10px] font-bold ${v.motif === 'avance'
+                        {/* Le retour a son ton à lui : de l'argent versé
+                            et de la marchandise rendue ne se lisent pas
+                            de la même façon. */}
+                        <span className={`px-1.5 rounded text-[10px] font-bold ${
+                          v.motif === 'retour_marchandise'
+                          ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
+                          : v.motif === 'avance'
                           ? 'bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400'
                           : 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'}`}>
                           {LIBELLES_MOTIF_VERSEMENT[v.motif] ?? v.motif}

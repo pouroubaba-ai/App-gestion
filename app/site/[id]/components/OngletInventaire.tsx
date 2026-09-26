@@ -466,10 +466,19 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
       setErreur('Ajoute au moins une variante, ou retire les caractéristiques.');
       return;
     }
-    /* Une fiche naît dans un site : la vue d'ensemble n'en désigne aucun
-       tant qu'on n'a pas filtré. */
-    const site = ctx.siteEcriture;
-    if (!site) { setErreur('Choisissez un site avant de créer un produit.'); return; }
+    /* Le produit naît dans l'activité, pas dans un site.
+     *
+     * La création exigeait pourtant un site, et la vue d'ensemble n'en
+     * désigne aucun : le bouton y disparaissait, alors que c'est là que
+     * l'on tient le catalogue de la maison. Le site ne sert en réalité
+     * qu'au stock de départ et au prix d'origine — deux choses qu'une vue
+     * d'ensemble n'a pas à poser. Sans site, le produit s'ouvre partout à
+     * zéro, et chaque boutique y mettra le sien. */
+    const site = ctx.siteEcriture ?? null;
+    if (!activite?.id) {
+      setErreur('Aucune activité : impossible de créer un produit.');
+      return;
+    }
     setErreur('');
     setSaving(true);
 
@@ -516,10 +525,10 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
        marchandise qu'il n'a jamais achetée lui-même. */
     const tousLesSites = ctx.sites.length > 0
       ? ctx.sites.map(x => x.id)
-      : [site];
+      : (site ? [site] : []);
     await ouvrirPartout({
       produitId: ref.id, siteIds: tousLesSites, userId,
-      siteOrigine: site,
+      ...(site ? { siteOrigine: site } : {}),
       prixOrigine: prixProduit,
       seuilOrigine: seuilAlerte
         ? enUnites(seuilAlerte, seuilEmballage, emballagesValides) : null,
@@ -529,6 +538,9 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
     });
 
     /* le stock de départ est une entrée : sans elle, l'historique n'expliquerait pas d'où il vient */
+    /* Sans site, il n'y a pas de rayon où poser ce stock : le produit
+       existe, chaque boutique y entrera le sien. */
+    if (site) {
     const auteur = await auteurCourant(site, userId);
     await enregistrerStockInitial({
       siteId: site, userId, produitId: ref.id, date: new Date().toISOString().split('T')[0],
@@ -549,6 +561,7 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
             cout: coutProduit,
           }],
     });
+    }
 
     /* Le produit et sa détention s'écrivent en deux collections : les
        recoller à la main ici les ferait diverger au premier oubli. On
@@ -846,9 +859,9 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
                 })}
               </div>
             )}
-            {/* Créer agit sur ce tableau : une fiche produit naît dans un
-                site, il faut donc le désigner. */}
-            {ctx.siteEcriture && (
+            {/* Le produit appartient à la maison : on le crée aussi depuis
+                la vue d'ensemble, où se tient le catalogue. */}
+            {(ctx.siteEcriture || ctx.ensemble) && (
               <button onClick={ouvrirModal}
                 className="flex shrink-0 items-center gap-1.5 rounded-xl bg-indigo-600 px-3 py-2 text-xs font-bold text-white transition-colors hover:bg-indigo-700">
                 <Plus size={12} /> Nouveau produit
@@ -860,7 +873,7 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
         {/* Rayon vide : le bouton reste, c'est par lui qu'on le garnit.
             Enfermé dans la ligne de recherche — qui n'existe qu'une fois
             des produits saisis — il rendait le premier impossible. */}
-        {produits.length === 0 && ctx.siteEcriture && (
+        {produits.length === 0 && (ctx.siteEcriture || ctx.ensemble) && (
           <div className="mb-4 flex">
             <button onClick={ouvrirModal}
               className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-3 py-2 text-xs font-bold text-white transition-colors hover:bg-indigo-700">
@@ -1118,7 +1131,10 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
                       <input type="number" placeholder="Ex. 750" value={prixVente} onChange={e => setPrixVente(e.target.value)}
                         className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
                     </div>
-                    {!aVariantes && (
+                    {/* Un stock se pose dans un rayon : sans site désigné,
+                        demander une quantité promettrait une entrée qui
+                        n'aurait nulle part où s'écrire. */}
+                    {!aVariantes && ctx.siteEcriture && (
                       <div className="flex-1 min-w-0">
                         <p className="text-xs font-bold text-gray-400 uppercase mb-1">Stock initial</p>
                         <SaisieStock quantite={stockInitial} emballage={stockEmballage} emballages={emballagesUtiles}

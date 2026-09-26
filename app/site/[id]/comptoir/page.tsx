@@ -232,8 +232,12 @@ export default function ComptoirPage() {
     if (!user) return;
     (async () => {
       const [partSnap, prodSnap] = await Promise.all([
+        /* Le site, pas le compte : un client du carnet doit pouvoir
+           acheter à crédit quel que soit celui qui l'a inscrit. Sans
+           cela, le comptoir affichait « Aucun client » et la vente à
+           crédit devenait impossible. */
         getDocs(query(collection(db, 'partenaires'),
-          where('siteId', '==', siteId), where('userId', '==', user.uid))),
+          where('siteId', '==', siteId))),
         produitsDuSite(siteId),
       ]);
       setClients(partSnap.docs

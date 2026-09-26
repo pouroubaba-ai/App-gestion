@@ -62,8 +62,8 @@ const ONGLETS_PAR_ROLE: Record<RoleSite, string[] | null> = {
      de les autoriser lui-même. */
   gerant: [
     'dashboard', 'fonds', 'partenaires', 'recouvrements', 'employes',
-    'cycle-vente', 'achats', 'transferts', 'inventaire', 'historique',
-    'remises', 'audit',
+    'cycle-vente', 'achats', 'transferts', 'retours', 'inventaire',
+    'historique', 'remises', 'audit',
   ],
   /* Il ne voit pas le fond de caisse — ce tiroir n'est pas le sien — mais
      il doit savoir ce qu'il porte : « Mes remises » dit ce qu'il a encaissé
@@ -72,7 +72,11 @@ const ONGLETS_PAR_ROLE: Record<RoleSite, string[] | null> = {
   /* Il reçoit et déclare la marchandise : les transferts le concernent
      autant que les achats. Il charge ce qui part, il compte ce qui arrive —
      il n'initie rien et n'arbitre aucun écart. */
-  commandes: ['cycle-vente', 'achats', 'transferts'],
+  /* Les retours défont ce qu'il a reçu ou expédié : c'est la même
+     marchandise, le même geste à l'envers. Il les traite sans les ouvrir
+     — décider qu'une marchandise repart éteint une dette ou fait sortir
+     de l'argent, et cela revient à qui répond du site. */
+  commandes: ['cycle-vente', 'achats', 'transferts', 'retours'],
   /* Trois écrans pour un seul métier : ce qu'il y a dans le tiroir, ce qui
      y est passé, ce qui attend d'y entrer. Le caissier travaille au
      téléphone et ne fait que cela : empilés sur une page, le registre

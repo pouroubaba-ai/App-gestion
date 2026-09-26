@@ -227,8 +227,15 @@ export default function TransactionsSitePage() {
   useEffect(() => {
     if (!user) return;
     Promise.all([
-      getDocs(query(collection(db, 'partenaires'), where('siteId', '==', siteId), where('userId', '==', user.uid))),
-      getDocs(query(collection(db, 'mouvements'), where('siteId', '==', siteId), where('userId', '==', user.uid))),
+      /* Le site, pas le compte.
+       *
+       * `userId` ne désigne pas le propriétaire du partenaire mais celui
+       * qui l'a inscrit : filtrer dessus cachait au gérant les tiers
+       * créés par le propriétaire. L'onglet Partenaires les montrait,
+       * cette page annonçait « Aucun client » pour le même site — et une
+       * créance bien réelle restait invisible. */
+      getDocs(query(collection(db, 'partenaires'), where('siteId', '==', siteId))),
+      getDocs(query(collection(db, 'mouvements'), where('siteId', '==', siteId))),
       /* Les versements vivent sur le document, pas sur ses lignes. */
       getDocs(query(collection(db, 'achats'), where('siteId', '==', siteId))),
       getDocs(query(collection(db, 'ventes'), where('siteId', '==', siteId))),
@@ -306,11 +313,12 @@ export default function TransactionsSitePage() {
       .filter(p => role === 'client' ? p.rolesClient : p.rolesFournisseur)
       .map(p => {
         const movs = filtres.filter(m => m.partenaireId === p.id);
-        const totalTx = movs.reduce((s, m) => s + totalMouvement(m, role), 0);
         const totalBenef = movs.reduce((s, m) => s + benefice(m), 0);
-        /* Les retours sont leurs propres mouvements : on les cherche par
-           leur motif et le partenaire, jamais dans un champ de la ligne. */
-        const totalRetour = retoursDe(r => r.partenaireId === p.id).valeur;
+        /* Le retour vient du solde, comme le versé et le reste.
+           Le compter depuis les mouvements de la période donnait zéro
+           dès qu'on regardait « Aujourd'hui » alors que le reste, lui,
+           portait toute l'histoire : trois colonnes d'une même ligne se
+           contredisaient. */
         /* La dernière opération vient des soldes, comme le reste : la
            calculer ici depuis les mouvements donnait une autre date que
            l'onglet Partenaires, pour le même tiers. */
@@ -319,6 +327,12 @@ export default function TransactionsSitePage() {
         const solde = soldes ? soldeDe(soldes, p.id, role) : null;
         const verse = solde?.verse ?? 0;
         const reste = solde?.reste ?? 0;
+        const totalRetour = solde?.retour ?? 0;
+        /* Le total vient du solde lui aussi : pris sur les mouvements de
+           la période, il tombait à zéro sur « Aujourd'hui » et la ligne
+           annonçait un reste dû sans rien qui l'explique. Les quatre
+           colonnes racontent la même histoire ou aucune. */
+        const totalTx = solde ? solde.total : 0;
         return {
           id: p.id, nom: p.nom, totalTx, totalBenef, totalRetour, verse, reste,
           derniere: solde?.derniereOperation ?? '',

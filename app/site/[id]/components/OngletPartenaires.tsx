@@ -11,11 +11,10 @@ import { useRouter } from 'next/navigation';
 import { formatMontant } from '@/lib/format';
 import {
   Plus, X, Search, Eye, Trash2, Pencil, Loader2,
-  Tag, ChevronDown, ArrowUpDown, Filter, Undo2, Banknote } from 'lucide-react';
+  Tag, ChevronDown, ArrowUpDown, Filter, Banknote } from 'lucide-react';
 import { ChampRecherche, ChampNombre, SelectCherchable } from '@/components/Champs';
 import PartenairesResumeCard from './PartenairesResumeCard';
 import ModalVersementTiers from './ModalVersementTiers';
-import ModalRetour from './ModalRetour';
 import { soldesDuSite, soldeDe, type SoldesParRole } from '@/lib/soldes';
 import { chargerVersementsDuSite } from '@/lib/versements-collection';
 import { auteurCourant } from '@/lib/auteur';
@@ -173,8 +172,10 @@ export default function OngletPartenaires({ siteId, userId, sites, titre, defaul
   /* Encaisser depuis la liste : passer par la fiche de chacun oblige à
      savoir d'avance qui vient payer. */
   const [versementOuvert, setVersementOuvert] = useState(false);
-  /* Le retour part d'un tiers précis : c'est sa marchandise qui revient. */
-  const [retourPour, setRetourPour] = useState<Partenaire | null>(null);
+  /* Un retour s'ouvre depuis l'onglet Retours, qui le fait passer par son
+     cycle : déclaré, traité, puis confirmé par le responsable des
+     commandes. Le raccourci qui vivait ici écrivait le retour d'un seul
+     geste, sans que personne ne constate la marchandise. */
 
   /* Qui a amené le partenaire. Distinct de l'auteur de la fiche : le
      comptable qui saisit dix clients ne les a pas amenés. */
@@ -195,6 +196,12 @@ export default function OngletPartenaires({ siteId, userId, sites, titre, defaul
     client: Map<string, number>;
   }>({ fournisseur: new Map(), client: new Map() });
 
+  /* Ce que les retours ont éteint, tenu à part du versé. */
+  const [retourParPartenaire, setRetourParPartenaire] = useState<{
+    fournisseur: Map<string, number>;
+    client: Map<string, number>;
+  }>({ fournisseur: new Map(), client: new Map() });
+
   /* Le dernier versement de chacun : un total ne dit pas si le partenaire a
      payé hier ou il y a six mois, et c'est cette date qui décide s'il faut
      le relancer. */
@@ -206,6 +213,12 @@ export default function OngletPartenaires({ siteId, userId, sites, titre, defaul
   /** Le versé d'un partenaire dans un rôle, reconstitué depuis ses documents. */
   function verseDe(p: Partenaire, estFourn: boolean) {
     const m = estFourn ? verseParPartenaire.fournisseur : verseParPartenaire.client;
+    return m.get(p.id) ?? 0;
+  }
+
+  /** Ce qu'un retour a éteint chez lui, sans qu'un franc ne circule. */
+  function retourDe(p: Partenaire, estFourn: boolean) {
+    const m = estFourn ? retourParPartenaire.fournisseur : retourParPartenaire.client;
     return m.get(p.id) ?? 0;
   }
 
@@ -257,6 +270,8 @@ export default function OngletPartenaires({ siteId, userId, sites, titre, defaul
   async function chargerVerse(soldes: SoldesParRole) {
     const fournisseur = new Map<string, number>();
     const client = new Map<string, number>();
+    const retourF = new Map<string, number>();
+    const retourC = new Map<string, number>();
     const derniersF = new Map<string, DernierVersement>();
     const derniersC = new Map<string, DernierVersement>();
     const opF = new Map<string, DernierVersement>();
@@ -264,20 +279,31 @@ export default function OngletPartenaires({ siteId, userId, sites, titre, defaul
 
     /* Le versé et la dernière opération sont déjà calculés : on les recopie
        plutôt que de relire les dossiers. */
-    for (const [role, cible, ops] of [
-      ['fournisseur', fournisseur, opF],
-      ['client', client, opC],
+    for (const [role, cible, ops, ret] of [
+      ['fournisseur', fournisseur, opF, retourF],
+      ['client', client, opC, retourC],
     ] as const) {
       for (const [id, sol] of (role === 'fournisseur' ? soldes.fournisseur : soldes.client)) {
         cible.set(id, sol.verse);
+        /* Le retour suit son propre chemin : il éteint la dette sans
+           jamais compter comme un encaissement. */
+        if (sol.retour > 0) ret.set(id, sol.retour);
         if (sol.derniereOperation) {
           ops.set(id, { date: sol.derniereOperation, montant: sol.derniereValeur });
         }
       }
     }
+    setRetourParPartenaire({ fournisseur: retourF, client: retourC });
 
     /* Le dernier versement, lui, ne vit que dans sa collection. */
     for (const v of await chargerVersementsDuSite(ctx.portee)) {
+      /* Un retour n'est pas un versement.
+       *
+       * Sans ce filtre, la colonne annonçait « Dernier versement 13 000,
+       * aujourd'hui » pour un client qui n'avait jamais rien payé : la
+       * marchandise revenue passait pour de l'argent reçu, et la fiche
+       * du même client disait « Versé 0 » au même moment. */
+      if (v.motif === 'retour_marchandise') continue;
       const derniers = v.role === 'fournisseur' ? derniersF : derniersC;
       const actuel = derniers.get(v.partenaireId);
       /* Plusieurs versements le même jour se cumulent, comme les achats. */
@@ -668,11 +694,13 @@ export default function OngletPartenaires({ siteId, userId, sites, titre, defaul
         const duRole = partenaires.filter(p => estFourn ? p.rolesFournisseur : p.rolesClient);
         const reste = estFourn ? totalDette : totalCreance;
         const verse = duRole.reduce((s, p) => s + verseDe(p, estFourn), 0);
+        const retour = duRole.reduce((s, p) => s + retourDe(p, estFourn), 0);
         return (
           <PartenairesResumeCard
             role={estFourn ? 'fournisseur' : 'client'}
             reste={reste}
             verse={verse}
+            retour={retour}
             nbDus={duRole.filter(p => (estFourn ? p.dette : p.creance) > 0).length}
             nbTotal={duRole.length}
             /* La page des transactions travaille dans un site : lui passer
@@ -773,7 +801,6 @@ export default function OngletPartenaires({ siteId, userId, sites, titre, defaul
                     </button>
                   </th>
                   <th className="text-center px-4 py-3 font-medium">Statut</th>
-                  <th className="px-4 py-3 font-medium" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50 dark:divide-gray-800">
@@ -811,7 +838,18 @@ export default function OngletPartenaires({ siteId, userId, sites, titre, defaul
                           </span>
                         ) : '—'}
                       </td>
-                      <td className="px-4 py-3 text-gray-700 dark:text-gray-300 text-center">{formatMontant(montant)}</td>
+                      {/* Ce qu'on doit alarme, ce qu'on attend rassure :
+                          la dette en rouge, la créance en vert. À zéro,
+                          rien à réclamer ni à craindre — la couleur ne
+                          sert qu'à ce qui appelle un geste. */}
+                      <td className={`px-4 py-3 text-center ${
+                        montant > 0
+                          ? estFourn
+                            ? 'font-medium text-red-600 dark:text-red-400'
+                            : 'font-medium text-green-600 dark:text-green-400'
+                          : 'text-gray-700 dark:text-gray-300'}`}>
+                        {formatMontant(montant)}
+                      </td>
                       <td className="px-4 py-3 text-gray-400 text-center">
                         {(() => {
                           const e = prochainRecouvrementDe(p, estFourn);
@@ -836,16 +874,6 @@ export default function OngletPartenaires({ siteId, userId, sites, titre, defaul
                         {(() => { const s = statut(montant, verseDe(p, estFourn)); return (
                           <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${s.color}`}>{s.label}</span>
                         ); })()}
-                      </td>
-                      {/* Le retour part d'ici : c'est la marchandise de ce
-                          tiers qui revient, on n'a pas à le choisir après. */}
-                      <td className="px-4 py-3 text-center">
-                        <button
-                          onClick={e => { e.stopPropagation(); setRetourPour(p); }}
-                          title="Enregistrer un retour"
-                          className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-gray-400 transition-colors hover:bg-orange-50 hover:text-orange-600 dark:hover:bg-orange-900/20">
-                          <Undo2 size={13} /> Retour
-                        </button>
                       </td>
                     </tr>
                   );
@@ -1161,18 +1189,6 @@ export default function OngletPartenaires({ siteId, userId, sites, titre, defaul
         un compte soldé n'a pas d'objet. */}
     {/* Le versement s'écrit dans le site du partenaire, pas dans celui
         qu'on regarde : en vue d'ensemble les deux diffèrent. */}
-    {retourPour && (retourPour.siteId ?? ctx.siteEcriture) && (
-      <ModalRetour
-        siteId={(retourPour.siteId ?? ctx.siteEcriture)!}
-        userId={userId}
-        role={vue === 'fournisseurs' ? 'fournisseur' : 'client'}
-        partenaireId={retourPour.id}
-        partenaireNom={retourPour.nom}
-        onFermer={() => setRetourPour(null)}
-        onRetour={fetchAll}
-      />
-    )}
-
     {versementOuvert && ctx.siteEcriture && peutVerserIci && (
       <ModalVersementTiers
         siteId={ctx.siteEcriture}

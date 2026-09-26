@@ -197,8 +197,15 @@ export default function OngletCycleVente({ siteId, userId, role, sites, titre }:
   /* En vue « en cours », la carte couvre tous les statuts sauf le livre :
      filtrer sur le seul « commande » aurait cache les dossiers en
      preparation, que la carte comptait pourtant. */
+  /* Le devis suit le même sort que sa carte.
+   *
+   * Masquer la carte sans filtrer la liste laissait le devis apparaître
+   * sous « Bons de commande » : le responsable des commandes y lisait une
+   * proposition de prix qu'il n'a pas à connaître, et la carte affichait
+   * un compte que la liste démentait. */
   const listeVue = modeVue === 'encours' && vue !== 'livre'
-    ? actives.filter(v => v.etat !== 'livre')
+    ? actives.filter(v => v.etat !== 'livre'
+        && (montreDevis || v.etat !== 'devis'))
     : parEtat(vue);
 
   /* Où en est le cycle d'un site : combien de dossiers à chaque étape, et

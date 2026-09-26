@@ -82,9 +82,20 @@ export default function LoginPage() {
                 ...(sonActivite ? { activiteId: sonActivite } : {}),
               }, { merge: true });
             } catch { /* il faudra le corriger à la main */ }
-          } else if (miens > 0 && sonActivite && !p?.activiteId) {
-            /* Membre sans activité : même cause, l'écran reste vide tant
-               qu'elle manque. */
+          } else if (miens > 0 && sonActivite && p?.activiteId !== sonActivite) {
+            /**
+             * L'inscription sur le site fait foi.
+             *
+             * Un membre peut porter une activité fausse — absente, ou
+             * héritée d'une invitation rattachée à la mauvaise maison. Les
+             * règles lui refusent alors chaque lecture, et son écran reste
+             * blanc sans rien expliquer.
+             *
+             * C'est le `membres` qui a raison : c'est lui que le gérant a
+             * posé, sur un site dont l'activité est connue. On aligne le
+             * profil dessus à chaque connexion, ce qui répare aussi les
+             * comptes créés avant le correctif.
+             */
             try {
               await setDoc(ref, { activiteId: sonActivite }, { merge: true });
             } catch { /* la prochaine fois */ }

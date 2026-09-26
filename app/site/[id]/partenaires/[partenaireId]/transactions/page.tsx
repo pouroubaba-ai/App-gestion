@@ -268,7 +268,12 @@ export default function TransactionsPage() {
         motif: m.type === 'achat' ? 'Achat' : 'Vente',
         date: prev && prev.date > m.date ? prev.date : m.date,
         produits: (prev?.produits ?? 0) + 1,
-        total: (prev?.total ?? 0) + total(m, retoursDe(r => r.mouvementOrigineId === m.id).quantite),
+        /* La valeur du document, entière. Une facture ne rétrécit pas :
+           elle vaut ce qu'elle a valu, et ce qui est revenu se lit dans
+           sa propre colonne. Retirer le retour d'ici affichait « Total
+           6 500 » sur une vente de 13 000, et l'écran se contredisait
+           d'une page à l'autre pour le même document. */
+        total: (prev?.total ?? 0) + total(m),
         /* en valeur, pas en quantité : mêler des pièces et des cartons
            ne donnerait aucun total lisible au niveau du document */
         retour: retoursDe(r => (r.achatId ?? r.venteId) === cle).valeur,
@@ -278,9 +283,11 @@ export default function TransactionsPage() {
     return [...map.values()].sort((a, b) => b.date.localeCompare(a.date));
   }, [filtres, versesParAchat]);
 
-  /** Soldé quand plus rien n'est dû dessus ; partiel sinon. */
-  function statutDoc(d: { total: number; verse: number }) {
-    return Math.max(0, d.total - d.verse) <= 0 ? 'Soldé' : 'Partiel';
+  /** Soldé quand plus rien n'est dû dessus ; partiel sinon.
+   *  Le retour éteint autant que l'argent : l'ignorer laissait « Partiel »
+   *  sur un document dont la marchandise était entièrement revenue. */
+  function statutDoc(d: { total: number; verse: number; retour: number }) {
+    return Math.max(0, d.total - d.verse - d.retour) <= 0 ? 'Soldé' : 'Partiel';
   }
 
   const documentsAffiches = useMemo(
@@ -460,7 +467,13 @@ export default function TransactionsPage() {
                   </thead>
                   <tbody className="divide-y divide-gray-50 dark:divide-gray-800">
                     {documentsAffiches.map(d => {
-                      const reste = Math.max(0, d.total - d.verse);
+                      /* Le retour éteint autant que l'argent : l'oublier
+                         ici laissait un reste dû sur une marchandise
+                         déjà revenue. Et le versé se borne à ce qui
+                         couvre encore le document — versé plus retour ne
+                         peut pas dépasser ce qu'il valait. */
+                      const verseVu = Math.min(d.verse, Math.max(0, d.total - d.retour));
+                      const reste = Math.max(0, d.total - verseVu - d.retour);
                       return (
                         <tr key={d.cle}
                           onClick={() => {
@@ -476,7 +489,7 @@ export default function TransactionsPage() {
                           <td className={`px-4 py-3 text-center ${d.retour > 0 ? 'text-orange-500 font-medium' : 'text-gray-300 dark:text-gray-600'}`}>
                             {fmt(d.retour)}
                           </td>
-                          <td className="px-4 py-3 text-gray-700 dark:text-gray-300 text-center">{fmt(d.verse)}</td>
+                          <td className="px-4 py-3 text-gray-700 dark:text-gray-300 text-center">{fmt(verseVu)}</td>
                           <td className={`px-4 py-3 font-medium text-center ${reste > 0 ? 'text-orange-500' : 'text-gray-400'}`}>{fmt(reste)}</td>
                           <td className="px-4 py-3 text-center">
                             <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${reste <= 0
@@ -503,8 +516,10 @@ export default function TransactionsPage() {
                       {/* le pied additionne les lignes affichées : un total repris
                           d'ailleurs ne correspondrait pas à ce que la colonne montre */}
                       {(() => {
-                        const v = documentsAffiches.reduce((n, d) => n + d.verse, 0);
-                        const r = documentsAffiches.reduce((n, d) => n + Math.max(0, d.total - d.verse), 0);
+                        const v = documentsAffiches.reduce((n, d) =>
+                          n + Math.min(d.verse, Math.max(0, d.total - d.retour)), 0);
+                        const r = documentsAffiches.reduce((n, d) => n + Math.max(0,
+                          d.total - Math.min(d.verse, Math.max(0, d.total - d.retour)) - d.retour), 0);
                         return (
                           <>
                             <td className="px-4 py-3 text-gray-700 dark:text-gray-300 text-center">{fmt(v)}</td>
@@ -600,7 +615,12 @@ export default function TransactionsPage() {
                         /* Ce qui a été rendu sur cette ligne précise : les
                            retours qui portent son identifiant. */
                         const r = retoursDe(x => x.mouvementOrigineId === m.id);
-                        const tot = total(m, r.quantite);
+                        /* La ligne vaut ce qu'elle a valu : le retour a
+                           sa colonne, il n'a pas à rogner le total. Ici
+                           2 mangues à 6 500 affichaient 6 500 au lieu de
+                           13 000, quand l'onglet Produit, lui, montrait
+                           bien 13 000 pour la même ligne. */
+                        const tot = total(m);
                         return (
                           <tr key={m.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/50">
                             <td className={`px-4 py-3 whitespace-nowrap text-center ${m.reference ? 'text-gray-600 dark:text-gray-400' : 'text-gray-300 dark:text-gray-600'}`}>

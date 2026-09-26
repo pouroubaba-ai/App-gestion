@@ -204,13 +204,22 @@ service cloud.firestore {
              admin reste impossible, et c'est tout ce qui compte. */
           || (resource.data.get('role', '') == 'admin'
             && request.resource.data.get('role', '') == 'membre'));
-      /* Poser son activité quand on n'en avait pas : un membre l'hérite du
-         site où on l'a inscrit. Sans elle, les règles ne savent pas de
-         quelle maison il est et lui refusent tout. Le rôle ne bouge pas
-         dans ce geste, et une activité déjà posée ne se change plus. */
+      /**
+       * S'aligner sur l'activité où l'on travaille.
+       *
+       * Un membre hérite de la maison du site où on l'a inscrit. Sans elle,
+       * les règles ne savent pas d'où il est et lui refusent tout : son
+       * écran reste blanc sans rien expliquer. Il faut donc qu'il puisse la
+       * poser — et la corriger, car une invitation mal rattachée lui en
+       * donne une fausse.
+       *
+       * Ce que cela n'ouvre pas : se rattacher à la maison d'un autre. Un
+       * membre ne se donne pas une activité, il recopie celle de son
+       * inscription, et `membres` est hors de sa portée — seul le gérant
+       * ou le propriétaire y écrit. Le rôle, lui, ne bouge pas ici.
+       */
       allow update: if connecte() && uid == monUid()
         && resource != null
-        && resource.data.get('activiteId', '') == ''
         && request.resource.data.get('activiteId', '') != ''
         && request.resource.data.get('role', '') == resource.data.get('role', '');
       allow delete: if false;
@@ -396,6 +405,75 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    /**
+     * Les compteurs de caisse.
+     *
+     * Ils donnent son numéro à chaque écriture et gardent le solde courant.
+     * Ce ne sont pas des données qu'on lit : ce sont les outils du
+     * registre, manipulés dans une transaction que personne n'appelle à la
+     * main.
+     *
+     * Le site se déduit de leur nom — `{siteId}_2026`, `{siteId}_solde` —
+     * et c'est heureux : une règle ne requête pas, mais elle sait comparer
+     * un chemin. Le solde ne s'écrit donc que par qui travaille là.
+     *
+     * Rien ne s'efface : un compteur remis à zéro ferait recommencer la
+     * numérotation, et deux écritures porteraient le même numéro.
+     */
+    match /caisse_compteurs/{id} {
+      /**
+       * Un outil, pas une donnée.
+       *
+       * Personne n'appelle ces documents à la main : ils naissent dans la
+       * transaction qui écrit au registre, pour donner un numéro et tenir
+       * le solde. Les protéger par le site demanderait de découper leur nom
+       * — `{siteId}_2026` — ce que le langage des règles fait mal, et une
+       * règle qu'on n'est pas sûr de lire juste vaut moins qu'une règle
+       * simple dont on connaît la portée.
+       *
+       * Ce qu'elle laisse : un compte de la maison peut fausser un
+       * compteur. Ce qu'elle empêche : qu'un étranger le fasse, et qu'on
+       * l'efface — un compteur remis à zéro ferait porter le même numéro
+       * à deux écritures, et le registre cesserait de prouver sa
+       * continuité. Le solde, lui, se revérifie depuis les mouvements, qui
+       * ne se réécrivent jamais.
+       */
+      allow read, write: if aUneActivite();
+      allow delete: if false;
+    }
+
+    /**
+     * Les retours de marchandise.
+     *
+     * Un dossier s'ouvre, se traite, puis se confirme — et c'est la
+     * confirmation qui fait tout bouger : le stock revient, une dette
+     * s'éteint ou de l'argent part vers la caisse.
+     *
+     * La règle tient ce que le code tient déjà : on ne confirme pas le
+     * retour qu'on a ouvert soi-même. Un gérant seul déclarerait sinon
+     * une marchandise rendue qui n'a jamais quitté la boutique, et
+     * encaisserait le remboursement d'un stock toujours en rayon.
+     *
+     * L'auteur ne se réécrit pas : c'est lui qui rend la séparation
+     * vérifiable après coup.
+     */
+    match /retours_dossiers/{id} {
+      allow get: if travailleSur(resource.data.get('siteId', ''));
+      allow list: if aUneActivite();
+      allow create: if travailleSur(siteEnvoye())
+        && request.resource.data.get('parUid', '') == monUid()
+        && request.resource.data.get('etat', '') == 'en_attente';
+      /* Avancer d'une étape, ou confirmer. Dans les deux cas l'auteur
+         reste celui qui a ouvert, et confirmer demande un autre que lui. */
+      allow update: if travailleSur(siteDuDoc())
+        && request.resource.data.get('parUid', '') == resource.data.get('parUid', '')
+        && request.resource.data.get('valeurTotale', 0) == resource.data.get('valeurTotale', 0)
+        && (request.resource.data.get('confirmeParUid', '') == ''
+          || request.resource.data.get('confirmeParUid', '') != resource.data.get('parUid', ''));
+      /* Un retour annulé reste au registre : il raconte une tentative. */
+      allow delete: if false;
+    }
+
     // ---------------------------------------------------------------
     // Le reste : même frontière, moins de cérémonie
     // ---------------------------------------------------------------
@@ -458,12 +536,17 @@ service cloud.firestore {
     }
 
     /**
-     * Le fichier commun de la maison : produits, partenaires, catégories.
+     * Produits, partenaires, catégories : par site.
      *
-     * Il ne dépend d'aucun site — un produit se vend partout — mais
-     * appartient à une activité. Un transfert le suppose : les deux
-     * boutiques parlent du même article.
+     * On les croirait communs à la maison — un article se vend partout —
+     * mais l'app les cherche par `siteId`, et c'est ce qu'il faut suivre.
+     * Une règle qui exige un champ que les documents ne portent pas ne
+     * protège rien : elle rend seulement l'écran vide.
      */
+    /* Le produit appartient à la maison, pas à un site : c'est ce que
+       suppose un transfert, où deux boutiques parlent du même article. Il
+       porte donc `activiteId` et jamais `siteId` — vérifié sur les
+       documents, pas deviné. */
     match /produits/{id} {
       allow get: if memeActivite(resource.data.get('activiteId', ''));
       allow list: if aUneActivite();
@@ -471,18 +554,30 @@ service cloud.firestore {
       allow update, delete: if memeActivite(resource.data.get('activiteId', ''));
     }
 
+    /**
+     * Les partenaires appartiennent à celui qui les inscrit.
+     *
+     * L'app les cherche par `userId` : chacun tient son carnet, et le
+     * gérant ne commerce pas forcément avec les fournisseurs du
+     * propriétaire. Exiger `activiteId` ici — que ces documents ne portent
+     * pas — rendait tout illisible : « Aucun fournisseur » sur un site qui
+     * en avait un.
+     *
+     * La frontière reste le site : on ne lit pas le carnet d'un autre
+     * commerçant, on lit celui de la boutique où l'on travaille.
+     */
     match /partenaires/{id} {
-      allow get: if memeActivite(resource.data.get('activiteId', ''));
+      allow get: if travailleSur(resource.data.get('siteId', ''));
       allow list: if aUneActivite();
-      allow create: if memeActivite(request.resource.data.get('activiteId', ''));
-      allow update, delete: if memeActivite(resource.data.get('activiteId', ''));
+      allow create: if travailleSur(siteEnvoye());
+      allow update, delete: if travailleSur(siteDuDoc());
     }
 
     match /categories_partenaire/{id} {
-      allow get: if memeActivite(resource.data.get('activiteId', ''));
+      allow get: if travailleSur(resource.data.get('siteId', ''));
       allow list: if aUneActivite();
-      allow create: if memeActivite(request.resource.data.get('activiteId', ''));
-      allow update, delete: if memeActivite(resource.data.get('activiteId', ''));
+      allow create: if travailleSur(siteEnvoye());
+      allow update, delete: if travailleSur(siteDuDoc());
     }
 
     /* Tout le reste est fermé. Une collection qu'on ajoutera demain

@@ -14,13 +14,21 @@ import { formatMontant } from '@/lib/format';
  * vide : le versé était écrit en dur à zéro.
  */
 export default function PartenairesResumeCard({
-  role, reste, verse, nbDus, nbTotal, onOuvrir,
+  role, reste, verse, retour = 0, nbDus, nbTotal, onOuvrir,
 }: {
   role: 'client' | 'fournisseur';
   /** ce qui reste à recouvrer (clients) ou à régler (fournisseurs) */
   reste: number;
-  /** ce qui a déjà circulé, reconstitué depuis les ventes et les achats */
+  /** l'argent qui a réellement circulé */
   verse: number;
+  /**
+   * Ce que la marchandise rendue a éteint, sans argent.
+   *
+   * Il a sa ligne, jamais celle du versé : un retour fait baisser la
+   * dette, il ne remplit aucune caisse. Les additionner faisait dire à
+   * l'écran qu'on avait encaissé ce qu'on n'avait jamais reçu.
+   */
+  retour?: number;
   /** combien de partenaires portent encore un reste */
   nbDus: number;
   /** combien de partenaires ont ce rôle */
@@ -28,10 +36,13 @@ export default function PartenairesResumeCard({
   onOuvrir?: () => void;
 }) {
   const estFourn = role === 'fournisseur';
-  const total = reste + verse;
+  const total = reste + verse + retour;
+  /* La barre mesure ce qui a éteint la dette, par l'argent comme par la
+     marchandise : c'est ce qui reste à faire qui l'intéresse. */
+  const eteint = verse + retour;
   /* Tant qu'il reste un franc à recouvrer, on n'écrit pas 100 % : sur un gros
      volume, l'arrondi affichait une barre pleine à côté d'un reste non nul. */
-  const brut = total > 0 ? (verse / total) * 100 : 0;
+  const brut = total > 0 ? (eteint / total) * 100 : 0;
   const pct = total === 0 ? 0 : reste > 0 ? Math.min(Math.floor(brut), 99) : 100;
 
   /* Hors d'un site, il n'y a pas de page de transactions où aller : la
@@ -80,6 +91,16 @@ export default function PartenairesResumeCard({
         <span className="text-green-600 dark:text-green-400 font-medium">
           {estFourn ? 'Payé' : 'Encaissé'} {formatMontant(verse)}
         </span>
+        {/* Le retour ne paraît que s'il existe : une ligne à zéro
+            encombrerait tous les sites qui n'en font jamais. */}
+        {retour > 0 && (
+          <>
+            {' · '}
+            <span className="font-medium text-amber-600 dark:text-amber-400">
+              Retour {formatMontant(retour)}
+            </span>
+          </>
+        )}
         {total > 0 && <span>{' · '}{pct}%</span>}
       </p>
     </button>

@@ -12,6 +12,13 @@ export default function VentesCard({
   ventes: number;
   benefice: number;
   encaisse: number;
+  /**
+   * Ce qui reste dû sur les ventes de la période affichée.
+   *
+   * Distinct de la créance totale, que porte la carte Créances : ici on
+   * répond à « de ce que j'ai vendu sur cette période, combien reste-t-il
+   * à rentrer ? ».
+   */
   reste: number;
   fonds: number;
   sousTitreFonds?: string;

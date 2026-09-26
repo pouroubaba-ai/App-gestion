@@ -90,6 +90,10 @@ function cheminDossier(
   if (motif === 'vente') return `/site/${siteId}/ventes/${documentId}${suffixe}`;
   if (motif === 'achat') return `/site/${siteId}/achats/${documentId}${suffixe}`;
   if (motif === 'transfert') return `/site/${siteId}/transferts/${documentId}${suffixe}`;
+  /* Un retour est un dossier comme les autres : on doit pouvoir l'ouvrir
+     depuis la ligne qui l'a fait bouger, pour voir ce qui est reparti et
+     qui l'a confirmé. */
+  if (motif === 'retour') return `/site/${siteId}/retours/${documentId}${suffixe}`;
   return null;
 }
 
