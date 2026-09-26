@@ -81,7 +81,7 @@ export async function auteurCourant(
     if (emp) {
       return {
         utilisateur: userId,
-        utilisateurNom: emp.nom ?? nomCompte ?? PROPRIETAIRE.utilisateurNom,
+        utilisateurNom: emp.nom ?? nomLisible(nomCompte),
         utilisateurFonction: emp.fonction || 'Employé',
       };
     }
@@ -92,7 +92,7 @@ export async function auteurCourant(
     if (mem) {
       return {
         utilisateur: userId,
-        utilisateurNom: mem.nom || nomCompte || PROPRIETAIRE.utilisateurNom,
+        utilisateurNom: mem.nom || nomLisible(nomCompte),
         utilisateurFonction: LIBELLES_ROLE[mem.role as RoleSite] ?? 'Membre',
       };
     }
@@ -104,9 +104,24 @@ export async function auteurCourant(
   /* Ni employé ni membre : c'est le compte qui a créé l'activité. */
   return {
     utilisateur: userId,
-    utilisateurNom: nomCompte ?? PROPRIETAIRE.utilisateurNom,
+    utilisateurNom: nomLisible(nomCompte),
     utilisateurFonction: PROPRIETAIRE.utilisateurFonction,
   };
+}
+
+/**
+ * Un nom, jamais une adresse.
+ *
+ * `nomCompte` vaut souvent l'email quand le compte n'a pas de nom
+ * affiché : la signature devenait alors « pouroubaba@gmail.com » sur
+ * chaque versement, lisible par toute l'équipe. Une adresse est un moyen
+ * de joindre quelqu'un, pas une manière de le nommer, et elle n'a rien à
+ * faire dans un registre que d'autres relisent.
+ */
+function nomLisible(nom?: string | null): string {
+  const n = (nom ?? '').trim();
+  if (!n || n.includes('@')) return PROPRIETAIRE.utilisateurNom;
+  return n;
 }
 
 /**

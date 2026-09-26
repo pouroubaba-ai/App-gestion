@@ -7,6 +7,9 @@ import { db } from '@/lib/firebase';
 import { useAuth } from '@/lib/auth-context';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { formatMontant } from '@/lib/format';
+import {
+  LIBELLES_MOTIF_VERSEMENT, type MotifVersement,
+} from '@/lib/versements-collection';
 import { soldeTiers } from '@/lib/soldes';
 import { ArrowLeft, Plus, X, Loader2, FileText, Package, RefreshCw, Banknote } from 'lucide-react';
 import FiltreDeroulant from '@/components/FiltreDeroulant';
@@ -53,10 +56,18 @@ interface Versement {
   date: string;
   heure?: string;
   montant: number;
-  resteApres: number;
-  /** le rôle vit sur l'échéance, pas sur le versement */
+  /** le rôle vit sur l'échéance pour un recouvrement, sur le versement
+      lui-même partout ailleurs */
   role: Role;
   dateEcheance?: string;
+  /** ce qui a fait naître ce versement : avance, règlement, compensation… */
+  motif?: string;
+  /** la référence du document réglé, quand il y en a une */
+  reference?: string | null;
+  /* Qui a fait le geste, et à quel titre : figé au moment du versement,
+     pour que l'archive ne mente pas si la personne change de fonction. */
+  utilisateurNom?: string | null;
+  utilisateurFonction?: string | null;
 }
 
 interface Partenaire {
@@ -182,7 +193,16 @@ export default function TransactionsPage() {
         collection(db, 'recouvrement_versements'),
         where('siteId', '==', siteId),
       )),
-    ]).then(([jSnap, vSnap]) => {
+      /* Tous les autres versements : avances, règlements, remboursements,
+         retours, compensations. L'onglet ne lisait que les encaissements
+         d'échéance, et annonçait donc « Aucun versement » à un partenaire
+         qui en portait plusieurs — la fiche, elle, les comptait. */
+      getDocs(query(
+        collection(db, 'versements'),
+        where('siteId', '==', siteId),
+        where('partenaireId', '==', partenaireId),
+      )),
+    ]).then(([jSnap, vSnap, ordSnap]) => {
       const echeances = new Map(jSnap.docs.map(d => [d.id, d.data()]));
       setVersements(vSnap.docs
         .map(d => ({ id: d.id, ...d.data() } as any))
@@ -194,11 +214,24 @@ export default function TransactionsPage() {
             date: v.date ?? e.date,
             heure: v.heure ?? '',
             montant: v.montant ?? 0,
-            resteApres: v.resteApres ?? 0,
             role: e.role as Role,
             dateEcheance: e.date,
           } as Versement;
         })
+        .concat(ordSnap.docs.map(d => {
+          const x = d.data() as any;
+          return {
+            id: d.id,
+            date: x.date ?? '',
+            heure: x.heure ?? '',
+            montant: x.montant ?? 0,
+            role: x.role as Role,
+            motif: x.motif ?? null,
+            reference: x.reference ?? null,
+            utilisateurNom: x.utilisateurNom ?? null,
+            utilisateurFonction: x.utilisateurFonction ?? null,
+          } as Versement;
+        }))
         /* du plus récent au plus ancien : on vient voir ce qui vient d'entrer */
         .sort((a, b) => (b.date ?? '').localeCompare(a.date ?? '')));
     });
@@ -670,9 +703,17 @@ export default function TransactionsPage() {
                       <tr className="bg-indigo-600 text-white">
                         <th className="text-center px-4 py-3 font-medium">Date</th>
                         <th className="text-center px-4 py-3 font-medium">Heure</th>
+                        {/* D'où vient le versement : un règlement et une
+                            compensation ne se lisent pas pareil. */}
+                        <th className="text-center px-4 py-3 font-medium">Motif</th>
+                        <th className="text-center px-4 py-3 font-medium">Référence</th>
                         <th className="text-center px-4 py-3 font-medium">Échéance</th>
                         <th className="text-center px-4 py-3 font-medium">Montant</th>
-                        <th className="text-center px-4 py-3 font-medium">Reste après</th>
+                        {/* Le reste ne valait que pour un recouvrement : dans
+                            une colonne partagée, il n'avait rien à dire.
+                            Qui a fait le geste, si. */}
+                        <th className="text-center px-4 py-3 font-medium">Auteur</th>
+                        <th className="text-center px-4 py-3 font-medium">Fonction</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-50 dark:divide-gray-800">
@@ -682,16 +723,25 @@ export default function TransactionsPage() {
                             {v.date ? new Date(v.date).toLocaleDateString('fr-FR') : '—'}
                           </td>
                           <td className="px-4 py-3 text-gray-400 text-center">{v.heure || '—'}</td>
+                          <td className="px-4 py-3 text-center text-gray-600 dark:text-gray-300">
+                            {v.motif
+                              ? (LIBELLES_MOTIF_VERSEMENT[v.motif as MotifVersement] ?? v.motif)
+                              : 'Recouvrement'}
+                          </td>
+                          <td className="px-4 py-3 text-center font-mono text-xs text-gray-400">
+                            {v.reference ?? '—'}
+                          </td>
                           {/* La date de l'échéance honorée : un versement du
                               20 sur une échéance du 16 se lit d'un coup. */}
                           <td className="px-4 py-3 text-gray-500 text-center">
                             {v.dateEcheance ? new Date(v.dateEcheance).toLocaleDateString('fr-FR') : '—'}
                           </td>
                           <td className="px-4 py-3 font-medium text-green-600 text-center">{fmt(v.montant)}</td>
-                          <td className="px-4 py-3 text-center">
-                            <span className={v.resteApres <= 0 ? 'text-green-600 font-medium' : 'text-red-500 font-medium'}>
-                              {fmt(v.resteApres)}
-                            </span>
+                          <td className="px-4 py-3 text-center text-gray-700 dark:text-gray-300">
+                            {v.utilisateurNom || '—'}
+                          </td>
+                          <td className="px-4 py-3 text-center text-gray-400">
+                            {v.utilisateurFonction || '—'}
                           </td>
                         </tr>
                       ))}
