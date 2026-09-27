@@ -282,28 +282,24 @@ export default function NouvelAjustementPage() {
             </p>
           )}
 
-          {/* Ce qui est déjà en rayon ne s'ouvre pas deux fois. */}
+          {/* Deux lignes, pas deux paragraphes : on saisit, on ne lit pas.
+              Ce qu'il faut savoir tient dans la phrase ; le reste se
+              découvre en faisant. */}
           {dejaApprovisionnes.length > 0 && (
             <p className="mt-3 rounded-xl bg-orange-50 p-2.5 text-[12px] text-orange-700 dark:bg-orange-900/20 dark:text-orange-400">
               <span className="font-bold">
                 {dejaApprovisionnes.length === 1
-                  ? `« ${dejaApprovisionnes[0].designation} » a déjà bougé sur ce site.`
-                  : `${dejaApprovisionnes.length} produits ont déjà bougé sur ce site.`}
+                  ? `« ${dejaApprovisionnes[0].designation} » a déjà du stock.`
+                  : `${dejaApprovisionnes.length} produits ont déjà du stock.`}
               </span>{' '}
-              Un stock de départ ne se déclare qu’à l’ouverture du compte.
-              Pour un recomptage, choisissez « Correction d’inventaire » :
-              le stock de départ ajoute au rayon au lieu de le corriger.
+              Pour recompter, prenez « Correction d’inventaire ».
             </p>
           )}
 
-          {/* Un champ laissé vide sans explication passe pour un oubli. */}
           {sansCout && (
             <p className="mt-3 rounded-xl bg-indigo-50 p-2.5 text-[12px] text-indigo-700 dark:bg-indigo-900/20 dark:text-indigo-300">
-              Renseignez le coût d’achat sur les produits dont vous avez la
-              facture. Pour les autres, cochez « Coût inconnu » : leur coût
-              sera posé par la première entrée réelle — un achat ou un
-              transfert — et vaudra pour tout le stock. D’ici là, la marge
-              de ces produits reste inconnue.
+              Si vous ne savez pas ce qu’un produit a coûté, cochez
+              « Coût inconnu » : le prochain achat le renseignera.
             </p>
           )}
         </div>
