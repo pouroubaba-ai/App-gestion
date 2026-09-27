@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { formatMontant } from '@/lib/format';
 import { useAuth } from '@/lib/auth-context';
 import {
@@ -128,10 +128,20 @@ export default function OngletFonds({ siteId, userId, sites, titre }: Props) {
   const [aConfirmer, setAConfirmer] = useState<MouvementAttente | null>(null);
   /* incrémenté après une saisie : relance le chargement */
   const [version, setVersion] = useState(0);
+  /* Le rôle sur ce site, une fois su. `undefined` veut dire « pas encore
+     demandé » ; `null` est une réponse — celle du propriétaire. */
+  const roleConnu = useRef<RoleSite | null | undefined>(undefined);
 
   useEffect(() => {
     const charger = async () => {
-      setLoading(true);
+      /* Le spinner ne remplace l'écran qu'à la première venue.
+       *
+       * Après une confirmation, tout était déjà affiché : le faire
+       * disparaître derrière une roue qui tourne donnait le sentiment que
+       * le geste avait rechargé la page entière. Les chiffres se
+       * remplacent quand ils arrivent ; d'ici là, ceux d'avant restent
+       * lisibles — ils ne sont faux que d'un mouvement. */
+      setLoading(l => (mouvements.length === 0 ? true : l));
       /* Le registre est la seule source : un registre qui affiche des lignes
          qu'il ne contient pas n'est pas un registre. Les opérations qui
          touchent la caisse — vente, achat, rémunération, avance,
@@ -139,13 +149,19 @@ export default function OngletFonds({ siteId, userId, sites, titre }: Props) {
       /* Le rôle se lit avant de rendre : `null` veut dire « aucune
          restriction », si bien qu'un rendu fait avant sa réponse montrait
          le bouton de saisie à qui ne peut pas déclarer. */
+      /* Le rôle ne se relit qu'une fois : il ne change pas parce qu'un
+         mouvement vient d'être confirmé, et le redemander posait une
+         requête d'attente devant chaque validation. */
       const [registre, role] = await Promise.all([
         chargerCaisseDuSite(ctx.portee),
-        ctx.siteEcriture
+        roleConnu.current !== undefined
+          ? Promise.resolve(roleConnu.current)
+          : ctx.siteEcriture
           ? roleSurSite(userId, ctx.siteEcriture, activite?.adminUid)
               .catch(() => null)
           : Promise.resolve(null),
       ]);
+      roleConnu.current = role;
       setMouvements(registre);
       setRoleSite(role);
       /* Ce qui a été encaissé dehors et attend d'entrer : cet argent

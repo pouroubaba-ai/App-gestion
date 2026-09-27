@@ -18,7 +18,7 @@
  * « Mes remises », chez celui qui avait déclaré.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { formatMontant } from '@/lib/format';
 import { useAuth } from '@/lib/auth-context';
 import { Loader2, ShieldCheck } from 'lucide-react';
@@ -61,22 +61,33 @@ export default function OngletAutorisations({
   /* Un mouvement sorti de son lot, pour le compter seul. */
   const [aCompter, setACompter] = useState<MouvementAttente | null>(null);
   const [version, setVersion] = useState(0);
+  /* Le rôle sur ce site, une fois su. `undefined` : pas encore demandé. */
+  const roleConnu = useRef<RoleSite | null | undefined>(undefined);
+  /* Ce qui a déjà été affiché : après une autorisation, l'écran ne
+     disparaît pas derrière une roue le temps de se relire. */
+  const dejaVu = useRef(false);
 
   useEffect(() => {
     const charger = async () => {
-      setLoading(true);
+      setLoading(!dejaVu.current);
       /* Le rôle se lit avant de rendre : sans lui, `peutAutoriser` décide
          sur un `null` qui vaut « admin », et les boutons d'autorisation
          apparaîtraient à qui n'y a pas droit, le temps d'un battement. */
+      /* Autoriser un mouvement ne change pas le rôle de qui autorise :
+         le redemander posait une attente devant chaque validation. */
       const [liste, role] = await Promise.all([
         chargerAttente(ctx.portee).catch(() => []),
-        ctx.siteEcriture
+        roleConnu.current !== undefined
+          ? Promise.resolve(roleConnu.current)
+          : ctx.siteEcriture
           ? roleSurSite(userId, ctx.siteEcriture, activite?.adminUid)
               .catch(() => null)
           : Promise.resolve(null),
       ]);
+      roleConnu.current = role;
       setAttente(liste);
       setRoleSite(role);
+      dejaVu.current = true;
       chargerMissions(ctx.portee).then(setMissions).catch(() => setMissions([]));
       if (ctx.siteEcriture) {
         chargerDisponible(ctx.siteEcriture)

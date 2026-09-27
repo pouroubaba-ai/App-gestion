@@ -10,7 +10,7 @@ import DisponibleCaisse from '../../components/DisponibleCaisse';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { formatMontant } from '@/lib/format';
 import {
-  enregistrerVersement, chargerVersementsDuSite,
+  enregistrerVersement, versementsDuDossier,
   LIBELLES_MOTIF_VERSEMENT, type Versement,
 } from '@/lib/versements-collection';
 import {
@@ -208,7 +208,9 @@ export default function FicheAchatPage() {
   }, [achat, planifDemandee, siteId]);
 
   async function charger() {
-    setLoading(true);
+    /* Le spinner ne remplace l'écran qu'à la première venue : après une
+       confirmation, tout était déjà affiché. */
+    setLoading(l => (achat ? l : true));
     const snap = await getDoc(doc(db, 'achats', achatId));
     if (snap.exists()) {
       const a = { id: snap.id, ...snap.data() } as Achat;
@@ -216,21 +218,26 @@ export default function FicheAchatPage() {
       setQuantites(Object.fromEntries(
         a.lignes.map((l, i) => [i, l.quantiteRecue ?? l.quantiteDemandee])));
 
-      /* Le coût moyen appartient à la détention, pas au produit : lire
+      chargerReceptions(achatId).then(setReceptions).catch(() => setReceptions([]));
+
+      /* Les trois lectures partent ensemble : aucune ne dépend des
+         autres, et les enchaîner ajoutait deux attentes. Les versements
+         viennent par dossier — on ne rapatrie plus toute la collection du
+         site pour n'en garder que les siens.
+
+         Le coût moyen appartient à la détention, pas au produit : lire
          `produits` filtré par `siteId` datait du modèle où le produit
          appartenait au site. La requête ne ramenait plus rien, et tous les
          coûts valaient zéro — la marge annoncée à la réception était donc
          égale au prix de vente entier. */
-      const prod = await produitsDuSite(a.siteId);
-      setCoutsMoyens(Object.fromEntries(
-        prod.map(p => [p.id, p.coutMoyen ?? 0])));
-
-      chargerReceptions(achatId).then(setReceptions).catch(() => setReceptions([]));
-      const [vers, caisse] = await Promise.all([
-        chargerVersementsDuSite(a.siteId),
+      const [prod, vers, caisse] = await Promise.all([
+        produitsDuSite(a.siteId),
+        versementsDuDossier(achatId, 'achat').catch(() => []),
         chargerDisponible(a.siteId),
       ]);
-      setVersements(vers.filter(v => v.achatId === achatId));
+      setCoutsMoyens(Object.fromEntries(
+        prod.map(p => [p.id, p.coutMoyen ?? 0])));
+      setVersements(vers);
       setSoldeCaisseSite(caisse.disponible);
       setSoldeReelCaisse(caisse.solde);
       setEngageCaisse(caisse.engage);

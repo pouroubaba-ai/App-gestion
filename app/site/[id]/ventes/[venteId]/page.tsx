@@ -11,7 +11,7 @@ import { auteurCourant, auteurEtape } from '@/lib/auteur';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { formatMontant } from '@/lib/format';
 import {
-  enregistrerVersement, chargerVersementsDuSite, LIBELLES_MOTIF_VERSEMENT,
+  enregistrerVersement, versementsDuDossier, LIBELLES_MOTIF_VERSEMENT,
   type Versement,
 } from '@/lib/versements-collection';
 import { ChampNombre } from '@/components/Champs';
@@ -183,15 +183,31 @@ export default function FicheVentePage() {
   }, [vente, planifDemandee, siteId]);
 
   async function charger() {
-    setLoading(true);
-    const snap = await getDoc(doc(db, 'ventes', venteId));
-    if (snap.exists()) {
-      const v = { id: snap.id, ...snap.data() } as Vente;
-      setVente(v);
-      chargerPreparations(venteId).then(setPreparations).catch(() => setPreparations([]));
+    /* Le spinner ne remplace l'écran qu'à la première venue : après un
+       avancement, tout était déjà là, et le faire disparaître donnait le
+       sentiment d'un rechargement complet. */
+    setLoading(l => (vente ? l : true));
 
-      const tous = await chargerVersementsDuSite(v.siteId);
-      setVersements(tous.filter(x => x.venteId === venteId));
+    /* Les quatre lectures partent ensemble : aucune ne dépend du résultat
+       d'une autre, et les enchaîner ajoutait trois attentes à la suite.
+       Les versements sont demandés par dossier plutôt que filtrés après
+       coup — on ne rapatrie plus toute la collection du site pour en
+       garder trois lignes. */
+    const [snap, produits, ventesSnap, vers] = await Promise.all([
+      getDoc(doc(db, 'ventes', venteId)),
+      produitsDuSite(siteId),
+      getDocs(query(collection(db, 'ventes'),
+        where('siteId', '==', siteId),
+        /* Seuls les dossiers ouverts retiennent du stock : les demander
+           au serveur évite de rapatrier tout l'historique des ventes. */
+        where('etat', 'in', ['preparation', 'pret']))),
+      versementsDuDossier(venteId, 'vente').catch(() => []),
+    ]);
+
+    if (snap.exists()) {
+      setVente({ id: snap.id, ...snap.data() } as Vente);
+      chargerPreparations(venteId).then(setPreparations).catch(() => setPreparations([]));
+      setVersements(vers);
     }
 
     /* Le stock vit sur la détention, pas sur le produit : il faut aller le
@@ -201,7 +217,6 @@ export default function FicheVentePage() {
        et ne porte plus ni site ni stock. La requête ne ramenait donc rien,
        et tout stock s'affichait à zéro : on ne pouvait plus rien préparer
        d'un produit pourtant présent en rayon. */
-    const produits = await produitsDuSite(siteId);
     const parCle: Record<string, number> = {};
     const parProduit: Record<string, { nom: string; quantite: number }[]> = {};
     produits.forEach(p => {
@@ -217,11 +232,7 @@ export default function FicheVentePage() {
 
     /* Seuls les dossiers en préparation ou prêts retiennent du stock : un
        dossier livré est déjà sorti, un dossier annulé ne promet plus rien. */
-    const ventesSnap = await getDocs(
-      query(collection(db, 'ventes'), where('siteId', '==', siteId)));
-    const ouverts = new Set(ventesSnap.docs
-      .filter(d => ['preparation', 'pret'].includes(d.data().etat))
-      .map(d => d.id));
+    const ouverts = new Set(ventesSnap.docs.map(d => d.id));
     reserveParProduit(siteId, ouverts).then(setReserve).catch(() => setReserve({}));
     setLoading(false);
   }

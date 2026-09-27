@@ -218,6 +218,25 @@ export async function chargerVersementsDuSite(siteId: Portee): Promise<Versement
     .sort((a, b) => (b.date + b.heure).localeCompare(a.date + a.heure));
 }
 
+/**
+ * Les versements d'un seul dossier.
+ *
+ * L'écran d'une vente ne montre que les siens. Les demander au site
+ * entier pour n'en garder qu'une poignée faisait rapatrier toute la
+ * collection à chaque ouverture, et à chaque confirmation — un coût qui
+ * grandit avec l'ancienneté de l'activité, pour trois lignes affichées.
+ */
+export async function versementsDuDossier(
+  dossierId: string, type: 'achat' | 'vente',
+): Promise<Versement[]> {
+  const snap = await getDocs(query(
+    collection(db, 'versements'),
+    where(type === 'achat' ? 'achatId' : 'venteId', '==', dossierId)));
+  return snap.docs
+    .map(d => ({ id: d.id, ...d.data() } as Versement))
+    .sort((a, b) => (b.date + b.heure).localeCompare(a.date + a.heure));
+}
+
 /** Les versements d'un tiers, tous rôles ou un seul. */
 export async function chargerVersementsDuTiers(
   siteId: string, partenaireId: string, role?: RoleTiers,
