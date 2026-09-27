@@ -14,10 +14,10 @@ import ModalMouvement from '../../components/ModalMouvement';
 import type { Mouvement } from '@/lib/mouvements';
 import { ChampRecherche } from '@/components/Champs';
 
-interface Emballage {
-  nom: string;
-  quantite: number;
-}
+/* Le conditionnement vient de `lib/mouvements` : le redéclarer ici
+   laissait les deux diverger, et c'est ce qui est arrivé quand il a
+   gagné son lien aux déclinaisons. */
+import type { Emballage } from '@/lib/mouvements';
 
 interface Caracteristique {
   nom: string;
@@ -137,6 +137,9 @@ export default function FicheProduitPage() {
 
   /* emballages */
   const [modalEmballage, setModalEmballage] = useState(false);
+  /* Les déclinaisons auxquelles ce conditionnement s'applique. Vide = il
+     vaut pour tout le produit, ce qui reste le cas courant. */
+  const [embVariantes, setEmbVariantes] = useState<string[]>([]);
   const [embNom, setEmbNom] = useState('');
   const [embQte, setEmbQte] = useState('');
   const [suppEmballage, setSuppEmballage] = useState<Emballage | null>(null);
@@ -397,11 +400,18 @@ export default function FicheProduitPage() {
     const qte = parseMontant(embQte);
     if (!nom || qte < 2 || emballages.some(e => e.nom.toLowerCase() === nom.toLowerCase())) return;
     setSaving(true);
-    const maj = [...emballages, { nom, quantite: qte }];
+    /* Aucune déclinaison cochée : le conditionnement vaut pour tout le
+       produit. C'est ce que portaient tous les emballages avant que la
+       distinction existe, et ils continuent de fonctionner. */
+    const maj = [...emballages, {
+      nom, quantite: qte,
+      ...(embVariantes.length > 0 ? { variantes: embVariantes } : {}),
+    }];
     await updateDoc(doc(db, 'produits', produitId), { emballages: maj });
     setProduit({ ...produit, emballages: maj });
     setSaving(false);
     setModalEmballage(false);
+    setEmbVariantes([]);
   }
 
   async function supprimerEmballage() {
@@ -742,7 +752,21 @@ export default function FicheProduitPage() {
                         <tbody className="divide-y divide-gray-50 dark:divide-gray-800">
                           {emballages.map(e => (
                             <tr key={e.nom} className="hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
-                              <td className="px-3 py-2.5 font-medium text-gray-900 dark:text-gray-100 text-center">{e.nom}</td>
+                              <td className="px-3 py-2.5 text-center">
+                                <span className="font-medium text-gray-900 dark:text-gray-100">
+                                  {e.nom}
+                                </span>
+                                {/* À quelles déclinaisons il s'applique.
+                                    Sans cette mention, on ne peut plus
+                                    relire ce qu'on a posé — et on
+                                    recrée un conditionnement qui
+                                    existait déjà pour une autre. */}
+                                {(e.variantes?.length ?? 0) > 0 && (
+                                  <span className="ml-2 rounded-full bg-indigo-50 px-1.5 py-0.5 text-[10px] font-bold text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-400">
+                                    {e.variantes!.join(' · ')}
+                                  </span>
+                                )}
+                              </td>
                               <td className="px-3 py-2.5 text-gray-600 dark:text-gray-400 text-center">{e.quantite} {uniteLabel}{e.quantite > 1 ? 's' : ''}</td>
                               {/* Combien d'emballages *complets* le stock permet de former :
                                   un carton à moitié rempli n'est pas un carton, d'où la
@@ -1133,8 +1157,53 @@ export default function FicheProduitPage() {
                       : <>Exprimé en {uniteLabel}s.</>}
                   </p>
                 )}
+                {/* À quelles déclinaisons ce conditionnement s'applique.
+                    Un carton de 10W n'en contient pas le même nombre
+                    qu'un carton de 30W : les proposer tous les deux
+                    laisse choisir le mauvais au moment de vendre.
+
+                    Ne paraît que s'il y a des déclinaisons — sinon la
+                    question ne se pose pas. */}
+                {variantes.length > 0 && (
+                  <div className="mb-3">
+                    <p className="text-xs font-bold text-gray-400 uppercase mb-1.5">
+                      Pour quelles déclinaisons
+                    </p>
+                    <div className="flex flex-wrap gap-1.5">
+                      <button type="button" onClick={() => setEmbVariantes([])}
+                        className={`rounded-lg px-2.5 py-1 text-[11px] font-bold transition-colors ${
+                          embVariantes.length === 0
+                            ? 'bg-indigo-600 text-white'
+                            : 'border border-gray-200 text-gray-500 dark:border-gray-700'}`}>
+                        Toutes
+                      </button>
+                      {variantes.map(v => {
+                        const prise = embVariantes.includes(v.cle);
+                        return (
+                          <button key={v.cle} type="button"
+                            onClick={() => setEmbVariantes(prev => prise
+                              ? prev.filter(x => x !== v.cle)
+                              : [...prev, v.cle])}
+                            className={`rounded-lg px-2.5 py-1 text-[11px] font-bold transition-colors ${
+                              prise
+                                ? 'bg-indigo-600 text-white'
+                                : 'border border-gray-200 text-gray-500 dark:border-gray-700'}`}>
+                            {v.cle}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <p className="mt-1.5 text-[11px] text-gray-400">
+                      {embVariantes.length === 0
+                        ? 'Proposé pour toutes les déclinaisons.'
+                        : `Proposé pour ${embVariantes.length} déclinaison${
+                            embVariantes.length > 1 ? 's' : ''} seulement.`}
+                    </p>
+                  </div>
+                )}
+
                 <div className="flex gap-3">
-                  <button onClick={() => setModalEmballage(false)}
+                  <button onClick={() => { setModalEmballage(false); setEmbVariantes([]); }}
                     className="flex-1 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 text-sm font-medium text-gray-500">Annuler</button>
                   <button onClick={ajouterEmballage} disabled={saving || !nom || qte < 2 || doublonEmb}
                     className="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-bold flex items-center justify-center gap-2 transition-colors">

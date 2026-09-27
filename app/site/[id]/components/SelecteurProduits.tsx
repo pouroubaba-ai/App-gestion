@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { formatMontant } from '@/lib/format';
-import { coutMoyenApresEntree, enUnitesBase } from '@/lib/mouvements';
+import { coutMoyenApresEntree, enUnitesBase, emballagesDe } from '@/lib/mouvements';
 import { Trash2, Package, Info, Plus, Minus, BarChart3 } from 'lucide-react';
 import { ChampRecherche, ChampNombre } from '@/components/Champs';
 import type { LigneFlux } from '@/lib/flux-marchandise';
@@ -293,7 +293,10 @@ export default function SelecteurProduits({
         <div className="space-y-2">
           {lignes.map((l, i) => {
             const p = produits.find(x => x.id === l.produitId);
-            const emballages = p?.emballages ?? [];
+            /* Les conditionnements de CETTE déclinaison : un carton de
+               10W n'en contient pas le même nombre qu'un carton de 30W,
+               et proposer les deux laisse choisir le mauvais. */
+            const emballages = emballagesDe(p?.emballages, l.varianteCle);
             const variante = l.varianteCle
               ? p?.variantes?.find(v => v.cle === l.varianteCle)
               : undefined;

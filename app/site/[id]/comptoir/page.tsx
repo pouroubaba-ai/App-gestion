@@ -14,6 +14,7 @@ import {
   LigneFlux, referenceFlux, livrerVente, type Vente,
 } from '@/lib/flux-marchandise';
 import { ligneDepuisVente, synchroniserLignes } from '@/lib/lignes-vente';
+import { emballagesDe } from '@/lib/mouvements';
 import { enregistrerVersement } from '@/lib/versements-collection';
 import { estEnsemble, racineRetour } from '@/lib/retour';
 import {
@@ -813,7 +814,12 @@ export default function ComptoirPage() {
                 {panier.map(l => {
                   const max = plafond(l.stockUnites, l.contenance);
                   const auPlafond = l.quantiteDemandee >= max;
-                  const embs = produits.find(x => x.id === l.produitId)?.emballages ?? [];
+                  /* Ceux de cette déclinaison : les communs, plus les
+                     siens. Un carton de 10W n'a pas le même contenu
+                     qu'un carton de 30W. */
+                  const embs = emballagesDe(
+                    produits.find(x => x.id === l.produitId)?.emballages,
+                    l.varianteCle);
                   const uniteNom = (l.unite?.trim() || 'unité').toLowerCase();
                   /* Le coût de ce qu'on vend : un carton a coûté vingt-huit
                      fois ce qu'a coûté la pièce. */

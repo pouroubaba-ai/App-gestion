@@ -71,6 +71,47 @@ export function coutMoyenApresEntree(
   );
 }
 
+/**
+ * Un conditionnement : le nom sous lequel la marchandise se groupe, et
+ * combien d'unités il contient.
+ *
+ * `variantes` dit à quelles déclinaisons il s'applique. Vide ou absent,
+ * il vaut pour tout le produit — c'est le cas courant, et c'est ce que
+ * portaient tous les emballages avant que la distinction existe.
+ */
+export interface Emballage {
+  nom: string;
+  quantite: number;
+  /** les clés de variantes concernées ; vide = commun à toutes */
+  variantes?: string[] | null;
+}
+
+/**
+ * Les conditionnements proposés pour une déclinaison donnée.
+ *
+ * Un carton d'ampoules 10W n'en contient pas le même nombre qu'un carton
+ * de 30W. Montrer tous les conditionnements du produit à chaque variante
+ * obligeait le vendeur à savoir lequel valait pour ce qu'il tient en
+ * main — et une erreur là-dessus fait sortir du stock qui n'existe pas.
+ *
+ * Une variante reçoit donc les conditionnements communs, plus les siens.
+ * Sans aucun des deux, elle se vend à la pièce : un produit qui n'a pas
+ * de conditionnement n'en a pas, ce n'est pas un manque à combler.
+ */
+export function emballagesDe(
+  emballages: Emballage[] | null | undefined,
+  varianteCle?: string | null,
+): Emballage[] {
+  const tous = emballages ?? [];
+  /* Sans variante choisie, on montre tout : c'est la fiche du produit,
+     pas une ligne de vente. */
+  if (!varianteCle) return tous;
+  return tous.filter(e => {
+    const liees = e.variantes ?? [];
+    return liees.length === 0 || liees.includes(varianteCle);
+  });
+}
+
 /** Convertit une quantité exprimée dans un emballage en unités de base. */
 export function enUnitesBase(
   quantite: number, nomEmballage: string | null | undefined,
