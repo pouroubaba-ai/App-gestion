@@ -1,6 +1,6 @@
 import {
   collection, query, where, getDocs, addDoc, updateDoc, doc, getDoc,
-  increment,
+  increment, writeBatch,
   serverTimestamp,
 } from 'firebase/firestore';
 import { db } from './firebase';
@@ -96,6 +96,15 @@ export interface Versement {
      transaction sur le compteur — c'est ce qui rendait un versement
      multiple si lent. L'appelant écrit alors la caisse lui-même. */
   sansCaisse?: boolean;
+  /**
+   * Le total du dossier porte déjà ce montant : ne pas l'ajouter.
+   *
+   * Sert à recoller un versement qui n'avait pas abouti. `avanceVersee`
+   * s'était écrit, la ligne non : c'est la ligne qui manque, pas le
+   * total. L'incrémenter une seconde fois doublerait ce que la vente
+   * annonce encaissé.
+   */
+  sansTotal?: boolean;
 }
 
 export type SaisieVersement = Omit<Versement, 'id' | 'heure'>
@@ -160,7 +169,43 @@ export async function enregistrerVersement(saisie: SaisieVersement): Promise<Ver
     ? (saisie.mouvementCaisseId ?? null)
     : (ecriture?.applique ? ecriture.id : null);
 
-  const ref = await addDoc(collection(db, 'versements'), {
+  /* Le versement et le total du dossier s'écrivent ensemble.
+   *
+   * C'étaient deux écritures qui s'attendaient, et entre les deux il y
+   * avait un trou : le versement inscrit, `avanceVersee` pas encore. La
+   * vente paraissait alors impayée alors que l'argent était encaissé et
+   * le client parti — un écart muet, que rien ne serait venu corriger.
+   *
+   * Un lot ferme ce trou et supprime l'attente : les deux passent, ou
+   * aucune. Le dossier porte le total et jamais le détail, pour que
+   * l'écran d'un achat dise ce qui reste sans lire toute la collection.
+   *
+   * `avanceVersee` ne porte que de l'argent. Un remboursement défait ce
+   * qu'un versement avait réglé ; tout autre motif l'augmente. Le sens du
+   * flux ne suffit pas à trancher : un remboursement de fournisseur est
+   * une entrée, et il retire pourtant.
+   *
+   * Le retour de marchandise, lui, n'y touche pas. Il éteint une dette
+   * sans qu'un franc ne circule : l'écrire ici faisait passer des sacs
+   * rendus pour un paiement, et l'écran annonçait « Versé 6 500 » à côté
+   * d'un onglet qui disait « Aucun versement ». Ce qu'un retour éteint se
+   * lit sur le retour. */
+  const dossierId = saisie.achatId ?? saisie.venteId;
+  const touchePasAuTotal = !dossierId || saisie.motif === 'retour_marchandise'
+    || saisie.sansTotal === true;
+
+  /* Un remboursement doit savoir ce qu'il y avait : le total ne descend
+     pas sous zéro, et l'écriture seule ne le garantirait pas. Il est rare
+     — l'aller-retour se justifie pour lui seul. */
+  const avanceAvant = (!touchePasAuTotal && saisie.motif === 'remboursement')
+    ? await getDoc(doc(db, saisie.achatId ? 'achats' : 'ventes', dossierId!))
+        .then(s => (s.exists() ? (s.data().avanceVersee ?? 0) : null))
+        .catch(() => null)
+    : null;
+
+  const lot = writeBatch(db);
+  const ref = doc(collection(db, 'versements'));
+  lot.set(ref, {
     siteId: saisie.siteId,
     userId: saisie.userId,
     date: saisie.date,
@@ -182,47 +227,24 @@ export async function enregistrerVersement(saisie: SaisieVersement): Promise<Ver
     createdAt: serverTimestamp(),
   });
 
-  /* Le dossier porte le total, jamais le détail : l'écran de l'achat doit
-     pouvoir dire ce qui reste sans lire toute la collection. */
-  const dossierId = saisie.achatId ?? saisie.venteId;
-  /* `avanceVersee` ne porte que de l'argent.
-   *
-   * Un remboursement défait ce qu'un versement avait réglé ; tout autre
-   * motif l'augmente. Le sens du flux ne suffit pas à trancher : un
-   * remboursement de fournisseur est une entrée, et il retire pourtant.
-   *
-   * Le retour de marchandise, lui, ne touche pas à ce champ. Il éteint
-   * une dette sans qu'un franc ne circule : l'écrire ici faisait passer
-   * des sacs rendus pour un paiement, et l'écran annonçait « Versé
-   * 6 500 » à côté d'un onglet qui disait « Aucun versement ». Ce qu'un
-   * retour éteint se lit sur le retour. */
-  if (dossierId && saisie.motif !== 'retour_marchandise') {
-    const col = saisie.achatId ? 'achats' : 'ventes';
-    const ligne = doc(db, col, dossierId);
-
+  if (!touchePasAuTotal) {
+    const ligne = doc(db, saisie.achatId ? 'achats' : 'ventes', dossierId!);
     if (saisie.motif === 'remboursement') {
-      /* Retirer demande de savoir ce qu'il y avait : le total ne descend
-         pas sous zéro, et rien dans l'écriture seule ne le garantirait.
-         Un remboursement est rare — l'aller-retour se justifie ici. */
-      const snap = await getDoc(ligne);
-      if (snap.exists()) {
-        const avance = snap.data().avanceVersee ?? 0;
-        await updateDoc(ligne, {
-          avanceVersee: Math.max(0, avance - saisie.montant),
+      /* Le dossier a pu disparaître : on n'écrit alors que le versement,
+         plutôt que de perdre le fait pour un total dérivé. */
+      if (avanceAvant !== null) {
+        lot.update(ligne, {
+          avanceVersee: Math.max(0, avanceAvant - saisie.montant),
         });
       }
     } else {
-      /* Ajouter se fait sans lire : `increment` additionne sur le
-         serveur. Lire puis écrire coûtait deux attentes à chaque
-         versement — et laissait passer, entre les deux, un second
-         versement qui écrasait le premier. */
-      await updateDoc(ligne, { avanceVersee: increment(saisie.montant) })
-        .catch(() => {
-          /* Le dossier a pu disparaître : le versement, lui, est déjà
-             inscrit. On ne perd pas le fait pour un total dérivé. */
-        });
+      /* `increment` additionne sur le serveur : deux versements
+         simultanés s'ajoutent au lieu de s'écraser. */
+      lot.update(ligne, { avanceVersee: increment(saisie.montant) });
     }
   }
+
+  await lot.commit();
 
   return { id: ref.id, ...saisie, heure, mouvementCaisseId } as Versement;
 }

@@ -560,28 +560,28 @@ export default function ComptoirPage() {
         }
       })();
 
-      /* On ne retient plus le comptoir le temps que tout s'inscrive.
+      /* On rend la main tout de suite : le caissier a un client devant lui.
        *
-       * La chaîne fait quatre gestes qui s'attendent — écrire les lignes,
-       * sortir le stock, réserver un numéro de caisse, poser le
-       * versement. Deux secondes et demie mesurées, pendant lesquelles le
-       * vendeur regardait un bouton grisé avec un client devant lui.
+       * La chaîne fait quatre gestes qui s'attendent — les lignes, le
+       * stock, le numéro de caisse, le versement. L'attendre coûtait deux
+       * à trois secondes par vente, et un caissier qui en fait cinquante
+       * passe deux minutes de sa journée à regarder un bouton gris.
        *
-       * Ce qu'il faut garantir, ce n'est pas que le réseau ait répondu :
-       * c'est que rien ne se perde. Firestore garde ses écritures et les
-       * envoie quand il peut, et `reprendreVentesComptoir` termine à
-       * l'ouverture suivante toute vente restée en chemin — c'est ce qui
-       * protège déjà le hors ligne. La même sécurité vaut en ligne.
+       * Ce qu'il faut garantir n'est pas que le réseau ait répondu, c'est
+       * que rien ne se perde. Trois choses s'en chargent : Firestore garde
+       * ses écritures et les envoie quand il peut ; le versement et le
+       * total du dossier s'écrivent désormais ensemble, donc plus de trou
+       * entre les deux ; et `reprendreVentesComptoir` reprend à
+       * l'ouverture suivante aussi bien la vente restée en préparation que
+       * celle qui est livrée sans son argent.
        *
-       * On laisse donc un instant à la chaîne, de quoi conclure quand le
-       * réseau est bon, puis on rend la main. Un échec ne disparaît pas
-       * en silence : il s'affiche, la vente restant reprenable. */
-      const { termine } = await sansAttendreLeReseau(ecriture, 400);
+       * On laisse un instant à la chaîne — de quoi conclure quand la
+       * connexion est bonne — puis on libère l'écran. */
+      const { termine } = await sansAttendreLeReseau(ecriture, 300);
       if (!termine) setDiffere(true);
 
-      /* Si la chaîne échoue après qu'on a rendu la main, le vendeur doit
-         l'apprendre : sans cela il croirait la vente conclue. Elle sera
-         reprise à la prochaine ouverture, et on le dit. */
+      /* Un échec ne disparaît pas en silence : le vendeur croirait la
+         vente conclue. On le dit, et la reprise s'en chargera. */
       ecriture.catch(() => {
         setErreur(
           `Vente ${reference} : l'enregistrement n'a pas abouti. `

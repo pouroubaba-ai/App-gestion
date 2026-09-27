@@ -103,18 +103,36 @@ export async function reprendreVentesComptoir(params: {
   const { livrerVente } = await import('@/lib/flux-marchandise');
   const { auteurEtape } = await import('@/lib/auteur');
 
-  const snap = await getDocs(query(
-    collection(db, 'ventes'),
-    where('siteId', '==', params.siteId),
-    where('auComptoir', '==', true),
-    where('etat', '==', 'preparation')));
+  /* Deux ruptures possibles, deux formes de vente inachevée.
+   *
+   * Celle qui est restée en « préparation » n'a pas sorti son stock. Celle
+   * qui est « livrée » l'a sorti, mais l'argent a pu ne pas suivre : le
+   * client a payé, il est parti, et l'écran annonce une créance. C'est le
+   * plus dangereux des deux, parce qu'il est muet — rien ne le distingue
+   * d'une vente à crédit ordinaire.
+   *
+   * On lit donc les deux d'un coup. Une vente au comptoir encaissée porte
+   * son montant dans `avanceVersee` : quand elle est livrée et que ce
+   * total est en dessous, un versement manque à l'appel. */
+  const [enCours, livrees] = await Promise.all([
+    getDocs(query(
+      collection(db, 'ventes'),
+      where('siteId', '==', params.siteId),
+      where('auComptoir', '==', true),
+      where('etat', '==', 'preparation'))),
+    getDocs(query(
+      collection(db, 'ventes'),
+      where('siteId', '==', params.siteId),
+      where('auComptoir', '==', true),
+      where('etat', '==', 'livre'))),
+  ]);
 
-  if (snap.empty) return 0;
+  if (enCours.empty && livrees.empty) return 0;
 
   const auteur = await auteurEtape(params.siteId, params.userId);
   let reprises = 0;
 
-  for (const d of snap.docs) {
+  for (const d of enCours.docs) {
     try {
       await livrerVente({
         vente: { id: d.id, ...(d.data() as any) },
@@ -130,5 +148,87 @@ export async function reprendreVentesComptoir(params: {
          prochaine ouverture : on ne bloque pas les autres pour elle. */
     }
   }
+
+  reprises += await recollerVersements({
+    ventes: livrees.docs.map(d => ({ id: d.id, ...(d.data() as any) })),
+    siteId: params.siteId,
+    userId: params.userId,
+    auteur,
+  });
+
   return reprises;
+}
+
+/**
+ * Rattrape l'argent d'une vente au comptoir dont le versement manque.
+ *
+ * La marchandise est sortie, le client a payé et il est parti : ce qui
+ * manque n'est pas une décision, c'est une écriture qui n'a pas abouti.
+ * On la refait — on ne demande à personne de la ressaisir de mémoire.
+ *
+ * Le fait se reconnaît sans ambiguïté : la vente est au comptoir, elle
+ * est livrée, et la somme de ses versements ne couvre pas ce qu'elle
+ * annonce encaissé. On relit les versements plutôt que de se fier au
+ * seul `avanceVersee`, puisque c'est précisément ce total qui a pu ne pas
+ * s'écrire.
+ *
+ * Rien ne se devine : une vente à crédit annonce zéro encaissé et ne
+ * bouge pas. Seul l'écart entre ce qui est déclaré payé et ce qui est
+ * inscrit appelle une reprise.
+ */
+async function recollerVersements(params: {
+  ventes: any[];
+  siteId: string;
+  userId: string;
+  auteur: { nom: string; fonction: string };
+}): Promise<number> {
+  const candidates = params.ventes.filter(v => (v.avanceVersee ?? 0) > 0);
+  if (candidates.length === 0) return 0;
+
+  const { versementsDuDossier, enregistrerVersement } =
+    await import('@/lib/versements-collection');
+
+  let recolles = 0;
+
+  for (const v of candidates) {
+    try {
+      const faits = await versementsDuDossier(v.id, 'vente');
+      const inscrit = faits
+        .filter(x => x.motif !== 'retour_marchandise')
+        .reduce((n, x) => n + (x.montant ?? 0), 0);
+
+      /* `avanceVersee` dit ce que la vente a encaissé ; les versements
+         disent ce qui en est inscrit. L'écart est ce qui manque. */
+      const manque = (v.avanceVersee ?? 0) - inscrit;
+      if (manque <= 0) continue;
+
+      await enregistrerVersement({
+        siteId: params.siteId,
+        userId: params.userId,
+        date: v.dateLivraison ?? v.dateCommande
+          ?? new Date().toISOString().split('T')[0],
+        montant: manque,
+        sens: 'entree',
+        motif: 'vente',
+        partenaireId: v.clientId || '',
+        partenaireNom: v.clientNom ?? 'Client de passage',
+        role: 'client',
+        achatId: null,
+        venteId: v.id,
+        reference: v.reference ?? null,
+        par: params.userId,
+        utilisateurNom: params.auteur.nom,
+        utilisateurFonction: params.auteur.fonction,
+        /* `avanceVersee` porte déjà ce montant : c'est le versement qui
+           manquait, pas le total. Le réincrémenter le doublerait. */
+        sansTotal: true,
+      });
+      recolles++;
+    } catch {
+      /* Ce qu'on ne peut pas recoller maintenant le sera à la prochaine
+         ouverture : une vente ne bloque pas les autres. */
+    }
+  }
+
+  return recolles;
 }
