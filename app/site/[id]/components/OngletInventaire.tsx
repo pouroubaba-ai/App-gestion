@@ -160,12 +160,24 @@ function valeurVenteProduit(p: Produit): number {
     : p.prixVente * p.stock;
 }
 
-function statutStock(p: Produit): { label: string; color: string } {
-  const stock = stockTotal(p);
+/**
+ * Ce que dit un stock, face à son seuil.
+ *
+ * Travaille sur un nombre et non sur un produit : une déclinaison a son
+ * propre stock, et c'est elle qu'on veut juger. Le produit entier passe
+ * par `statutStock`, qui lui somme ses variantes.
+ */
+function statutDuStock(
+  stock: number, seuil?: number | null,
+): { label: string; color: string } {
   if (stock <= 0) return { label: 'Rupture', color: 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400' };
-  if (p.seuilAlerte != null && stock <= p.seuilAlerte)
+  if (seuil != null && stock <= seuil)
     return { label: 'Alerte', color: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400' };
   return { label: 'En stock', color: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' };
+}
+
+function statutStock(p: Produit): { label: string; color: string } {
+  return statutDuStock(stockTotal(p), p.seuilAlerte);
 }
 
 /**
@@ -513,8 +525,16 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
     setLoading(false);
   }
 
-  function ouvrirModal() {
-    setDesignation(''); setCategorie(''); setUnite('');
+  /**
+   * Ouvrir le formulaire, éventuellement dans un rayon donné.
+   *
+   * Créer depuis une catégorie la préremplit : on sait déjà où le produit
+   * va, c'est même pour cela qu'on a ouvert ce rayon. La ressaisir
+   * laisserait le produit tomber ailleurs sur une faute de frappe.
+   */
+  function ouvrirModal(dansCategorie?: string) {
+    const rayon = dansCategorie ?? '';
+    setDesignation(''); setCategorie(rayon); setUnite('');
     /* rien à choisir dans une liste vide : on ouvre directement en saisie */
     setModeCategorie(categories.length > 0 ? 'existant' : 'nouveau');
     setModeUnite(unites.length > 0 ? 'existant' : 'nouveau');
@@ -1066,34 +1086,37 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
       )}
 
       <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800 shadow-sm p-5">
-        <p className="mb-4 text-sm font-bold text-gray-900 dark:text-gray-100">Produits</p>
+        {/* Trois façons de lire le même rayon, au-dessus de tout le
+            reste : c'est ce choix qui décide du contenu du tableau, donc
+            de ce que la recherche et les filtres viendront affiner.
+
+            Par produit : une ligne par référence.
+            Par déclinaison : la liste devient exhaustive — chaque 10W et
+            chaque 30W sur sa ligne, là où le produit les additionnait.
+            Par catégorie : ce que pèse chaque rayon, et ce qu'on y range. */}
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm font-bold text-gray-900 dark:text-gray-100">Produits</p>
+          {vue === 'stock' && produits.length > 0 && (
+            <div className="flex items-center gap-0.5 rounded-xl bg-gray-100 p-1 dark:bg-gray-800">
+              {([
+                { key: 'produit' as const,   label: 'Produits' },
+                { key: 'variante' as const,  label: 'Déclinaisons' },
+                { key: 'categorie' as const, label: 'Catégories' },
+              ]).map(g => (
+                <button key={g.key} onClick={() => { setGroupe(g.key); setCategorieOuverte(null); }}
+                  className={`whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-medium transition-all ${groupe === g.key
+                    ? 'bg-white text-indigo-600 shadow-sm dark:bg-gray-700 dark:text-indigo-400'
+                    : 'text-gray-400 hover:text-gray-600 dark:text-gray-500'}`}>
+                  {g.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
 
         {produits.length > 0 && (
           <div className="flex flex-wrap gap-2 mb-4">
             <ChampRecherche placeholder="Rechercher un produit, une catégorie, un code…" valeur={recherche} onChange={setRecherche} className="flex-1 min-w-[200px]" />
-            {/* Trois façons de lire le même rayon.
-                Par produit : une ligne par référence.
-                Par déclinaison : la liste devient exhaustive — chaque 10W
-                et chaque 30W sur sa ligne, là où le produit les
-                additionnait sous un seul nombre.
-                Par catégorie : ce que pèse chaque rayon, et ce qu'on y
-                range. */}
-            {vue === 'stock' && (
-              <div className="flex items-center gap-0.5 rounded-xl bg-gray-100 p-1 dark:bg-gray-800">
-                {([
-                  { key: 'produit' as const,   label: 'Produits' },
-                  { key: 'variante' as const,  label: 'Déclinaisons' },
-                  { key: 'categorie' as const, label: 'Catégories' },
-                ]).map(g => (
-                  <button key={g.key} onClick={() => { setGroupe(g.key); setCategorieOuverte(null); }}
-                    className={`whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-medium transition-all ${groupe === g.key
-                      ? 'bg-white dark:bg-gray-700 text-indigo-600 dark:text-indigo-400 shadow-sm'
-                      : 'text-gray-400 dark:text-gray-500 hover:text-gray-600'}`}>
-                    {g.label}
-                  </button>
-                ))}
-              </div>
-            )}
             {/* Quatre états du stock, groupés comme partout ailleurs : des
                 boutons isolés se lisaient comme quatre actions, non comme
                 un choix unique. */}
@@ -1128,9 +1151,14 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
               </button>
             )}
             {/* Le produit appartient à la maison : on le crée aussi depuis
-                la vue d'ensemble, où se tient le catalogue. */}
-            {(ctx.siteEcriture || ctx.ensemble) && (
-              <button onClick={ouvrirModal}
+                la vue d'ensemble, où se tient le catalogue.
+
+                En vue catégories, chaque rayon porte son propre bouton —
+                créer depuis là préremplit la catégorie, et un bouton
+                général laisserait choisir au hasard ce qu'on venait
+                justement de désigner. */}
+            {(ctx.siteEcriture || ctx.ensemble) && groupe !== 'categorie' && (
+              <button onClick={() => ouvrirModal()}
                 className="flex shrink-0 items-center gap-1.5 rounded-xl bg-indigo-600 px-3 py-2 text-xs font-bold text-white transition-colors hover:bg-indigo-700">
                 <Plus size={12} /> Nouveau produit
               </button>
@@ -1156,7 +1184,7 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
                 Charger les produits
               </button>
             )}
-            <button onClick={ouvrirModal}
+            <button onClick={() => ouvrirModal()}
               className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-3 py-2 text-xs font-bold text-white transition-colors hover:bg-indigo-700">
               <Plus size={12} /> Nouveau produit
             </button>
@@ -1192,7 +1220,9 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
                         <th className="px-3 py-2.5 text-center font-medium">Coût</th>
                         <th className="px-3 py-2.5 text-center font-medium">Prix</th>
                         <th className="px-3 py-2.5 text-center font-medium">Stock</th>
+                        <th className="px-3 py-2.5 text-center font-medium">Bénéfice</th>
                         <th className="px-3 py-2.5 text-center font-medium">Valeur</th>
+                        <th className="px-3 py-2.5 text-center font-medium">Statut</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-50 dark:divide-gray-800">
@@ -1231,8 +1261,39 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
                               {l.produit.unite}
                             </span>
                           </td>
+                          {/* Ce que cette déclinaison rapporterait si son
+                              stock partait au prix affiché. Une taille
+                              peut se vendre à perte pendant qu'une autre
+                              gagne — le produit entier le cachait. */}
+                          <td className="px-3 py-2.5 text-center">
+                            {(() => {
+                              const b = l.stock * (l.prixVente - l.coutMoyen);
+                              return (
+                                <span className={b > 0 ? 'font-medium text-green-600'
+                                  : b < 0 ? 'font-medium text-red-500'
+                                  : 'text-gray-300 dark:text-gray-600'}>
+                                  {formatMontant(b)}
+                                </span>
+                              );
+                            })()}
+                          </td>
                           <td className="px-3 py-2.5 text-center text-gray-500">
                             {formatMontant(l.stock * l.coutMoyen)}
+                          </td>
+                          <td className="px-3 py-2.5 text-center">
+                            {(() => {
+                              /* Le seuil vit sur le produit : une
+                                 déclinaison n'en a pas de propre, et
+                                 l'appliquer à chacune alerterait sur
+                                 toutes dès que l'une descend. */
+                              const st = statutDuStock(l.stock,
+                                l.varianteCle ? null : l.produit.seuilAlerte);
+                              return (
+                                <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${st.color}`}>
+                                  {st.label}
+                                </span>
+                              );
+                            })()}
                           </td>
                         </tr>
                       ))}
@@ -1310,10 +1371,20 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
                                 le retire de là-bas, et c'est ce qu'on
                                 veut savoir avant de le faire. */}
                             {c.nom !== 'Sans catégorie' && (ctx.siteEcriture || ctx.ensemble) && (
-                              <AjoutDansCategorie
-                                categorie={c.nom}
-                                produits={produits}
-                                onClasser={classer} />
+                              <>
+                                <AjoutDansCategorie
+                                  categorie={c.nom}
+                                  produits={produits}
+                                  onClasser={classer} />
+                                {/* Créer directement dans ce rayon : la
+                                    catégorie est déjà choisie, c'est pour
+                                    elle qu'on est là. */}
+                                <button type="button"
+                                  onClick={() => ouvrirModal(c.nom)}
+                                  className="mt-2 flex items-center gap-1.5 text-xs font-bold text-indigo-600 transition-colors hover:text-indigo-700">
+                                  <Plus size={12} /> Nouveau produit dans « {c.nom} »
+                                </button>
+                              </>
                             )}
                           </div>
                         )}
