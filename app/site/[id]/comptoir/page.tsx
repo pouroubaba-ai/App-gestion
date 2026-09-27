@@ -560,11 +560,33 @@ export default function ComptoirPage() {
         }
       })();
 
-      /* On attend un instant : en ligne, c'est immédiat et la vente est
-         conclue avant que l'écran ne bouge. Hors ligne, le délai tombe et
-         on rend la main — la vente est prise, elle partira. */
-      const { termine } = await sansAttendreLeReseau(ecriture);
+      /* On ne retient plus le comptoir le temps que tout s'inscrive.
+       *
+       * La chaîne fait quatre gestes qui s'attendent — écrire les lignes,
+       * sortir le stock, réserver un numéro de caisse, poser le
+       * versement. Deux secondes et demie mesurées, pendant lesquelles le
+       * vendeur regardait un bouton grisé avec un client devant lui.
+       *
+       * Ce qu'il faut garantir, ce n'est pas que le réseau ait répondu :
+       * c'est que rien ne se perde. Firestore garde ses écritures et les
+       * envoie quand il peut, et `reprendreVentesComptoir` termine à
+       * l'ouverture suivante toute vente restée en chemin — c'est ce qui
+       * protège déjà le hors ligne. La même sécurité vaut en ligne.
+       *
+       * On laisse donc un instant à la chaîne, de quoi conclure quand le
+       * réseau est bon, puis on rend la main. Un échec ne disparaît pas
+       * en silence : il s'affiche, la vente restant reprenable. */
+      const { termine } = await sansAttendreLeReseau(ecriture, 400);
       if (!termine) setDiffere(true);
+
+      /* Si la chaîne échoue après qu'on a rendu la main, le vendeur doit
+         l'apprendre : sans cela il croirait la vente conclue. Elle sera
+         reprise à la prochaine ouverture, et on le dit. */
+      ecriture.catch(() => {
+        setErreur(
+          `Vente ${reference} : l'enregistrement n'a pas abouti. `
+          + 'Elle sera reprise à la réouverture du comptoir.');
+      });
 
       /* Ce que le client emporte sans l'avoir paye est une creance : on
          demande comment elle sera recouvree maintenant, pendant qu'il est
@@ -723,11 +745,9 @@ export default function ComptoirPage() {
             </div>
           )}
 
-          <p className="text-xs text-gray-400 mt-3 mb-2 text-center">
-            {filtres.length} produit{filtres.length > 1 ? 's' : ''}
-          </p>
-
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-[60vh] overflow-y-auto">
+          {/* Le compte vit sur l'onglet choisi, qui le porte déjà : le
+              répéter dessous disait deux fois la même chose. */}
+          <div className="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-[60vh] overflow-y-auto">
             {filtres.map(a => {
               const epuise = a.stock <= 0;
               return (
