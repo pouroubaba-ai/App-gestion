@@ -1,7 +1,9 @@
 'use client';
 import { useAuth } from '@/lib/auth-context';
 import { useEffect, useState } from 'react';
-import { collection, query, where, getDocs, addDoc, serverTimestamp } from 'firebase/firestore';
+import {
+  collection, query, where, getDocs, addDoc, doc, updateDoc, serverTimestamp,
+} from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useRouter } from 'next/navigation';
 import { enregistrerStockInitial } from '@/lib/mouvements';
@@ -218,6 +220,88 @@ function filtreProduit(p: Produit, f: FiltreStock): boolean {
     : label === 'Rupture';
 }
 
+/**
+ * Ranger un produit dans une catégorie, depuis cette catégorie.
+ *
+ * On cherche par le nom. Si le produit appartient déjà à un autre rayon,
+ * on le dit avant de bouger quoi que ce soit : le déplacer le retirera de
+ * là-bas, et c'est précisément ce qu'on veut savoir avant de cliquer.
+ *
+ * Une catégorie à la fois — un produit rangé dans deux rayons serait
+ * compté deux fois dans ce que pèse chacun.
+ */
+function AjoutDansCategorie({ categorie, produits, onClasser }: {
+  categorie: string;
+  produits: Produit[];
+  onClasser: (produitId: string, categorie: string | null) => Promise<void>;
+}) {
+  const [recherche, setRecherche] = useState('');
+  const [enCours, setEnCours] = useState<string | null>(null);
+
+  const q = recherche.trim().toLowerCase();
+  /* Ceux qui ne sont pas déjà ici : les proposer n'aurait rien à faire
+     bouger. */
+  const candidats = q
+    ? produits
+        .filter(p => ((p.categorie ?? '').trim() || '') !== categorie)
+        .filter(p => p.designation.toLowerCase().includes(q))
+        .slice(0, 6)
+    : [];
+
+  return (
+    <div className="mt-3 border-t border-gray-100 pt-3 dark:border-gray-800">
+      <div className="relative">
+        <input type="text" value={recherche}
+          onChange={e => setRecherche(e.target.value)}
+          placeholder={`Ranger un produit dans « ${categorie} »…`}
+          className="w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100" />
+
+        {q && (
+          <div className="absolute left-0 right-0 top-full z-20 mt-1 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-900">
+            {candidats.length === 0 ? (
+              <p className="px-3 py-2.5 text-xs text-gray-400">
+                Aucun produit à ranger ici.
+              </p>
+            ) : candidats.map(p => {
+              const ailleurs = (p.categorie ?? '').trim();
+              return (
+                <button key={p.id} type="button"
+                  disabled={enCours !== null}
+                  onClick={async () => {
+                    setEnCours(p.id);
+                    try {
+                      await onClasser(p.id, categorie);
+                      setRecherche('');
+                    } finally { setEnCours(null); }
+                  }}
+                  className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-indigo-50 disabled:opacity-50 dark:hover:bg-indigo-900/30">
+                  <span className="min-w-0 truncate text-gray-900 dark:text-gray-100">
+                    {p.designation}
+                  </span>
+                  {/* Là où il est aujourd'hui. Le ranger ici l'en
+                      retirera — le dire avant vaut mieux que de le
+                      découvrir après. */}
+                  {enCours === p.id ? (
+                    <Loader2 size={12} className="shrink-0 animate-spin text-indigo-500" />
+                  ) : ailleurs ? (
+                    <span className="shrink-0 text-[11px] text-orange-500">
+                      déjà dans « {ailleurs} »
+                    </span>
+                  ) : (
+                    <span className="shrink-0 text-[11px] text-gray-400">
+                      sans catégorie
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function OngletInventaire({ siteId, userId, sites, titre }: Props) {
   const ctx = useSites(siteId, sites);
   /* Un produit naît pour l'activité : il lui faut son identifiant. */
@@ -261,6 +345,18 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
   const [sensTri, setSensTri] = useState<'asc' | 'desc'>('desc');
   const [filtreStock, setFiltreStock] = useState<FiltreStock>('tous');
   const [vue, setVue] = useState<'stock' | 'rentabilite'>('stock');
+  /* Comment on regarde le rayon.
+   *
+   * Par produit : la liste, une ligne par référence. Par déclinaison :
+   * chaque 10W et chaque 30W sur sa propre ligne — c'est là que se lit un
+   * stock qui dort sur une seule taille. Par catégorie : ce que pèse
+   * chaque rayon, et ce qu'on y range.
+   *
+   * Trois questions différentes sur la même marchandise : les mêler dans
+   * un seul tableau obligerait à retrier à l'œil. */
+  const [groupe, setGroupe] = useState<'produit' | 'variante' | 'categorie'>('produit');
+  /* La catégorie ouverte, quand on veut voir ce qu'elle contient. */
+  const [categorieOuverte, setCategorieOuverte] = useState<string | null>(null);
   /* par produit : ce qui est entré, ce qui est sorti, et quand pour la dernière fois */
   const [bilans, setBilans] = useState<Record<string, { entrees: number; sorties: number; derniereEntree?: string; derniereSortie?: string }>>({});
 
@@ -693,6 +789,27 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
     else { setTriRenta(col); setSensTri('desc'); }
   }
 
+  /**
+   * Changer la catégorie d'un produit.
+   *
+   * Un produit n'appartient qu'à un rayon : le ranger ici le retire de
+   * là-bas, sans geste supplémentaire. `null` le laisse sans catégorie —
+   * ce n'est pas une suppression, c'est une absence de rangement.
+   *
+   * La catégorie vit sur le produit, donc sur l'activité : un article
+   * rangé dans « Électricité » l'est pour toutes les boutiques de la
+   * maison.
+   */
+  async function classer(produitId: string, categorie: string | null) {
+    await updateDoc(doc(db, 'produits', produitId), {
+      categorie: categorie?.trim() || null,
+    });
+    await charger();
+    if (categorie?.trim()) {
+      setCategories(c => (c.includes(categorie.trim()) ? c : [...c, categorie.trim()]));
+    }
+  }
+
   const produitsAffiches = produits.filter(p => {
     /* les filtres de stock ne s'appliquent pas à la vue rentabilité */
     if (vue === 'stock' && !filtreProduit(p, filtreStock)) return false;
@@ -703,6 +820,67 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
       || (p.codeBarre ?? '').includes(q)
       || (p.variantes ?? []).some(v => v.cle.toLowerCase().includes(q) || (v.codeBarre ?? '').includes(q));
   });
+
+  /**
+   * Une ligne par déclinaison.
+   *
+   * Le tableau par produit additionne les stocks : « 400 pièces » sans
+   * dire que 380 sont du 10W et 20 du 30W. C'est pourtant là que se
+   * décide un rachat — une taille qui dort et une autre en rupture se
+   * lisent pareil quand on les additionne.
+   *
+   * Un produit sans déclinaison reste une ligne : il n'a rien à détailler.
+   */
+  const lignesVariantes = produitsAffiches.flatMap(p => {
+    const vs = p.variantes ?? [];
+    if (vs.length === 0) {
+      return [{
+        cle: p.id, produit: p, varianteCle: null as string | null,
+        stock: stockTotal(p), coutMoyen: p.coutMoyen,
+        prixVente: p.prixVente,
+      }];
+    }
+    return vs.map(v => ({
+      cle: `${p.id}:${v.cle}`, produit: p, varianteCle: v.cle,
+      stock: v.stock ?? 0,
+      coutMoyen: v.coutMoyen ?? p.coutMoyen,
+      prixVente: v.prixVente ?? p.prixVente,
+    }));
+  });
+
+  /**
+   * Ce que pèse chaque rayon.
+   *
+   * Les produits sans catégorie se rassemblent sous « Sans catégorie » :
+   * les cacher les rendrait introuvables, et c'est justement ceux-là
+   * qu'on veut ranger.
+   */
+  const parCategorie = (() => {
+    const m = new Map<string, Produit[]>();
+    for (const p of produitsAffiches) {
+      const c = (p.categorie ?? '').trim() || 'Sans catégorie';
+      const l = m.get(c) ?? [];
+      l.push(p);
+      m.set(c, l);
+    }
+    return [...m.entries()]
+      .map(([nom, liste]) => ({
+        nom,
+        liste,
+        nb: liste.length,
+        stock: liste.reduce((n, p) => n + stockTotal(p), 0),
+        valeur: liste.reduce((n, p) => n + valeurCout(p), 0),
+        vente: liste.reduce((n, p) => n + valeurVenteProduit(p), 0),
+      }))
+      /* La plus lourde d'abord : c'est celle qui décide du rayon.
+         « Sans catégorie » ferme la marche — c'est une absence, pas un
+         rayon. */
+      .sort((a, b) => {
+        if (a.nom === 'Sans catégorie') return 1;
+        if (b.nom === 'Sans catégorie') return -1;
+        return b.valeur - a.valeur;
+      });
+  })();
 
   /* le tri porte sur les colonnes chiffrées : comparer des montants à l'œil
      dans une longue liste est ce qui prend le plus de temps */
@@ -893,10 +1071,33 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
         {produits.length > 0 && (
           <div className="flex flex-wrap gap-2 mb-4">
             <ChampRecherche placeholder="Rechercher un produit, une catégorie, un code…" valeur={recherche} onChange={setRecherche} className="flex-1 min-w-[200px]" />
+            {/* Trois façons de lire le même rayon.
+                Par produit : une ligne par référence.
+                Par déclinaison : la liste devient exhaustive — chaque 10W
+                et chaque 30W sur sa ligne, là où le produit les
+                additionnait sous un seul nombre.
+                Par catégorie : ce que pèse chaque rayon, et ce qu'on y
+                range. */}
+            {vue === 'stock' && (
+              <div className="flex items-center gap-0.5 rounded-xl bg-gray-100 p-1 dark:bg-gray-800">
+                {([
+                  { key: 'produit' as const,   label: 'Produits' },
+                  { key: 'variante' as const,  label: 'Déclinaisons' },
+                  { key: 'categorie' as const, label: 'Catégories' },
+                ]).map(g => (
+                  <button key={g.key} onClick={() => { setGroupe(g.key); setCategorieOuverte(null); }}
+                    className={`whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-medium transition-all ${groupe === g.key
+                      ? 'bg-white dark:bg-gray-700 text-indigo-600 dark:text-indigo-400 shadow-sm'
+                      : 'text-gray-400 dark:text-gray-500 hover:text-gray-600'}`}>
+                    {g.label}
+                  </button>
+                ))}
+              </div>
+            )}
             {/* Quatre états du stock, groupés comme partout ailleurs : des
                 boutons isolés se lisaient comme quatre actions, non comme
                 un choix unique. */}
-            {vue === 'stock' && (
+            {vue === 'stock' && groupe === 'produit' && (
               <div className="flex items-center gap-0.5 rounded-xl bg-gray-100 p-1 dark:bg-gray-800">
                 <Filter size={13} className="ml-1 mr-0.5 text-gray-400" />
                 {([
@@ -969,9 +1170,160 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
           : (
             <>
               <p className="text-xs text-gray-400 mb-2">
-                {produitsAffiches.length} produit{produitsAffiches.length > 1 ? 's' : ''}
+                {vue === 'stock' && groupe === 'variante'
+                  ? `${lignesVariantes.length} déclinaison${lignesVariantes.length > 1 ? 's' : ''}`
+                  : vue === 'stock' && groupe === 'categorie'
+                  ? `${parCategorie.length} catégorie${parCategorie.length > 1 ? 's' : ''}`
+                  : `${produitsAffiches.length} produit${produitsAffiches.length > 1 ? 's' : ''}`}
               </p>
-              {vue === 'stock' && (
+
+              {/* Une ligne par déclinaison : la liste devient exhaustive.
+                  Le tableau par produit additionne les stocks — « 400
+                  pièces » sans dire que 380 sont du 10W. Une taille qui
+                  dort et une autre en rupture s'y lisaient pareil. */}
+              {vue === 'stock' && groupe === 'variante' && (
+                <div className="overflow-x-auto">
+                  <table className="w-full whitespace-nowrap text-sm">
+                    <thead>
+                      <tr className="bg-indigo-600 text-white">
+                        <th className="px-3 py-2.5 text-center font-medium">Produit</th>
+                        <th className="px-3 py-2.5 text-center font-medium">Déclinaison</th>
+                        <th className="px-3 py-2.5 text-center font-medium">Catégorie</th>
+                        <th className="px-3 py-2.5 text-center font-medium">Coût</th>
+                        <th className="px-3 py-2.5 text-center font-medium">Prix</th>
+                        <th className="px-3 py-2.5 text-center font-medium">Stock</th>
+                        <th className="px-3 py-2.5 text-center font-medium">Valeur</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-50 dark:divide-gray-800">
+                      {lignesVariantes.map(l => (
+                        <tr key={l.cle}
+                          onClick={() => router.push(`/site/${l.produit.siteId ?? ctx.siteEcriture}/inventaire/${l.produit.id}`)}
+                          className="cursor-pointer transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/50">
+                          <td className="px-3 py-2.5 text-center font-medium text-gray-900 dark:text-gray-100">
+                            {l.produit.designation}
+                          </td>
+                          <td className="px-3 py-2.5 text-center">
+                            {l.varianteCle ? (
+                              <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-bold text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-400">
+                                {l.varianteCle}
+                              </span>
+                            ) : (
+                              <span className="text-xs text-gray-300 dark:text-gray-600">—</span>
+                            )}
+                          </td>
+                          <td className="px-3 py-2.5 text-center text-gray-500">
+                            {l.produit.categorie || '—'}
+                          </td>
+                          <td className="px-3 py-2.5 text-center text-gray-500">
+                            {formatMontant(l.coutMoyen)}
+                          </td>
+                          <td className="px-3 py-2.5 text-center font-medium text-gray-900 dark:text-gray-100">
+                            {formatMontant(l.prixVente)}
+                          </td>
+                          <td className="px-3 py-2.5 text-center">
+                            <span className={l.stock > 0
+                              ? 'font-medium text-gray-900 dark:text-gray-100'
+                              : 'text-red-500'}>
+                              {l.stock.toLocaleString('fr-FR')}
+                            </span>
+                            <span className="ml-1 text-xs text-gray-400">
+                              {l.produit.unite}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2.5 text-center text-gray-500">
+                            {formatMontant(l.stock * l.coutMoyen)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {/* Ce que pèse chaque rayon. On l'ouvre pour voir ce qu'il
+                  contient, et y ranger ce qui traîne ailleurs. */}
+              {vue === 'stock' && groupe === 'categorie' && (
+                <div className="space-y-2">
+                  {parCategorie.map(c => {
+                    const ouverte = categorieOuverte === c.nom;
+                    return (
+                      <div key={c.nom}
+                        className="rounded-xl border border-gray-100 dark:border-gray-800">
+                        <button type="button"
+                          onClick={() => setCategorieOuverte(ouverte ? null : c.nom)}
+                          className="flex w-full flex-wrap items-center justify-between gap-3 px-4 py-3 text-left transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/50">
+                          <span className="flex min-w-0 items-center gap-2">
+                            <ChevronDown size={14}
+                              className={`shrink-0 text-gray-400 transition-transform ${ouverte ? '' : '-rotate-90'}`} />
+                            <span className={`truncate font-bold ${c.nom === 'Sans catégorie'
+                              ? 'text-gray-400'
+                              : 'text-gray-900 dark:text-gray-100'}`}>
+                              {c.nom}
+                            </span>
+                            <span className="shrink-0 text-xs text-gray-400">
+                              {c.nb} produit{c.nb > 1 ? 's' : ''}
+                            </span>
+                          </span>
+                          <span className="flex shrink-0 items-center gap-4 text-xs">
+                            <span className="text-gray-400">
+                              {c.stock.toLocaleString('fr-FR')} en stock
+                            </span>
+                            <span className="font-bold text-gray-900 dark:text-gray-100">
+                              {formatMontant(c.valeur)}
+                            </span>
+                          </span>
+                        </button>
+
+                        {ouverte && (
+                          <div className="border-t border-gray-100 px-4 py-3 dark:border-gray-800">
+                            <div className="space-y-1">
+                              {c.liste.map(p => (
+                                <div key={p.id}
+                                  className="flex flex-wrap items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-sm transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/50">
+                                  <button type="button"
+                                    onClick={() => router.push(`/site/${p.siteId ?? ctx.siteEcriture}/inventaire/${p.id}`)}
+                                    className="min-w-0 flex-1 truncate text-left text-gray-900 hover:text-indigo-600 dark:text-gray-100">
+                                    {p.designation}
+                                  </button>
+                                  <span className="shrink-0 text-xs text-gray-400">
+                                    {stockTotal(p).toLocaleString('fr-FR')} {p.unite}
+                                  </span>
+                                  {/* Retirer ne supprime rien : le produit
+                                      quitte le rayon et rejoint « Sans
+                                      catégorie », d'où on le rangera
+                                      ailleurs. */}
+                                  {c.nom !== 'Sans catégorie' && (ctx.siteEcriture || ctx.ensemble) && (
+                                    <button type="button"
+                                      onClick={() => classer(p.id, null)}
+                                      title="Retirer de cette catégorie"
+                                      className="shrink-0 rounded-lg p-1 text-gray-300 transition-colors hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-900/20">
+                                      <X size={12} />
+                                    </button>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+
+                            {/* Ranger un produit ici. S'il appartient déjà
+                                à un autre rayon, on le dit : le déplacer
+                                le retire de là-bas, et c'est ce qu'on
+                                veut savoir avant de le faire. */}
+                            {c.nom !== 'Sans catégorie' && (ctx.siteEcriture || ctx.ensemble) && (
+                              <AjoutDansCategorie
+                                categorie={c.nom}
+                                produits={produits}
+                                onClasser={classer} />
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {vue === 'stock' && groupe === 'produit' && (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm whitespace-nowrap">
                   <thead>
