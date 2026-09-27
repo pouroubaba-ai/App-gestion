@@ -3,6 +3,8 @@ import { useEffect, useState, Fragment } from 'react';
 import { doc, getDoc, updateDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { produitsDuSite } from '@/lib/produits-site';
+import PanneauFrais from '../../components/PanneauFrais';
+import { totalFrais, controlerRepartition, type Frais } from '@/lib/frais';
 import { useAuth } from '@/lib/auth-context';
 import { ecrireEnCaisse } from '@/lib/ecrire-caisse';
 import { chargerDisponible } from '@/lib/attente-caisse';
@@ -118,6 +120,14 @@ export default function FicheAchatPage() {
 
   const montreArgent = role !== 'commandes';
   const [quantites, setQuantites] = useState<Record<number, number>>({});
+  /* Les frais du dossier, modifiables tant qu'il n'est pas confirmé. Ils
+     vivent à part de `achat` le temps de la saisie : l'écrire à chaque
+     frappe ferait une écriture par caractère. */
+  const [frais, setFrais] = useState<Frais[]>([]);
+  const [fraisCorrection, setFraisCorrection] =
+    useState<Record<number, number> | null>(null);
+  /* Ce qui a changé et n'est pas encore inscrit. */
+  const [fraisSales, setFraisSales] = useState(false);
   const [enCours, setEnCours] = useState(false);
   const [erreur, setErreur] = useState('');
   const [retour, setRetour] = useState<number | null>(null);
@@ -217,6 +227,15 @@ export default function FicheAchatPage() {
       setAchat(a);
       setQuantites(Object.fromEntries(
         a.lignes.map((l, i) => [i, l.quantiteRecue ?? l.quantiteDemandee])));
+      /* Une saisie en cours n'est pas écrasée par une relecture : on
+         perdrait ce qui vient d'être tapé. */
+      setFraisSales(sale => {
+        if (!sale) {
+          setFrais(a.frais ?? []);
+          setFraisCorrection(a.fraisCorrection ?? null);
+        }
+        return sale;
+      });
 
       chargerReceptions(achatId).then(setReceptions).catch(() => setReceptions([]));
 
@@ -275,10 +294,41 @@ export default function FicheAchatPage() {
     </div>
   );
 
+  /**
+   * Inscrire les frais sur le dossier.
+   *
+   * Ils se saisissent librement puis s'enregistrent d'un geste : écrire à
+   * chaque frappe ferait une écriture par caractère, et le dossier
+   * porterait des états qui n'ont jamais existé.
+   */
+  async function enregistrerFrais() {
+    if (!achat) return;
+    setEnCours(true); setErreur('');
+    try {
+      await updateDoc(doc(db, 'achats', achat.id), {
+        frais: frais.filter(f => f.montant > 0),
+        fraisCorrection,
+      });
+      setFraisSales(false);
+      await charger();
+    } catch (e: any) {
+      setErreur(e?.message ?? 'Les frais n’ont pas pu être inscrits.');
+    } finally {
+      setEnCours(false);
+    }
+  }
+
   const ecart = ecartValeur(achat.lignes);
   const enEcart = lignesEnEcart(achat.lignes);
-  const recu = valeurRecue(achat.lignes);
-  const commande = valeurEnvoyee(achat.lignes);
+  /* Les frais d'approche sont dus au même fournisseur — il livre et
+     facture ensemble. Les laisser hors des totaux afficherait une dette
+     inférieure à la réalité, et un dossier soldé alors qu'il reste le
+     transport à payer. */
+  const fraisTotal = totalFrais(frais);
+  const recu = valeurRecue(achat.lignes) + fraisTotal;
+  const commande = valeurEnvoyee(achat.lignes) + fraisTotal;
+  /* La marchandise seule, pour la lire à part du transport. */
+  const recuMarchandise = valeurRecue(achat.lignes);
   /* l'avance non consommée revient en caisse : la laisser chez le fournisseur
      en ferait une dette à suivre, hors du périmètre de l'app */
   const retourPrevu = Math.max(0, (achat.avanceVersee ?? 0) - recu);
@@ -304,6 +354,11 @@ export default function FicheAchatPage() {
      eu lieu, une quantité mal comptée doit pouvoir être reprise. On compte
      pendant le traitement — c'est là qu'on vérifie ce qui est arrivé. */
   const quantitesEditables = achat.etat === 'recu' || achat.etat === 'traitement';
+  /* Les frais se modifient jusqu'à la confirmation. Après, le coût moyen
+     en porte la trace : les changer réécrirait des marges déjà figées sur
+     des ventes qui ont eu lieu. Un dossier annulé ne bouge plus non
+     plus. */
+  const fraisModifiables = achat.etat !== 'confirme' && achat.etat !== 'annule';
 
   /* La marchandise est arrivée : on le constate, on ne compte pas encore. */
   async function receptionner() {
@@ -965,6 +1020,16 @@ export default function FicheAchatPage() {
               les lui cache déjà, la fiche doit en faire autant. */}
           {montreArgent && (
           <div className="flex flex-col gap-1.5 pt-3 mt-3 border-t border-gray-100 dark:border-gray-800 text-sm">
+            {/* Marchandise et transport se lisent à part : le total seul
+                ne dirait pas ce qui vient du camion. */}
+            {fraisTotal > 0 && (
+              <>
+                <LigneTotal label="Marchandise"
+                  valeur={formatMontant(recuMarchandise)} />
+                <LigneTotal label="Frais d’approche"
+                  valeur={formatMontant(fraisTotal)} />
+              </>
+            )}
             <LigneTotal label="Commandé" valeur={formatMontant(commande)} />
             {achat.lignes.some(l => l.quantiteRecue != null) && (
               <>
@@ -1017,6 +1082,43 @@ export default function FicheAchatPage() {
           </div>
           )}
         </div>
+
+        {/* Les frais d'approche, sous la marchandise qu'ils ont amenée.
+            Ils ne regardent pas le responsable des commandes : il compte
+            des cartons, pas des francs — la même règle que les totaux
+            juste au-dessus. */}
+        {montreArgent && (
+          <>
+            <PanneauFrais
+              frais={frais} lignes={achat.lignes} correction={fraisCorrection}
+              lectureSeule={!fraisModifiables}
+              onChange={f => { setFrais(f); setFraisSales(true); }}
+              onCorriger={c => { setFraisCorrection(c); setFraisSales(true); }} />
+
+            {/* Inscrire d'un geste : saisir n'écrit pas, sinon le dossier
+                porterait un état par caractère tapé. */}
+            {fraisModifiables && fraisSales && (
+              <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
+                <button type="button" disabled={enCours}
+                  onClick={() => {
+                    setFrais(achat.frais ?? []);
+                    setFraisCorrection(achat.fraisCorrection ?? null);
+                    setFraisSales(false);
+                  }}
+                  className="rounded-xl border border-gray-200 px-3 py-2 text-xs font-bold text-gray-500 transition-colors hover:bg-gray-50 disabled:opacity-40 dark:border-gray-700 dark:hover:bg-gray-800">
+                  Annuler
+                </button>
+                <button type="button" onClick={enregistrerFrais}
+                  disabled={enCours || !controlerRepartition(
+                    achat.lignes, frais, fraisCorrection).juste}
+                  className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-3 py-2 text-xs font-bold text-white transition-colors hover:bg-indigo-700 disabled:opacity-40">
+                  {enCours ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
+                  Inscrire les frais
+                </button>
+              </div>
+            )}
+          </>
+        )}
 
         {achat.note && (
           <p className="text-xs text-gray-500 dark:text-gray-400 px-4 py-3 bg-white dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800">
@@ -1122,9 +1224,18 @@ export default function FicheAchatPage() {
                     {lignes.length} produit{lignes.length > 1 ? 's' : ''} reçu{lignes.length > 1 ? 's' : ''}
                     {' '}comme commandé{lignes.length > 1 ? 's' : ''}, pour{' '}
                     <span className="font-bold text-gray-900 dark:text-gray-100">
-                      {formatMontant(lignes.reduce((n, x) => n + x.recu * x.l.valeurUnitaire, 0))}
+                      {formatMontant(
+                        lignes.reduce((n, x) => n + x.recu * x.l.valeurUnitaire, 0)
+                        + fraisTotal)}
                     </span>.
-                    {' '}Le stock va entrer et le coût moyen se recalculer.
+                    {/* Le transport se dit ici : c'est le montant annoncé
+                        qui sera dû, et il n'est pas celui de la seule
+                        marchandise. */}
+                    {fraisTotal > 0 && (
+                      <>{' '}dont {formatMontant(fraisTotal)} de frais d&apos;approche.</>
+                    )}
+                    {' '}Le stock va entrer et le coût moyen se recalculer
+                    {fraisTotal > 0 ? ', frais compris' : ''}.
                   </p>
                 ) : (
                   <>
