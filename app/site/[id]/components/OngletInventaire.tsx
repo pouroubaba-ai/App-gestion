@@ -851,7 +851,7 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
    *
    * Un produit sans déclinaison reste une ligne : il n'a rien à détailler.
    */
-  const lignesVariantes = produitsAffiches.flatMap(p => {
+  const lignesVariantesBrutes = produitsAffiches.flatMap(p => {
     const vs = p.variantes ?? [];
     if (vs.length === 0) {
       return [{
@@ -867,6 +867,35 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
       prixVente: v.prixVente ?? p.prixVente,
     }));
   });
+
+  /* Le statut d'une déclinaison : le seuil reste au produit, une
+     déclinaison n'en a pas de propre. */
+  const statutLigne = (l: typeof lignesVariantesBrutes[number]) =>
+    statutDuStock(l.stock, l.varianteCle ? null : l.produit.seuilAlerte);
+
+  /* Le même filtre que sur les produits, appliqué au stock de chaque
+     déclinaison : c'est elle qui est en rupture, pas le produit entier. */
+  const lignesFiltrees = lignesVariantesBrutes.filter(l => {
+    if (filtreStock === 'tous') return true;
+    const st = statutLigne(l).label;
+    return filtreStock === 'rupture' ? st === 'Rupture'
+      : filtreStock === 'alerte' ? st === 'Alerte'
+      : st !== 'Rupture';
+  });
+
+  /* Comparer des montants à l'œil dans cent vingt-sept lignes est ce qui
+     prend le plus de temps : le tri porte sur les colonnes chiffrées,
+     comme sur la liste des produits. */
+  const lignesVariantes = triStock === null ? lignesFiltrees
+    : [...lignesFiltrees].sort((a, b) => {
+      const v = (x: typeof lignesFiltrees[number]) =>
+        triStock === 'cout' ? x.coutMoyen
+        : triStock === 'prix' ? x.prixVente
+        : triStock === 'stock' ? x.stock
+        : triStock === 'benefice' ? x.stock * (x.prixVente - x.coutMoyen)
+        : x.stock * x.coutMoyen;
+      return (sensTri === 'asc' ? 1 : -1) * (v(a) - v(b));
+    });
 
   /**
    * Ce que pèse chaque rayon.
@@ -1120,7 +1149,7 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
             {/* Quatre états du stock, groupés comme partout ailleurs : des
                 boutons isolés se lisaient comme quatre actions, non comme
                 un choix unique. */}
-            {vue === 'stock' && groupe === 'produit' && (
+            {vue === 'stock' && groupe !== 'categorie' && (
               <div className="flex items-center gap-0.5 rounded-xl bg-gray-100 p-1 dark:bg-gray-800">
                 <Filter size={13} className="ml-1 mr-0.5 text-gray-400" />
                 {([
@@ -1129,7 +1158,18 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
                   { key: 'alerte' as const,   label: 'Alerte' },
                   { key: 'rupture' as const,  label: 'Rupture' },
                 ]).map(f => {
-                  const n = produits.filter(p => filtreProduit(p, f.key)).length;
+                  /* Le compte suit ce qu'on regarde : en déclinaisons,
+                     c'est chaque taille qui est en rupture, pas le
+                     produit qui les additionne. */
+                  const n = groupe === 'variante'
+                    ? lignesVariantesBrutes.filter(l => {
+                        if (f.key === 'tous') return true;
+                        const st = statutLigne(l).label;
+                        return f.key === 'rupture' ? st === 'Rupture'
+                          : f.key === 'alerte' ? st === 'Alerte'
+                          : st !== 'Rupture';
+                      }).length
+                    : produits.filter(p => filtreProduit(p, f.key)).length;
                   return (
                     <button key={f.key} onClick={() => setFiltreStock(f.key)}
                       className={`whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-medium transition-all ${filtreStock === f.key
@@ -1217,11 +1257,22 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
                         <th className="px-3 py-2.5 text-center font-medium">Produit</th>
                         <th className="px-3 py-2.5 text-center font-medium">Déclinaison</th>
                         <th className="px-3 py-2.5 text-center font-medium">Catégorie</th>
-                        <th className="px-3 py-2.5 text-center font-medium">Coût</th>
-                        <th className="px-3 py-2.5 text-center font-medium">Prix</th>
-                        <th className="px-3 py-2.5 text-center font-medium">Stock</th>
-                        <th className="px-3 py-2.5 text-center font-medium">Bénéfice</th>
-                        <th className="px-3 py-2.5 text-center font-medium">Valeur</th>
+                        {([
+                          { cle: 'cout' as const,     label: 'Coût' },
+                          { cle: 'prix' as const,     label: 'Prix' },
+                          { cle: 'stock' as const,    label: 'Stock' },
+                          { cle: 'benefice' as const, label: 'Bénéfice' },
+                          { cle: 'valeur' as const,   label: 'Valeur' },
+                        ]).map(c => (
+                          <th key={c.cle} className="px-3 py-2.5 font-medium">
+                            <button onClick={() => basculerTri(c.cle)}
+                              className="flex w-full items-center justify-center gap-1 transition-opacity hover:opacity-80">
+                              {c.label}
+                              <ArrowUpDown size={12}
+                                className={triStock === c.cle ? 'opacity-100' : 'opacity-40'} />
+                            </button>
+                          </th>
+                        ))}
                         <th className="px-3 py-2.5 text-center font-medium">Statut</th>
                       </tr>
                     </thead>
@@ -1338,6 +1389,26 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
 
                         {ouverte && (
                           <div className="border-t border-gray-100 px-4 py-3 dark:border-gray-800">
+                            {/* Ranger passe avant la liste : sur un rayon
+                                de quarante produits, le chercher en bas
+                                demandait de faire défiler tout ce qu'on
+                                ne cherchait pas. */}
+                            {c.nom !== 'Sans catégorie' && (ctx.siteEcriture || ctx.ensemble) && (
+                              <div className="mb-3">
+                                <AjoutDansCategorie
+                                  categorie={c.nom}
+                                  produits={produits}
+                                  onClasser={classer} />
+                                {/* Créer directement dans ce rayon : la
+                                    catégorie est déjà choisie, c'est pour
+                                    elle qu'on est là. */}
+                                <button type="button"
+                                  onClick={() => ouvrirModal(c.nom)}
+                                  className="mt-2 flex items-center gap-1.5 text-xs font-bold text-indigo-600 transition-colors hover:text-indigo-700">
+                                  <Plus size={12} /> Nouveau produit dans « {c.nom} »
+                                </button>
+                              </div>
+                            )}
                             <div className="space-y-1">
                               {c.liste.map(p => (
                                 <div key={p.id}
@@ -1370,22 +1441,6 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
                                 à un autre rayon, on le dit : le déplacer
                                 le retire de là-bas, et c'est ce qu'on
                                 veut savoir avant de le faire. */}
-                            {c.nom !== 'Sans catégorie' && (ctx.siteEcriture || ctx.ensemble) && (
-                              <>
-                                <AjoutDansCategorie
-                                  categorie={c.nom}
-                                  produits={produits}
-                                  onClasser={classer} />
-                                {/* Créer directement dans ce rayon : la
-                                    catégorie est déjà choisie, c'est pour
-                                    elle qu'on est là. */}
-                                <button type="button"
-                                  onClick={() => ouvrirModal(c.nom)}
-                                  className="mt-2 flex items-center gap-1.5 text-xs font-bold text-indigo-600 transition-colors hover:text-indigo-700">
-                                  <Plus size={12} /> Nouveau produit dans « {c.nom} »
-                                </button>
-                              </>
-                            )}
                           </div>
                         )}
                       </div>
