@@ -1,5 +1,6 @@
 'use client';
-import { produitsDuSite } from '@/lib/produits-site';
+import { produitsDuSite, sitesDeLActivite } from '@/lib/produits-site';
+import { creerProduitRapide } from '@/lib/produit-rapide';
 import { useEffect, useState } from 'react';
 import { collection, query, where, getDocs, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
@@ -117,6 +118,65 @@ export default function NouvelAchatPage() {
   /* Ce qu'on doit au fournisseur : la marchandise et ce qui l'a amenée.
      Il livre et facture ensemble — omettre le transport afficherait une
      dette inférieure à la réalité. */
+  /**
+   * Créer la marchandise qu'on ne trouve pas, et l'ajouter au bon.
+   *
+   * Le fournisseur apporte une référence qu'on n'avait jamais achetée.
+   * Quitter l'écran pour aller la créer fait perdre le bon en cours — et
+   * en pratique, on la saisit sous un nom approchant qui existe déjà,
+   * ce qui mélange deux marchandises dans le même stock.
+   *
+   * Elle naît nue : une désignation, l'unité par défaut. Les emballages,
+   * les variantes, le code-barres se posent sur sa fiche, quand on a le
+   * temps de la décrire. Ici on saisit un achat.
+   */
+  async function creerEtAjouter(designation: string) {
+    if (!user) return;
+    setErreur('');
+    try {
+      const siteIds = activite?.id
+        ? await sitesDeLActivite(activite.id)
+        : [siteId];
+      const neuf = await creerProduitRapide({
+        activiteId: activite?.id ?? null,
+        userId: user.uid,
+        designation,
+        unite: 'pièce',
+        siteIds: siteIds.length > 0 ? siteIds : [siteId],
+        siteOrigine: siteId,
+      });
+
+      /* Il rejoint la liste sans qu'on relise tout : la relecture
+         coûterait une attente pour un produit qu'on vient d'écrire. */
+      const ajout = {
+        id: neuf.id, siteId,
+        designation: neuf.designation, unite: neuf.unite,
+        codeBarre: null, categorie: null,
+        emballages: [], caracteristiques: [], variantes: [],
+        actif: true, stock: 0, coutMoyen: 0, prixVente: 0,
+        seuilAlerte: null,
+      } as unknown as ProduitChoisissable;
+      setProduits(p => [...p, ajout]);
+
+      /* Et il entre dans le bon : c'est pour cela qu'on l'a créé. Une
+         quantité de un, à compléter — le coût viendra du fournisseur. */
+      setLignes(l => [...l, {
+        produitId: neuf.id,
+        designation: neuf.designation,
+        unite: neuf.unite,
+        varianteCle: null,
+        varianteLibelle: null,
+        emballage: null,
+        quantiteDemandee: 1,
+        quantiteRecue: null,
+        valeurUnitaire: 0,
+        prixVente: 0,
+      } as any]);
+    } catch (e: any) {
+      setErreur(e?.message ?? 'Le produit n’a pas pu être créé.');
+    }
+  }
+
   const total = marchandise + totalFrais(frais);
   /* ce qui n'est pas versé reste dû : payer ne conditionne pas la réception */
   const reste = Math.max(0, total - verse);
@@ -330,6 +390,7 @@ export default function NouvelAchatPage() {
             const t = l.reduce((s, x) => s + x.quantiteDemandee * x.valeurUnitaire, 0);
             setVerse(v => Math.min(v, t));
           }}
+          onCreerProduit={creerEtAjouter}
           coutEditable montrerStock={false} labelCout="Coût d'achat"
         />
 

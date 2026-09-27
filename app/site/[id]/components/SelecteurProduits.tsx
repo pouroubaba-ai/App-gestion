@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import { formatMontant } from '@/lib/format';
 import { coutMoyenApresEntree, enUnitesBase, emballagesDe } from '@/lib/mouvements';
-import { Trash2, Package, Info, Plus, Minus, BarChart3 } from 'lucide-react';
+import { Trash2, Package, Info, Plus, Minus, BarChart3, Loader2 } from 'lucide-react';
 import { ChampRecherche, ChampNombre } from '@/components/Champs';
 import type { LigneFlux } from '@/lib/flux-marchandise';
 import ModalMargeRecu from './ModalMargeRecu';
@@ -88,9 +88,22 @@ function uniteLisible(p?: ProduitChoisissable, quantite = 1): string {
  */
 export default function SelecteurProduits({
   produits, lignes, onChange, coutEditable, montrerStock, labelCout,
-  chezDestinataire, nomDestinataire,
+  chezDestinataire, nomDestinataire, onCreerProduit,
   vente = false, futur = false,
-}: Props) {
+}: Props & {
+  /**
+   * Créer la marchandise qu'on ne trouve pas, sans quitter le bon.
+   *
+   * Absent, la recherche se contente de dire qu'elle n'a rien : c'est le
+   * cas d'une vente, où l'on ne vend que ce qu'on détient. À l'achat, le
+   * fournisseur apporte des références nouvelles — et aller les créer
+   * ailleurs fait perdre le bon en cours.
+   */
+  onCreerProduit?: (designation: string) => Promise<void>;
+}) {
+  /* La création en cours : le nom qu'on vient de taper, et l'attente
+     pendant que le produit naît. */
+  const [creation, setCreation] = useState<string | null>(null);
   const [recherche, setRecherche] = useState('');
   /* une seule ligne dépliée à la fois : la liste reste lisible */
   const [detailOuvert, setDetailOuvert] = useState<number | null>(null);
@@ -261,7 +274,36 @@ export default function SelecteurProduits({
         enfants={q ? (
           <div className="absolute z-20 left-0 right-0 top-full mt-1 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-lg overflow-hidden">
             {suggestions.length === 0 ? (
-              <p className="px-3 py-2.5 text-xs text-gray-400">Aucun résultat.</p>
+              onCreerProduit ? (
+                /* Ce qu'on cherchait n'existe pas : on le crée ici plutôt
+                   que d'aller le saisir ailleurs — et de revenir avec un
+                   bon vide. Le nom est déjà tapé, il suffit de confirmer. */
+                <button type="button"
+                  disabled={creation !== null}
+                  onClick={async () => {
+                    const nom = recherche.trim();
+                    if (!nom) return;
+                    setCreation(nom);
+                    try {
+                      await onCreerProduit(nom);
+                      setRecherche('');
+                    } finally {
+                      setCreation(null);
+                    }
+                  }}
+                  className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-indigo-600 transition-colors hover:bg-indigo-50 disabled:opacity-50 dark:text-indigo-400 dark:hover:bg-indigo-900/30">
+                  {creation !== null
+                    ? <Loader2 size={14} className="shrink-0 animate-spin" />
+                    : <Plus size={14} className="shrink-0" />}
+                  <span className="truncate">
+                    {creation !== null
+                      ? `Création de « ${creation} »…`
+                      : <>Créer « <span className="font-bold">{recherche.trim()}</span> »</>}
+                  </span>
+                </button>
+              ) : (
+                <p className="px-3 py-2.5 text-xs text-gray-400">Aucun résultat.</p>
+              )
             ) : suggestions.map((sg, n) => (
               <button key={`${sg.produit.id}-${sg.varianteCle ?? ''}`} type="button"
                 onMouseEnter={() => setSurvol(n)}
