@@ -1,6 +1,7 @@
 'use client';
 import { produitsDuSite, sitesDeLActivite } from '@/lib/produits-site';
-import { creerProduitRapide } from '@/lib/produit-rapide';
+import { creerProduitRapide, creerGammeRapide } from '@/lib/produit-rapide';
+import ModalGammeProduit from '../../components/ModalGammeProduit';
 import { useEffect, useState } from 'react';
 import { collection, query, where, getDocs, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
@@ -79,6 +80,9 @@ export default function NouvelAchatPage() {
   /* Les produits nés pendant cette saisie : une pastille les signale sur
      leur ligne, le temps qu'on relise le bon. Elle disparaît avec lui. */
   const [produitsNeufs, setProduitsNeufs] = useState<Set<string>>(new Set());
+  /* Le formulaire de gamme, ouvert sur le nom qu'on cherchait. `null`
+     quand il est fermé — le nom vide est une saisie valable. */
+  const [gamme, setGamme] = useState<string | null>(null);
   const [frais, setFrais] = useState<Frais[]>([]);
   const [fraisCorrection, setFraisCorrection] =
     useState<Record<number, number> | null>(null);
@@ -179,6 +183,92 @@ export default function NouvelAchatPage() {
     } catch (e: any) {
       setErreur(e?.message ?? 'Le produit n’a pas pu être créé.');
     }
+  }
+
+  /**
+   * Créer une gamme entière, et l'ajouter au bon.
+   *
+   * Le fournisseur apporte les 15 W, les 25 W et les 40 W. Elles entrent
+   * toutes : on vient de les décrire, c'est qu'on les reçoit. Ce qui ne
+   * vient pas se retire d'une ligne, et se retrouve par la recherche
+   * puisque le produit existe désormais.
+   */
+  async function creerGammeEtAjouter(saisie: {
+    designation: string;
+    unite: string;
+    categorie: string | null;
+    emballages: any[];
+    caracteristiques: any[];
+    declinaisons: { selection: Record<string, string> }[];
+    cout: number;
+    prix: number;
+  }) {
+    if (!user) return;
+    setErreur('');
+    const siteIds = activite?.id
+      ? await sitesDeLActivite(activite.id)
+      : [siteId];
+    const neuf = await creerGammeRapide({
+      activiteId: activite?.id ?? null,
+      userId: user.uid,
+      designation: saisie.designation,
+      unite: saisie.unite,
+      categorie: saisie.categorie,
+      emballages: saisie.emballages,
+      caracteristiques: saisie.caracteristiques,
+      declinaisons: saisie.declinaisons,
+      coutProduit: saisie.cout,
+      prixProduit: saisie.prix,
+      siteIds: siteIds.length > 0 ? siteIds : [siteId],
+      siteOrigine: siteId,
+    });
+
+    /* Il rejoint la liste sans qu'on relise tout : la relecture coûterait
+       une attente pour un produit qu'on vient d'écrire. */
+    const ajout = {
+      id: neuf.id, siteId,
+      designation: neuf.designation, unite: neuf.unite,
+      codeBarre: null, categorie: saisie.categorie,
+      emballages: saisie.emballages,
+      caracteristiques: saisie.caracteristiques,
+      variantes: neuf.variantes.map(v => ({
+        ...v, stock: 0, coutMoyen: 0, prixVente: v.prixVente ?? saisie.prix,
+      })),
+      actif: true, stock: 0, coutMoyen: 0, prixVente: saisie.prix,
+      seuilAlerte: null,
+    } as unknown as ProduitChoisissable;
+    setProduits(p => [...p, ajout]);
+    setProduitsNeufs(n => new Set(n).add(neuf.id));
+
+    /* Une ligne par déclinaison. Sans déclinaison, une seule ligne : le
+       produit nu. */
+    const nouvelles = neuf.variantes.length > 0
+      ? neuf.variantes.map(v => ({
+          produitId: neuf.id,
+          designation: neuf.designation,
+          unite: neuf.unite,
+          varianteCle: v.cle,
+          varianteLibelle: v.cle,
+          emballage: null,
+          quantiteDemandee: 1,
+          quantiteRecue: null,
+          valeurUnitaire: saisie.cout,
+          prixVente: v.prixVente ?? saisie.prix,
+        }))
+      : [{
+          produitId: neuf.id,
+          designation: neuf.designation,
+          unite: neuf.unite,
+          varianteCle: null,
+          varianteLibelle: null,
+          emballage: null,
+          quantiteDemandee: 1,
+          quantiteRecue: null,
+          valeurUnitaire: saisie.cout,
+          prixVente: saisie.prix,
+        }];
+    setLignes(l => [...l, ...(nouvelles as any[])]);
+    setGamme(null);
   }
 
   const total = marchandise + totalFrais(frais);
@@ -395,6 +485,7 @@ export default function NouvelAchatPage() {
             setVerse(v => Math.min(v, t));
           }}
           onCreerProduit={creerEtAjouter}
+          onCreerGamme={setGamme}
           produitsNeufs={produitsNeufs}
           coutEditable montrerStock={false} labelCout="Coût d'achat"
         />
@@ -409,6 +500,13 @@ export default function NouvelAchatPage() {
             setVerse(v => Math.min(v, t));
           }}
           onCorriger={setFraisCorrection} />
+
+        {gamme !== null && (
+          <ModalGammeProduit
+            designationInitiale={gamme}
+            onAnnuler={() => setGamme(null)}
+            onCreer={creerGammeEtAjouter} />
+        )}
 
         {erreur && <p className="text-xs text-red-500 mt-3">{erreur}</p>}
 

@@ -2,7 +2,9 @@
 import { useEffect, useState } from 'react';
 import { formatMontant } from '@/lib/format';
 import { coutMoyenApresEntree, enUnitesBase, emballagesDe } from '@/lib/mouvements';
-import { Trash2, Package, Info, Plus, Minus, BarChart3, Loader2 } from 'lucide-react';
+import {
+  Trash2, Package, Info, Plus, Minus, BarChart3, Loader2, Settings2,
+} from 'lucide-react';
 import { ChampRecherche, ChampNombre } from '@/components/Champs';
 import type { LigneFlux } from '@/lib/flux-marchandise';
 import ModalMargeRecu from './ModalMargeRecu';
@@ -90,7 +92,7 @@ export default function SelecteurProduits({
   produits, lignes, onChange, coutEditable, montrerStock, labelCout,
   chezDestinataire, nomDestinataire, onCreerProduit,
   vente = false, futur = false,
-  produitsNeufs,
+  produitsNeufs, onCreerGamme,
 }: Props & {
   /**
    * Créer la marchandise qu'on ne trouve pas, sans quitter le bon.
@@ -112,6 +114,14 @@ export default function SelecteurProduits({
    * une fois le bon enregistré.
    */
   produitsNeufs?: Set<string>;
+  /**
+   * Créer une gamme plutôt qu'une référence seule.
+   *
+   * Le fournisseur n'apporte pas « une ampoule », il apporte les 15 W et
+   * les 25 W. Le chemin rapide crée une référence ; celui-ci ouvre de
+   * quoi décrire ce qui varie, et rend toutes les déclinaisons d'un coup.
+   */
+  onCreerGamme?: (designation: string) => void;
 }) {
   /* La création en cours : le nom qu'on vient de taper, et l'attente
      pendant que le produit naît. */
@@ -290,6 +300,7 @@ export default function SelecteurProduits({
                 /* Ce qu'on cherchait n'existe pas : on le crée ici plutôt
                    que d'aller le saisir ailleurs — et de revenir avec un
                    bon vide. Le nom est déjà tapé, il suffit de confirmer. */
+                <>
                 <button type="button"
                   disabled={creation !== null}
                   onClick={async () => {
@@ -313,6 +324,20 @@ export default function SelecteurProduits({
                       : <>Créer « <span className="font-bold">{recherche.trim()}</span> »</>}
                   </span>
                 </button>
+                {/* La même référence vient souvent en gamme : 15 W, 25 W,
+                    40 W. Les créer une par une obligerait à répéter la
+                    description et à inventer trois noms. */}
+                {onCreerGamme && (
+                  <button type="button"
+                    onClick={() => onCreerGamme(recherche.trim())}
+                    className="flex w-full items-center gap-2 border-t border-gray-100 px-3 py-2.5 text-left text-xs text-gray-500 transition-colors hover:bg-gray-50 dark:border-gray-800 dark:text-gray-400 dark:hover:bg-gray-800">
+                    <Settings2 size={13} className="shrink-0" />
+                    <span className="truncate">
+                      Créer avec des déclinaisons (tailles, puissances…)
+                    </span>
+                  </button>
+                )}
+                </>
               ) : (
                 <p className="px-3 py-2.5 text-xs text-gray-400">Aucun résultat.</p>
               )
