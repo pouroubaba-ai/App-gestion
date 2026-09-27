@@ -577,8 +577,14 @@ export default function ComptoirPage() {
        *
        * On laisse un instant à la chaîne — de quoi conclure quand la
        * connexion est bonne — puis on libère l'écran. */
-      const { termine } = await sansAttendreLeReseau(ecriture, 300);
-      if (!termine) setDiffere(true);
+      /* Ce qui rend une vente « différée », c'est l'absence de réseau —
+         pas le fait qu'elle n'ait pas fini dans le court délai qu'on lui
+         laisse. En ligne, l'écriture dure presque toujours plus que ce
+         délai : s'y fier faisait annoncer « partira au retour du réseau »
+         à chaque vente, réseau présent, et le message devenait faux une
+         fois sur deux. Un avertissement qui se trompe n'avertit plus. */
+      await sansAttendreLeReseau(ecriture, 300);
+      if (!enLigne) setDiffere(true);
 
       /* Un échec ne disparaît pas en silence : le vendeur croirait la
          vente conclue. On le dit, et la reprise s'en chargera. */
