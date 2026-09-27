@@ -44,7 +44,22 @@ export default function PanneauFrais({
 
   function modifier(i: number, champ: keyof Frais, valeur: any) {
     if (!onChange) return;
-    onChange(frais.map((f, j) => (j === i ? { ...f, [champ]: valeur } : f)));
+    onChange(frais.map((f, j) => {
+      if (j !== i) return f;
+      const majeur = { ...f, [champ]: valeur };
+      /* Le montant appartient au libellé : effacer le nom remet le
+         montant à zéro.
+         Le garder laissait un montant orphelin — saisi sous un nom,
+         gardé sans lui, et toujours compté dans le total des frais.
+         Le contrôle le refusait bien, mais l'argent restait à l'écran
+         et il suffisait de retaper n'importe quel nom pour le faire
+         passer sous une étiquette qui n'était pas la sienne. */
+      if (champ === 'libelle' && !String(valeur ?? '').trim()) majeur.montant = 0;
+      return majeur;
+    }));
+    /* Une part posée à la main désignait une répartition qui n'existe
+       plus dès que le montant change de taille. */
+    if (champ === 'libelle' && !String(valeur ?? '').trim()) onCorriger?.(null);
   }
 
   function retirer(i: number) {
