@@ -82,6 +82,17 @@ export default function NouvelAjustementPage() {
      compte, la quantité est un fait, le coût n'en est pas un. */
   const sansCout = motif === 'stock_initial';
 
+  /* Déclarer un stock de départ sur un rayon qui en a déjà un.
+     Le motif dit « ce qui est là quand on ouvre le compte » : sur un
+     produit qui a déjà bougé, c'est presque toujours une erreur de
+     motif — un recomptage se déclare en correction d'inventaire. On le
+     signale sans l'interdire : le responsable peut avoir de bonnes
+     raisons, et un écran qui bloque sans expliquer fait chercher. */
+  const dejaApprovisionnes = !sansCout ? [] : lignes
+    .map(l => produits.find(x => x.id === l.produitId))
+    .filter((p): p is ProduitChoisissable =>
+      !!p && ((p.stock ?? 0) > 0 || (p.coutMoyen ?? 0) > 0));
+
   /* Le stock ne se lit qu'à la sortie : à l'entrée il ne limite rien, et
      l'afficher ferait croire qu'il borne la saisie. */
   const valides = lignes.filter(l => (l.quantiteDemandee ?? 0) > 0);
@@ -268,6 +279,20 @@ export default function NouvelAjustementPage() {
               {regle.perte
                 ? 'Cette sortie est une perte : elle sera retranchée du bénéfice.'
                 : 'Cette sortie est une charge : la marchandise a servi, elle n’est pas perdue.'}
+            </p>
+          )}
+
+          {/* Ce qui est déjà en rayon ne s'ouvre pas deux fois. */}
+          {dejaApprovisionnes.length > 0 && (
+            <p className="mt-3 rounded-xl bg-orange-50 p-2.5 text-[12px] text-orange-700 dark:bg-orange-900/20 dark:text-orange-400">
+              <span className="font-bold">
+                {dejaApprovisionnes.length === 1
+                  ? `« ${dejaApprovisionnes[0].designation} » a déjà bougé sur ce site.`
+                  : `${dejaApprovisionnes.length} produits ont déjà bougé sur ce site.`}
+              </span>{' '}
+              Un stock de départ ne se déclare qu’à l’ouverture du compte.
+              Pour un recomptage, choisissez « Correction d’inventaire » :
+              le stock de départ ajoute au rayon au lieu de le corriger.
             </p>
           )}
 

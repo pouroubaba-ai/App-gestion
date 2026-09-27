@@ -253,6 +253,10 @@ export default function SelecteurProduits({
   /* une variante déjà retenue ne s'ajoute pas deux fois : on incrémente */
   function ajouter(p: ProduitChoisissable, varianteCle: string | null) {
     const v = varianteCle ? p.variantes?.find(x => x.cle === varianteCle) : undefined;
+    /* Ce rayon a-t-il déjà un coût ? Un produit qui a été approvisionné
+       le connaît : proposer « inconnu » sur une référence à 748 ferait
+       oublier ce qu'on savait. */
+    const coutConnuDuRayon = (v ? v.coutMoyen : (p.coutMoyen ?? 0)) > 0;
     const existante = lignes.findIndex(l =>
       l.produitId === p.id && (l.varianteCle ?? null) === varianteCle);
 
@@ -278,10 +282,15 @@ export default function SelecteurProduits({
          veut rien dire. À l'ouverture d'un compte, le proposer ferait
          valider un chiffre que personne n'a vérifié : on préfère le
          vide, qui demande un geste pour être rempli. */
-      valeurUnitaire: coutVideParDefaut
+      /* Le coût moyen du rayon préremplit la ligne — sauf là où il ne
+         veut rien dire. Mais un rayon qui a déjà été approvisionné le
+         connaît vraiment : proposer « inconnu » sur un produit à 748
+         ferait oublier ce qu'on savait. */
+      valeurUnitaire: coutVideParDefaut && !coutConnuDuRayon
         ? 0
         : (v ? v.coutMoyen : (p.coutMoyen ?? 0)),
-      ...(coutInconnuParDefaut ? { coutInconnu: true } : {}),
+      ...(coutInconnuParDefaut && !coutConnuDuRayon
+        ? { coutInconnu: true } : {}),
       /* une variante sans prix propre hérite de celui du produit */
       prixVente: (v?.prixVente ?? p.prixVente) || null,
     }]);

@@ -275,8 +275,12 @@ export async function ecrireLignesEnLot(
          alors pour tout le stock, faute de mieux à attribuer aux unités
          d'origine. */
       const entreeSansCout = saisie.sens === 'entree' && !!saisie.coutInconnu;
+      /* Ce qu'on a appris ne se désapprend pas. Un rayon vidé garde le
+         coût de ce qu'il a vendu : y reverser du stock sans coût ne le
+         rend pas ignorant à nouveau, sinon un produit perdrait sa valeur
+         chaque fois qu'il passe par zéro. */
       const inconnuApres = saisie.sens === 'entree'
-        ? (inconnuAvant || stockAvant <= 0) && entreeSansCout
+        ? inconnuAvant && entreeSansCout
         : inconnuAvant;
 
       const nouveauCout = saisie.sens === 'entree'
