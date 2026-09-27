@@ -43,10 +43,14 @@ export function ChampRecherche({
  * chiffres deviennent illisibles. Ce champ reste en mode texte et pose les
  * séparateurs à l'affichage, en ne rendant que le nombre au parent.
  */
-export function ChampNombre({ valeur, onChange, className, min = 0, max }: {
+export function ChampNombre({
+  valeur, onChange, className, min = 0, max, disabled,
+}: {
   valeur: number;
   onChange: (n: number) => void;
   className?: string;
+  /** Le champ montre sans laisser changer : un dossier clos se relit. */
+  disabled?: boolean;
   min?: number;
   /**
    * Plafond appliqué à la frappe, pas seulement à la lecture.
@@ -79,6 +83,7 @@ export function ChampNombre({ valeur, onChange, className, min = 0, max }: {
     <input
       type="text" inputMode="numeric"
       value={affiche}
+      disabled={disabled}
       placeholder={String(min)}
       onChange={e => {
         /* on ne garde que les chiffres : espaces, points et virgules sautent */

@@ -11,6 +11,10 @@ import { auteurCourant, auteurEtape } from '@/lib/auteur';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { formatMontant } from '@/lib/format';
 import { Loader2, Check, ShoppingCart } from 'lucide-react';
+import PanneauFrais from '../../components/PanneauFrais';
+import {
+  totalFrais, controlerRepartition, type Frais,
+} from '@/lib/frais';
 import SelecteurProduits, { ProduitChoisissable } from '../../components/SelecteurProduits';
 import { LigneFlux, referenceFlux } from '@/lib/flux-marchandise';
 import { SelectCherchable, ChampNombre } from '@/components/Champs';
@@ -69,6 +73,11 @@ export default function NouvelAchatPage() {
 
   const [date, setDate] = useState(aujourdhui());
   const [note, setNote] = useState('');
+  /* Ce qu'il a fallu payer en plus pour que la marchandise arrive. Dû au
+     même fournisseur, donc compté dans ce qu'on lui doit. */
+  const [frais, setFrais] = useState<Frais[]>([]);
+  const [fraisCorrection, setFraisCorrection] =
+    useState<Record<number, number> | null>(null);
   const [enCours, setEnCours] = useState(false);
   const [erreur, setErreur] = useState('');
 
@@ -103,9 +112,18 @@ export default function NouvelAchatPage() {
     })();
   }, [siteId, user]);
 
-  const total = lignes.reduce((s, l) => s + l.quantiteDemandee * l.valeurUnitaire, 0);
+  const marchandise = lignes.reduce(
+    (s, l) => s + l.quantiteDemandee * l.valeurUnitaire, 0);
+  /* Ce qu'on doit au fournisseur : la marchandise et ce qui l'a amenée.
+     Il livre et facture ensemble — omettre le transport afficherait une
+     dette inférieure à la réalité. */
+  const total = marchandise + totalFrais(frais);
   /* ce qui n'est pas versé reste dû : payer ne conditionne pas la réception */
   const reste = Math.max(0, total - verse);
+  /* Les frais se posent en entier, ou le dossier ne s'enregistre pas :
+     un frais à moitié réparti fait disparaître de l'argent du coût. */
+  const controleFrais = controlerRepartition(
+    lignes as any, frais, fraisCorrection);
   /* Payer d'avance plus que le total commandé n'a pas de sens : le trop-perçu
      n'aurait aucune contrepartie. On borne au lieu d'accepter puis corriger. */
   const avanceExcessive = verse > total;
@@ -122,7 +140,7 @@ export default function NouvelAchatPage() {
      silencieusement ferait disparaître un produit que l'utilisateur croit avoir commandé. */
   const lignesCompletes = lignes.length > 0 && lignes.every(l => l.produitId && l.quantiteDemandee > 0);
   const pretAEnregistrer = !!fournisseurId && lignesCompletes
-    && !avanceExcessive && !depasseCaisse;
+    && !avanceExcessive && !depasseCaisse && controleFrais.juste;
 
   async function enregistrer() {
     setErreur('');
@@ -155,6 +173,10 @@ export default function NouvelAchatPage() {
            écrite juste après, et elle seule sort l'argent de la caisse. */
         avanceVersee: 0,
         versements: [],
+        /* Un service, pas de la marchandise : aucune quantité n'entre au
+           stock. Sa part sur chaque produit se déduit à la lecture. */
+        frais: frais.filter(f => f.montant > 0),
+        fraisCorrection,
         dateCommande: dateFinale,
         dateReception: immediat ? dateFinale : null,
         parCommande: user!.uid,
@@ -311,6 +333,17 @@ export default function NouvelAchatPage() {
           coutEditable montrerStock={false} labelCout="Coût d'achat"
         />
 
+        <PanneauFrais
+          frais={frais} lignes={lignes as any} correction={fraisCorrection}
+          onChange={f => {
+            setFrais(f);
+            /* Le total vient de changer : un versé devenu excessif se
+               ramène, comme lorsqu'une ligne bouge. */
+            const t = marchandise + totalFrais(f);
+            setVerse(v => Math.min(v, t));
+          }}
+          onCorriger={setFraisCorrection} />
+
         {erreur && <p className="text-xs text-red-500 mt-3">{erreur}</p>}
 
         <div className="mt-4 bg-white dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800 shadow-sm p-5">
@@ -359,6 +392,24 @@ export default function NouvelAchatPage() {
 
           <div className="flex justify-end">
             <div className="flex flex-col gap-1 text-sm min-w-[240px]">
+              {/* Marchandise et frais se lisent séparément : le total
+                  seul ne dirait pas ce qui est du transport. */}
+              {totalFrais(frais) > 0 && (
+                <>
+                  <div className="flex justify-between gap-8">
+                    <span className="text-gray-400">Marchandise</span>
+                    <span className="font-medium text-gray-900 dark:text-gray-100">
+                      {formatMontant(marchandise)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between gap-8">
+                    <span className="text-gray-400">Frais</span>
+                    <span className="font-medium text-gray-900 dark:text-gray-100">
+                      {formatMontant(totalFrais(frais))}
+                    </span>
+                  </div>
+                </>
+              )}
               <div className="flex justify-between gap-8">
                 <span className="text-gray-400">Total commandé</span>
                 <span className="font-bold text-gray-900 dark:text-gray-100">{formatMontant(total)}</span>
