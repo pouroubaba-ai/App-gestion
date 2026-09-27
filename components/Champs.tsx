@@ -44,13 +44,19 @@ export function ChampRecherche({
  * séparateurs à l'affichage, en ne rendant que le nombre au parent.
  */
 export function ChampNombre({
-  valeur, onChange, className, min = 0, max, disabled,
+  valeur, onChange, className, min = 0, max, disabled, placeholder,
 }: {
   valeur: number;
   onChange: (n: number) => void;
   className?: string;
   /** Le champ montre sans laisser changer : un dossier clos se relit. */
   disabled?: boolean;
+  /**
+   * Ce que le champ vide annonce. Par défaut le minimum, qui est la
+   * valeur qu'on obtient en ne tapant rien. Un champ fermé s'en sert
+   * pour dire ce qui manque plutôt que de rester muet.
+   */
+  placeholder?: string;
   min?: number;
   /**
    * Plafond appliqué à la frappe, pas seulement à la lecture.
@@ -84,7 +90,7 @@ export function ChampNombre({
       type="text" inputMode="numeric"
       value={affiche}
       disabled={disabled}
-      placeholder={String(min)}
+      placeholder={placeholder ?? String(min)}
       onChange={e => {
         /* on ne garde que les chiffres : espaces, points et virgules sautent */
         const brut = e.target.value.replace(/[^0-9]/g, '');

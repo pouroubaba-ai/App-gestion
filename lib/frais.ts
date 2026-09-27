@@ -141,6 +141,22 @@ export function controlerRepartition(
   correction?: Record<number, number> | null,
 ): { juste: boolean; reparti: number; total: number; motif?: string } {
   const total = totalFrais(frais);
+
+  /* Un montant sans libellé se répartit comme les autres : il entre dans
+     le coût moyen, il grossit la dette, et rien ne dit plus ce qu'on a
+     payé. L'écran ferme la saisie tant que le frais n'est pas nommé,
+     mais un champ fermé n'est pas une règle — la règle est ici, devant
+     l'écriture. */
+  const anonyme = (frais ?? []).find(
+    f => (f.montant ?? 0) > 0 && !(f.libelle ?? '').trim());
+  if (anonyme) {
+    return {
+      juste: false, reparti: 0, total,
+      motif: `Un frais de ${(anonyme.montant ?? 0).toLocaleString('fr-FR')} `
+        + `FCFA n'a pas de libellé : nommez-le avant de le répartir.`,
+    };
+  }
+
   if (total <= 0) return { juste: true, reparti: 0, total: 0 };
 
   const imposees = correction ?? {};

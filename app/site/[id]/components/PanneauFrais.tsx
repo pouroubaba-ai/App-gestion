@@ -92,10 +92,19 @@ export default function PanneauFrais({
                   onChange={e => modifier(i, 'libelle', e.target.value)}
                   placeholder="Ex. Transport"
                   className="min-w-[120px] flex-1 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-transparent disabled:border-transparent dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100" />
+                {/* Le montant attend le nom. Un frais anonyme se
+                    répartit quand même sur les coûts : le chiffre part
+                    dans le CUMP et plus personne ne peut dire ce qu'on a
+                    payé. Nommer d'abord, c'est la seule trace qui
+                    restera de la dépense. */}
                 <div className="w-32 shrink-0">
-                  <ChampNombre valeur={f.montant} disabled={lectureSeule}
+                  <ChampNombre valeur={f.montant}
+                    disabled={lectureSeule || !f.libelle.trim()}
                     onChange={v => modifier(i, 'montant', v)}
-                    className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-right text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-transparent disabled:border-transparent dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100" />
+                    placeholder={f.libelle.trim() ? undefined : 'Nommez d’abord'}
+                    className={`w-full rounded-lg border px-3 py-2 text-right text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:border-transparent disabled:bg-transparent dark:bg-gray-800 ${!lectureSeule && !f.libelle.trim()
+                      ? 'cursor-not-allowed border-gray-200 bg-gray-50 text-gray-300 placeholder:text-[10px] dark:border-gray-700 dark:text-gray-600'
+                      : 'border-gray-200 bg-gray-50 text-gray-900 dark:border-gray-700 dark:text-gray-100'}`} />
                 </div>
                 {/* La clé décide qui porte quoi : sur un catalogue aux
                     prix très écartés, la quantité ferait porter autant à
