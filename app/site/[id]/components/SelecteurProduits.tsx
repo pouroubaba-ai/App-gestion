@@ -90,6 +90,7 @@ export default function SelecteurProduits({
   produits, lignes, onChange, coutEditable, montrerStock, labelCout,
   chezDestinataire, nomDestinataire, onCreerProduit,
   vente = false, futur = false,
+  produitsNeufs,
 }: Props & {
   /**
    * Créer la marchandise qu'on ne trouve pas, sans quitter le bon.
@@ -100,6 +101,17 @@ export default function SelecteurProduits({
    * ailleurs fait perdre le bon en cours.
    */
   onCreerProduit?: (designation: string) => Promise<void>;
+  /**
+   * Les produits nés pendant cette saisie.
+   *
+   * Une pastille les signale sur leur ligne : on relit son bon avant de
+   * l'enregistrer et on voit ce qu'on vient de créer — notamment qu'on a
+   * créé le doublon d'une référence mal orthographiée.
+   *
+   * C'est une trace de la saisie, pas un état du produit : elle disparaît
+   * une fois le bon enregistré.
+   */
+  produitsNeufs?: Set<string>;
 }) {
   /* La création en cours : le nom qu'on vient de taper, et l'attente
      pendant que le produit naît. */
@@ -414,6 +426,14 @@ export default function SelecteurProduits({
                     <span>
                       {l.designation}{l.varianteLibelle ? ` · ${l.varianteLibelle}` : ''}
                     </span>
+                    {/* Né pendant cette saisie : on le voit en relisant son
+                        bon, et notamment qu'on vient de créer le doublon
+                        d'une référence mal orthographiée. */}
+                    {produitsNeufs?.has(l.produitId) && (
+                      <span className="shrink-0 rounded-full bg-green-100 px-1.5 py-0.5 text-[10px] font-bold text-green-700 dark:bg-green-900/30 dark:text-green-400">
+                        Nouveau
+                      </span>
+                    )}
                   </p>
                   <button onClick={() => onChange(lignes.filter((_, j) => j !== i))}
                     className="text-gray-300 hover:text-red-500 shrink-0">

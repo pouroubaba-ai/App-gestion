@@ -76,6 +76,9 @@ export default function NouvelAchatPage() {
   const [note, setNote] = useState('');
   /* Ce qu'il a fallu payer en plus pour que la marchandise arrive. Dû au
      même fournisseur, donc compté dans ce qu'on lui doit. */
+  /* Les produits nés pendant cette saisie : une pastille les signale sur
+     leur ligne, le temps qu'on relise le bon. Elle disparaît avec lui. */
+  const [produitsNeufs, setProduitsNeufs] = useState<Set<string>>(new Set());
   const [frais, setFrais] = useState<Frais[]>([]);
   const [fraisCorrection, setFraisCorrection] =
     useState<Record<number, number> | null>(null);
@@ -157,6 +160,7 @@ export default function NouvelAchatPage() {
         seuilAlerte: null,
       } as unknown as ProduitChoisissable;
       setProduits(p => [...p, ajout]);
+      setProduitsNeufs(n => new Set(n).add(neuf.id));
 
       /* Et il entre dans le bon : c'est pour cela qu'on l'a créé. Une
          quantité de un, à compléter — le coût viendra du fournisseur. */
@@ -391,6 +395,7 @@ export default function NouvelAchatPage() {
             setVerse(v => Math.min(v, t));
           }}
           onCreerProduit={creerEtAjouter}
+          produitsNeufs={produitsNeufs}
           coutEditable montrerStock={false} labelCout="Coût d'achat"
         />
 
