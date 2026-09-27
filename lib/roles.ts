@@ -3,6 +3,7 @@ import {
   serverTimestamp,
 } from 'firebase/firestore';
 import { db } from './firebase';
+import { oublierAuteur } from './auteur';
 
 /**
  * Qui travaille sur un site, et à quel titre.
@@ -344,16 +345,21 @@ export async function inviterMembre(saisie: {
   return ref.id;
 }
 
+/* La signature retenue en mémoire porte le rôle : la changer sans
+   l'oublier ferait signer les gestes suivants de l'ancienne fonction. */
 export async function changerRole(membreId: string, role: RoleSite): Promise<void> {
   await updateDoc(doc(db, 'membres', membreId), { role });
+  oublierAuteur();
 }
 
 export async function basculerMembre(membreId: string, actif: boolean): Promise<void> {
   await updateDoc(doc(db, 'membres', membreId), { actif });
+  oublierAuteur();
 }
 
 export async function retirerMembre(membreId: string): Promise<void> {
   await deleteDoc(doc(db, 'membres', membreId));
+  oublierAuteur();
 }
 
 /**

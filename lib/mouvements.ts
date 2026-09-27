@@ -1,5 +1,6 @@
 import {
-  collection, addDoc, doc, updateDoc, getDoc, serverTimestamp, writeBatch,
+  collection, addDoc, doc, updateDoc, getDoc, getDocs, query, where,
+  serverTimestamp, writeBatch, runTransaction,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { ouvrirDetention, type VarianteSite } from '@/lib/produits-site';
@@ -106,6 +107,140 @@ export interface SaisieMouvement {
  * Une entrée recalcule le coût moyen ; une sortie fige le bénéfice.
  * Tout passe par un lot d'écritures : soit les deux réussissent, soit aucune.
  */
+/**
+ * Écrit plusieurs lignes en une seule fois.
+ *
+ * Le stock de dix produits, c'était dix fois le même aller-retour : lire
+ * la fiche, chercher le rayon, le relire, écrire — et recommencer. Sur un
+ * dossier de reprise à cent lignes, l'attente se comptait en minutes.
+ *
+ * Ici tout se lit d'un coup, tout se calcule en mémoire, tout s'écrit
+ * dans un seul lot. Le nombre d'attentes ne dépend plus du nombre
+ * d'articles.
+ *
+ * Et le lot passe entier ou pas du tout. Dix écritures séparées pouvaient
+ * s'interrompre à la septième : sept mouvements inscrits, trois perdus, un
+ * stock faux et rien pour dire lequel. Un fait s'enregistre ; une
+ * livraison à moitié écrite n'est pas un fait.
+ *
+ * Firestore borne un lot à 500 opérations, et chaque ligne en coûte deux :
+ * au-delà de 250 lignes on écrit en plusieurs lots. La garantie du tout ou
+ * rien vaut alors par lot — sur un dossier de cette taille, c'est le prix
+ * à payer pour qu'il passe.
+ */
+export async function ecrireLignesEnLot(
+  lignes: SaisieMouvement[],
+  registre: {
+    produits: Map<string, any>;
+    detentions: Map<string, { id: string; data: any }>;
+  },
+): Promise<number> {
+  if (lignes.length === 0) return 0;
+
+  const MAX_LIGNES = 250;
+  let ecrites = 0;
+
+  for (let debut = 0; debut < lignes.length; debut += MAX_LIGNES) {
+    const tranche = lignes.slice(debut, debut + MAX_LIGNES);
+    const batch = writeBatch(db);
+
+    for (const saisie of tranche) {
+      const produit = registre.produits.get(saisie.produitId);
+      if (!produit) throw new Error(`Produit introuvable : ${saisie.produitId}`);
+
+      const cle = `${saisie.siteId}:${saisie.produitId}`;
+      const det = registre.detentions.get(cle);
+      if (!det) {
+        /* Le rayon n'existe pas encore pour cet article. On ne le crée pas
+           ici : ouvrir une détention est une écriture, et elle doit être
+           faite avant que le lot ne se forme. */
+        throw new Error(
+          `Détention absente pour ${saisie.produitId} sur ${saisie.siteId}.`);
+      }
+
+      const emballages = produit.emballages ?? [];
+      const qteUnites = enUnitesBase(saisie.quantite, saisie.emballage, emballages);
+      if (qteUnites <= 0) continue;
+
+      const variantesSite: VarianteSite[] = det.data.variantes ?? [];
+      const variante = saisie.varianteCle
+        ? variantesSite.find(v => v.cle === saisie.varianteCle)
+        : undefined;
+      const stockAvant = variante ? variante.stock : (det.data.stock ?? 0);
+      const coutAvant = variante ? variante.coutMoyen : (det.data.coutMoyen ?? 0);
+
+      const nouveauCout = saisie.sens === 'entree'
+        ? coutMoyenApresEntree(stockAvant, coutAvant, qteUnites, saisie.valeurUnitaire)
+        : coutAvant;
+      const nouveauStock = stockAvant + (saisie.sens === 'entree' ? 1 : -1) * qteUnites;
+
+      batch.set(doc(collection(db, 'mouvements')), {
+        siteId: saisie.siteId,
+        userId: saisie.userId,
+        produitId: saisie.produitId,
+        varianteCle: saisie.varianteCle ?? null,
+        sens: saisie.sens,
+        motif: saisie.motif,
+        date: saisie.date,
+        quantite: saisie.quantite,
+        emballage: saisie.emballage ?? null,
+        quantiteUnites: qteUnites,
+        valeurUnitaire: saisie.valeurUnitaire,
+        valeurTotale: saisie.valeurUnitaire * qteUnites,
+        /* La même règle qu'à l'unité : une perte coûte son coût moyen, une
+           sortie sans prix ne réalise rien. La réécrire ici la ferait
+           diverger le jour où l'une des deux changerait. */
+        ...(saisie.sens === 'sortie' && saisie.motif !== 'transfert' ? {
+          coutMoyenAlors: coutAvant,
+          benefice: saisie.motif === 'perte'
+            ? -coutAvant * qteUnites
+            : saisie.valeurUnitaire <= 0
+            ? 0
+            : (saisie.valeurUnitaire - coutAvant) * qteUnites,
+        } : {}),
+        partenaireId: saisie.partenaireId ?? null,
+        partenaireNom: saisie.partenaireNom ?? null,
+        siteLieId: saisie.siteLieId ?? null,
+        documentId: saisie.documentId ?? null,
+        utilisateurNom: saisie.utilisateurNom ?? null,
+        utilisateurFonction: saisie.utilisateurFonction ?? null,
+        createdAt: serverTimestamp(),
+      });
+
+      const refDetention = doc(db, 'produits_site', det.id);
+      if (saisie.varianteCle) {
+        const connue = variantesSite.some(v => v.cle === saisie.varianteCle);
+        const maj: VarianteSite[] = connue
+          ? variantesSite.map(v => v.cle === saisie.varianteCle
+              ? { ...v, stock: nouveauStock, coutMoyen: nouveauCout }
+              : v)
+          : [...variantesSite, {
+              cle: saisie.varianteCle, stock: nouveauStock, coutMoyen: nouveauCout,
+            }];
+        const total = maj.reduce((n, v) => n + (v.stock ?? 0), 0);
+        batch.update(refDetention, { variantes: maj, stock: total });
+        registre.detentions.set(cle, {
+          id: det.id, data: { ...det.data, variantes: maj, stock: total },
+        });
+      } else {
+        batch.update(refDetention, { stock: nouveauStock, coutMoyen: nouveauCout });
+        /* Le rayon suit ce que le lot écrira : deux lignes du même article
+           s'enchaînent au lieu de repartir du même stock. */
+        registre.detentions.set(cle, {
+          id: det.id,
+          data: { ...det.data, stock: nouveauStock, coutMoyen: nouveauCout },
+        });
+      }
+
+      ecrites += 1;
+    }
+
+    await batch.commit();
+  }
+
+  return ecrites;
+}
+
 export async function enregistrerMouvement(saisie: SaisieMouvement): Promise<Mouvement> {
   const refProduit = doc(db, 'produits', saisie.produitId);
   const snap = await getDoc(refProduit);

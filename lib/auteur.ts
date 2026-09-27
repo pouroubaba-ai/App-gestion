@@ -42,9 +42,32 @@ const PROPRIETAIRE: Omit<Auteur, 'utilisateur'> = {
  * là que vivent le nom et la fonction. Sans correspondance, le geste est
  * celui du propriétaire, qui n'a pas de fiche d'employé.
  */
+/**
+ * Les signatures déjà trouvées, retenues le temps de la session.
+ *
+ * Le nom et la fonction de qui agit ne changent pas entre deux gestes :
+ * les relire avant chaque confirmation posait deux requêtes d'attente
+ * devant chaque bouton, pour la même réponse.
+ *
+ * Seules les signatures trouvées se retiennent. Une identité manquante —
+ * hors ligne, fiche pas encore créée — donne un nom de repli qu'il ne faut
+ * surtout pas figer : le geste suivant doit pouvoir trouver la vraie.
+ */
+const signatures = new Map<string, Auteur>();
+
+/** Oublie une signature retenue : la fiche a changé. */
+export function oublierAuteur(siteId?: string, userId?: string): void {
+  if (siteId && userId) signatures.delete(`${siteId}:${userId}`);
+  else signatures.clear();
+}
+
 export async function auteurCourant(
   siteId: string, userId: string, nomCompte?: string | null,
 ): Promise<Auteur> {
+  const cle = `${siteId}:${userId}`;
+  const connue = signatures.get(cle);
+  if (connue) return connue;
+
   try {
     /* Deux tables portent une identité, et elles ne se recouvrent pas. Un
        employé travaille sur le site, avec une fonction — caissier, vendeur.
@@ -79,22 +102,26 @@ export async function auteurCourant(
 
     const emp = empSnap.docs[0]?.data();
     if (emp) {
-      return {
+      const a: Auteur = {
         utilisateur: userId,
         utilisateurNom: emp.nom ?? nomLisible(nomCompte),
         utilisateurFonction: emp.fonction || 'Employé',
       };
+      signatures.set(cle, a);
+      return a;
     }
 
     /* Un membre retiré n'agit plus : sa ligne désactivée ne doit pas
        continuer à signer. */
     const mem = memSnap.docs.map(d => d.data()).find(m => m.actif !== false);
     if (mem) {
-      return {
+      const a: Auteur = {
         utilisateur: userId,
         utilisateurNom: mem.nom || nomLisible(nomCompte),
         utilisateurFonction: LIBELLES_ROLE[mem.role as RoleSite] ?? 'Membre',
       };
+      signatures.set(cle, a);
+      return a;
     }
   } catch {
     /* Une identité indisponible ne doit jamais empêcher d'enregistrer le

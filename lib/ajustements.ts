@@ -1,11 +1,12 @@
 import {
   collection, addDoc, doc, getDoc, updateDoc, serverTimestamp,
-  runTransaction,
+  runTransaction, writeBatch,
 } from 'firebase/firestore';
 import { db } from './firebase';
 import { lireParSite, type Portee } from './portee';
-import { enregistrerMouvement } from './mouvements';
-import { detentionDe } from './produits-site';
+import { ecrireLignesEnLot } from './mouvements';
+import { ouvrirDetention } from './produits-site';
+import { precharger } from './flux-marchandise';
 
 /**
  * Les mouvements de stock qui ne passent par aucun dossier commercial.
@@ -400,10 +401,20 @@ export async function confirmerAjustement(params: {
    * marchandise, il dit que le registre a menti quelque part. On vérifie
    * tout avant d'écrire quoi que ce soit — refuser au milieu laisserait
    * la moitié du dossier passée. */
+  /* Tout ce dont les lignes auront besoin, lu d'un seul coup : la fiche
+     de chaque produit et ce que le rayon en détient. Les lire une par une
+     faisait attendre le serveur quatre fois par article — sur un dossier
+     de reprise à cent lignes, l'attente se comptait en minutes. */
+  const registre = await precharger(aEcrire.map(l => ({
+    siteId: d.siteId, produitId: l.produitId,
+  })));
+
   if (regle.sens === 'sortie') {
     for (const l of aEcrire) {
-      const detention = await detentionDe(d.siteId, l.produitId);
-      const enRayon = detention?.stock ?? 0;
+      /* Le stock vient du registre déjà lu : le relire ici doublait
+         chaque ligne d'un aller-retour, pour la même réponse. */
+      const det = registre.detentions.get(`${d.siteId}:${l.produitId}`);
+      const enRayon = det?.data?.stock ?? 0;
       if (l.quantite > enRayon) {
         throw new Error(
           `${l.designation} : ${l.quantite} à sortir, ${enRayon} en stock.`);
@@ -433,32 +444,47 @@ export async function confirmerAjustement(params: {
     });
   });
 
-  for (const l of aEcrire) {
-    await enregistrerMouvement({
-      siteId: d.siteId,
-      userId: params.parUid,
-      produitId: l.produitId,
-      varianteCle: l.varianteCle ?? null,
-      sens: regle.sens,
-      /* `perte` distingue ce qui est détruit de ce qui a servi : c'est ce
-         mot que lit le calcul du bénéfice, pas le libellé affiché. */
-      motif: regle.sens === 'sortie' && regle.perte ? 'perte' : d.motif,
-      date: d.date,
-      quantite: l.quantite,
-      emballage: l.emballage ?? null,
-      /* Une sortie n'a pas de prix ici, et jamais.
-       *
-       * Rien ne se vend sur ce dossier : ce qui sort est donné, cassé,
-       * consommé ou recompté. Dès qu'un prix existe, c'est une vente —
-       * elle a son client et sa créance, et elle sait gérer une vente à
-       * perte, ce qui n'a pas de sens ici. Le coût, lui, vient du rayon :
-       * `enregistrerMouvement` y met le coût moyen. */
-      valeurUnitaire: regle.sens === 'entree' ? (l.cout ?? 0) : 0,
-      documentId: d.id,
-      utilisateurNom: params.utilisateurNom ?? null,
-      utilisateurFonction: params.utilisateurFonction ?? null,
-    });
+  /* Le rayon qui n'existe pas encore s'ouvre avant le lot : un lot
+     n'écrit que ce qu'il connaît, et une détention absente ne peut pas
+     être créée au milieu. Ceux qui manquent s'ouvrent ensemble. */
+  const absents = aEcrire.filter(
+    l => !registre.detentions.has(`${d.siteId}:${l.produitId}`));
+  if (absents.length > 0) {
+    await Promise.all(absents.map(async l => {
+      const id = await ouvrirDetention({
+        produitId: l.produitId, siteId: d.siteId, userId: params.parUid,
+      });
+      registre.detentions.set(`${d.siteId}:${l.produitId}`, {
+        id, data: { stock: 0, coutMoyen: 0, variantes: [] },
+      });
+    }));
   }
+
+  const lignes = aEcrire.map(l => ({
+    siteId: d.siteId,
+    userId: params.parUid,
+    produitId: l.produitId,
+    varianteCle: l.varianteCle ?? null,
+    sens: regle.sens,
+    /* `perte` distingue ce qui est détruit de ce qui a servi : c'est ce
+       mot que lit le calcul du bénéfice, pas le libellé affiché. */
+    motif: regle.sens === 'sortie' && regle.perte ? 'perte' : d.motif,
+    date: d.date,
+    quantite: l.quantite,
+    emballage: l.emballage ?? null,
+    /* Une sortie n'a pas de prix ici, et jamais.
+     *
+     * Rien ne se vend sur ce dossier : ce qui sort est donné, cassé,
+     * consommé ou recompté. Dès qu'un prix existe, c'est une vente —
+     * elle a son client et sa créance, et elle sait gérer une vente à
+     * perte, ce qui n'a pas de sens ici. Le coût, lui, vient du rayon. */
+    valeurUnitaire: regle.sens === 'entree' ? (l.cout ?? 0) : 0,
+    documentId: d.id,
+    utilisateurNom: params.utilisateurNom ?? null,
+    utilisateurFonction: params.utilisateurFonction ?? null,
+  }));
+
+  await ecrireLignesEnLot(lignes, registre);
 
   return { lignes: aEcrire.length };
 }

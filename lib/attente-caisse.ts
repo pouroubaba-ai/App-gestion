@@ -30,7 +30,7 @@ import {
 } from 'firebase/firestore';
 import { db } from './firebase';
 import {
-  enregistrerMouvementCaisse, chargerCaisseDuSite, soldeCaisse,
+  enregistrerMouvementCaisse, soldeDuTiroir,
   type MotifCaisse, type SensCaisse,
 } from './caisse';
 import { lireParSite, type Portee } from './portee';
@@ -210,11 +210,13 @@ export function disponibleEnCaisse(
 export async function chargerDisponible(
   siteId: string,
 ): Promise<{ solde: number; engage: number; disponible: number }> {
-  const [mouvements, attente] = await Promise.all([
-    chargerCaisseDuSite(siteId),
+  /* Le solde vient de son compteur, pas du registre entier : on ne veut
+     qu'un nombre, et il est déjà écrit. */
+  const [solde, attente] = await Promise.all([
+    soldeDuTiroir(siteId),
     chargerAttente(siteId).catch(() => [] as MouvementAttente[]),
   ]);
-  return disponibleEnCaisse(soldeCaisse(mouvements), attente);
+  return disponibleEnCaisse(solde, attente);
 }
 
 /** Ce qui attend, par sens. Les deux ne se compensent pas : ce sont deux gestes. */

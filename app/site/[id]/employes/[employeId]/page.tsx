@@ -6,6 +6,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/lib/auth-context';
+import { oublierAuteur } from '@/lib/auteur';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { formatMontant } from '@/lib/format';
 import { hankenGrotesk } from '../../components/finance/font';
@@ -547,6 +548,9 @@ export default function FicheEmployePage() {
     setSaving(true);
     const data: any = { nom: nomEdit.trim(), fonction: fonctionEdit.trim(), contact: contactEdit.trim(), etat: etatEdit, dateEmbauche: dateEmbauchEdit || null };
     await updateDoc(doc(db, 'employes', employeId), data);
+    /* Son nom ou sa fonction ont pu changer : la signature retenue en
+       mémoire doit repartir de la fiche. */
+    oublierAuteur();
     setEmploye(prev => prev ? { ...prev, ...data } : prev);
     setSaving(false); setEditing(false);
   }

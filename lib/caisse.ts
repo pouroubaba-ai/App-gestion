@@ -1,6 +1,6 @@
 import {
-  collection, addDoc, getDocs, query, where, serverTimestamp, doc, updateDoc,
-  runTransaction,
+  collection, addDoc, getDoc, getDocs, query, where, serverTimestamp, doc,
+  updateDoc, runTransaction,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { lireDocs, type Portee } from '@/lib/portee';
@@ -312,6 +312,24 @@ export async function annulerMouvementCaisse(params: {
 export async function chargerCaisseDuSite(siteId: Portee): Promise<MouvementCaisse[]> {
   return (await lireDocs<MouvementCaisse>('mouvements_caisse', siteId))
     .sort((a, b) => (b.date ?? '').localeCompare(a.date ?? ''));
+}
+
+/**
+ * Le solde du tiroir, lu sans relire le registre.
+ *
+ * `reserverPlace` tient ce chiffre à jour dans un document unique, à
+ * chaque écriture et dans la même transaction : il ne peut pas diverger
+ * du registre. Le déduire en rapatriant tous les mouvements du site
+ * coûtait des milliers de lectures pour un nombre déjà écrit — et ce coût
+ * grandissait à chaque mois d'exploitation.
+ *
+ * Réservé à qui ne veut que le solde. Les écrans qui affichent le
+ * registre le lisent de toute façon : pour eux, `soldeCaisse` sur la
+ * liste déjà chargée ne coûte rien de plus.
+ */
+export async function soldeDuTiroir(siteId: string): Promise<number> {
+  const snap = await getDoc(doc(db, 'caisse_compteurs', `${siteId}_solde`));
+  return snap.exists() ? (snap.data().solde ?? 0) : 0;
 }
 
 /** Le solde actuel : celui d'après le dernier mouvement écrit. */

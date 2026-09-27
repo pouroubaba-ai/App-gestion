@@ -4,7 +4,7 @@ import { X, Loader2 } from 'lucide-react';
 import { ChampNombre } from '@/components/Champs';
 import {
   SensCaisse, MotifCaisse, MOTIFS_MANUELS, LIBELLES_MOTIF_CAISSE,
-  chargerCaisseDuSite, soldeCaisse,
+  soldeDuTiroir,
 } from '@/lib/caisse';
 import { ecrireEnCaisse } from '@/lib/ecrire-caisse';
 import {
@@ -61,7 +61,7 @@ export default function ModalMouvementCaisse({
   const [attente, setAttente] = useState<MouvementAttente[]>([]);
 
   useEffect(() => {
-    chargerCaisseDuSite(siteId).then(m => setSolde(soldeCaisse(m)));
+    soldeDuTiroir(siteId).then(setSolde).catch(() => setSolde(0));
     chargerAttente(siteId).then(setAttente).catch(() => setAttente([]));
   }, [siteId]);
 

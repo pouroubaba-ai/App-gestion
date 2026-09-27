@@ -217,6 +217,30 @@ export async function usageDansLActivite(params: {
  * stock, du coût et du prix de CE site. Sans cette jointure, chacun aurait
  * refait le rapprochement à sa façon.
  */
+/**
+ * L'activité d'un site, retenue une fois pour toutes.
+ *
+ * Un site ne change jamais de maison : relire sa fiche à chaque ouverture
+ * d'écran pose une attente avant les trois requêtes qui en dépendent, pour
+ * une réponse qui sera la même toute la session.
+ */
+const activiteParSite = new Map<string, Promise<string | null>>();
+
+export function activiteDuSite(siteId: string): Promise<string | null> {
+  const connue = activiteParSite.get(siteId);
+  if (connue) return connue;
+  const p = getDoc(doc(db, 'sites', siteId))
+    .then(s => (s.data()?.activiteId ?? null) as string | null)
+    .catch(e => {
+      /* Un échec ne se retient pas : le garder en mémoire condamnerait
+         l'écran jusqu'au rechargement de la page. */
+      activiteParSite.delete(siteId);
+      throw e;
+    });
+  activiteParSite.set(siteId, p);
+  return p;
+}
+
 export async function produitsDuSite(siteId: string): Promise<any[]> {
   /* Les produits de CETTE maison, et d'aucune autre.
    *
@@ -227,8 +251,7 @@ export async function produitsDuSite(siteId: string): Promise<any[]> {
    * sur un « Missing or insufficient permissions » que rien n'expliquait.
    * Un écran qui propose ce qu'on ne peut pas écrire ment à celui qui
    * saisit. */
-  const snapSite = await getDoc(doc(db, 'sites', siteId));
-  const activiteId = snapSite.data()?.activiteId ?? null;
+  const activiteId = await activiteDuSite(siteId);
 
   const [snapProd, dets, mvts] = await Promise.all([
     activiteId

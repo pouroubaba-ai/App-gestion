@@ -1,5 +1,5 @@
 import {
-  collection, doc, getDoc, getDocs, query, where,
+  collection, doc, getDoc, getDocs, query, where, documentId,
   serverTimestamp, writeBatch,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
@@ -620,6 +620,85 @@ interface VarianteStock {
  * se réaliser, et le receveur hérite du coût réel pour que ses futures
  * ventes affichent une marge exacte.
  */
+/**
+ * Ce qu'il faut savoir avant d'écrire, lu d'un seul coup.
+ *
+ * Écrire une ligne demande deux choses : le produit — ses emballages, ses
+ * variantes — et ce que le site en détient. Les lire ligne par ligne
+ * faisait attendre le serveur quatre fois par article, l'une après
+ * l'autre : un bon de dix lignes payait quarante allers-retours avant que
+ * le bouton ne réponde. Sur une connexion lente, l'attente se comptait en
+ * secondes.
+ *
+ * Ici on les lit tous ensemble, en deux requêtes parallèles, puis chaque
+ * ligne se sert dans ce qui est déjà là. Le nombre d'attentes ne dépend
+ * plus du nombre d'articles.
+ *
+ * Le registre est vivant : `appliquerLigne` y réécrit le stock qu'elle
+ * vient de changer. C'est ce qui permet à deux lignes du même produit —
+ * un transfert qui sort ici et entre là — de se voir l'une l'autre, ce
+ * que des lectures séparées ne faisaient pas.
+ */
+export interface RegistreLignes {
+  produits: Map<string, any>;
+  /** la détention, par `${siteId}:${produitId}` */
+  detentions: Map<string, { id: string; data: any }>;
+}
+
+/** Découpe en paquets : Firestore n'accepte que 30 valeurs par `in`. */
+function paquets<T>(liste: T[], taille: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < liste.length; i += taille) out.push(liste.slice(i, i + taille));
+  return out;
+}
+
+/**
+ * Charge d'avance les produits et les détentions de plusieurs lignes.
+ *
+ * Un site peut détenir une marchandise qu'il n'a jamais achetée : sa
+ * détention n'existe alors pas encore. On ne la crée pas ici — c'est
+ * `appliquerLigne` qui s'en charge, au moment où elle sait qu'il y a
+ * vraiment quelque chose à écrire.
+ */
+export async function precharger(
+  lignes: { siteId: string; produitId: string }[],
+): Promise<RegistreLignes> {
+  const produitIds = [...new Set(lignes.map(l => l.produitId).filter(Boolean))];
+  const siteIds = [...new Set(lignes.map(l => l.siteId).filter(Boolean))];
+
+  const registre: RegistreLignes = { produits: new Map(), detentions: new Map() };
+  if (produitIds.length === 0) return registre;
+
+  /* Les deux familles de requêtes partent ensemble : elles ne dépendent
+     pas l'une de l'autre. */
+  const [snapsProduits, snapsDetentions] = await Promise.all([
+    Promise.all(paquets(produitIds, 30).map(lot => getDocs(query(
+      collection(db, 'produits'), where(documentId(), 'in', lot))))),
+    /* Par site plutôt que par produit : un site a rarement assez de
+       références pour que ce soit plus lourd, et cela tient en une
+       requête par site au lieu d'une par paquet de produits. */
+    Promise.all(siteIds.map(s => getDocs(query(
+      collection(db, 'produits_site'), where('siteId', '==', s))))),
+  ]);
+
+  for (const snap of snapsProduits) {
+    for (const d of snap.docs) registre.produits.set(d.id, d.data());
+  }
+  const voulus = new Set(produitIds);
+  for (const snap of snapsDetentions) {
+    for (const d of snap.docs) {
+      const x = d.data() as any;
+      /* On ne garde que ce qui servira : la détention d'un produit absent
+         du bon n'a rien à faire en mémoire. */
+      if (!voulus.has(x.produitId)) continue;
+      registre.detentions.set(`${x.siteId}:${x.produitId}`,
+        { id: d.id, data: x });
+    }
+  }
+
+  return registre;
+}
+
 async function appliquerLigne(
   batch: ReturnType<typeof writeBatch>,
   params: {
@@ -646,11 +725,21 @@ async function appliquerLigne(
     achatId?: string | null; venteId?: string | null;
     mouvementOrigineId?: string | null;
   },
+  /**
+   * Ce qui a été lu d'avance, quand l'appelant a préchargé.
+   *
+   * Absent, la fonction lit elle-même : un appel isolé n'a rien à
+   * précharger, et on ne l'oblige pas à le faire.
+   */
+  registre?: RegistreLignes,
 ): Promise<void> {
-  const refProduit = doc(db, 'produits', params.produitId);
-  const snap = await getDoc(refProduit);
-  if (!snap.exists()) throw new Error(`Produit introuvable : ${params.produitId}`);
-  const produit = snap.data();
+  const dejaLu = registre?.produits.get(params.produitId);
+  const produit = dejaLu ?? (await (async () => {
+    const snap = await getDoc(doc(db, 'produits', params.produitId));
+    if (!snap.exists()) throw new Error(`Produit introuvable : ${params.produitId}`);
+    return snap.data();
+  })());
+  if (!produit) throw new Error(`Produit introuvable : ${params.produitId}`);
 
   /* Le produit dit ce qu'est la marchandise — ses emballages, ses
      variantes ; la détention dit ce que CE site en a. Les confondre
@@ -664,15 +753,29 @@ async function appliquerLigne(
 
   /* Un site peut recevoir une marchandise qu'il n'a jamais achetée : sa
      détention s'ouvre alors à cet instant, à zéro. */
-  const detentionId = await ouvrirDetention({
-    produitId: params.produitId, siteId: params.siteId, userId: params.userId,
-    variantes: variantesProduit.map(v => ({
-      cle: v.cle, stock: 0, coutMoyen: 0, prixVente: v.prixVente ?? null,
-    })),
-  });
-  const refDetention = doc(db, 'produits_site', detentionId);
-  const snapDet = await getDoc(refDetention);
-  const detention = (snapDet.data() ?? {}) as any;
+  const cle = `${params.siteId}:${params.produitId}`;
+  const enMemoire = registre?.detentions.get(cle);
+
+  let refDetention;
+  let detention: any;
+  if (enMemoire) {
+    refDetention = doc(db, 'produits_site', enMemoire.id);
+    detention = enMemoire.data;
+  } else {
+    const detentionId = await ouvrirDetention({
+      produitId: params.produitId, siteId: params.siteId, userId: params.userId,
+      variantes: variantesProduit.map(v => ({
+        cle: v.cle, stock: 0, coutMoyen: 0, prixVente: v.prixVente ?? null,
+      })),
+    });
+    refDetention = doc(db, 'produits_site', detentionId);
+    /* Une détention qui vient de naître est à zéro : la relire ne
+       montrerait que ce qu'on vient d'écrire. Sinon on la lit. */
+    detention = ((await getDoc(refDetention)).data() ?? {}) as any;
+    /* Elle rejoint le registre : la ligne suivante sur ce produit la
+       trouvera, au lieu de la relire. */
+    registre?.detentions.set(cle, { id: refDetention.id, data: detention });
+  }
   const variantesSite: VarianteSite[] = detention.variantes ?? [];
 
   const variante = params.varianteCle
@@ -774,15 +877,34 @@ async function appliquerLigne(
           cle: params.varianteCle, stock: nouveauStock, coutMoyen: nouveauCout,
           prixVente: nouveauPrix ?? null,
         }];
-    batch.update(refDetention, {
-      variantes: maj,
-      stock: maj.reduce((s, v) => s + v.stock, 0),
-    });
+    const total = maj.reduce((s, v) => s + v.stock, 0);
+    batch.update(refDetention, { variantes: maj, stock: total });
+    /* Le registre suit ce que le lot écrira.
+     *
+     * Deux lignes du même produit — le même article compté deux fois sur
+     * un bon — doivent s'enchaîner : la seconde part du stock que la
+     * première a laissé. Sans cette mise à jour, chacune repartirait de
+     * la même valeur et la dernière écrasserait l'autre. */
+    if (enMemoire || registre?.detentions.has(cle)) {
+      registre?.detentions.set(cle, {
+        id: refDetention.id,
+        data: { ...detention, variantes: maj, stock: total },
+      });
+    }
   } else {
     batch.update(refDetention, {
       stock: nouveauStock, coutMoyen: nouveauCout,
       ...(nouveauPrix != null ? { prixVente: nouveauPrix } : {}),
     });
+    if (enMemoire || registre?.detentions.has(cle)) {
+      registre?.detentions.set(cle, {
+        id: refDetention.id,
+        data: {
+          ...detention, stock: nouveauStock, coutMoyen: nouveauCout,
+          ...(nouveauPrix != null ? { prixVente: nouveauPrix } : {}),
+        },
+      });
+    }
   }
 }
 
@@ -814,6 +936,14 @@ export async function confirmerTransfert(params: {
   const date = new Date().toISOString().split('T')[0];
   const batch = writeBatch(db);
 
+  /* Tout ce que les lignes vont demander, lu d'un coup : la marchandise
+     sort d'un site et entre dans l'autre, donc les deux détentions sont
+     préchargées. */
+  const registre = await precharger(transfert.lignes.flatMap(l => [
+    { siteId: transfert.siteSourceId, produitId: l.produitId },
+    { siteId: transfert.siteDestId, produitId: l.produitId },
+  ]));
+
   for (const l of transfert.lignes) {
     /* la quantité qui bouge est celle que le destinataire a comptée */
     const qte = l.quantiteRecue ?? 0;
@@ -829,7 +959,7 @@ export async function confirmerTransfert(params: {
          l'initiation du dossier. */
       utilisateurNom: params.utilisateurNom ?? null,
       utilisateurFonction: params.utilisateurFonction ?? null,
-    });
+    }, registre);
 
     await appliquerLigne(batch, {
       siteId: transfert.siteDestId, userId: params.userId,
@@ -843,7 +973,7 @@ export async function confirmerTransfert(params: {
       siteLieId: transfert.siteSourceId, documentId: transfert.id,
       utilisateurNom: params.utilisateurNom ?? null,
       utilisateurFonction: params.utilisateurFonction ?? null,
-    });
+    }, registre);
   }
 
   /* Un transfert produit deux documents, un par site : la marchandise sort
@@ -947,6 +1077,10 @@ export async function confirmerAchat(params: {
 
   const batch = writeBatch(db);
 
+  const registre = await precharger(achat.lignes.map(l => ({
+    siteId: achat.siteId, produitId: l.produitId,
+  })));
+
   for (const l of achat.lignes) {
     const qte = l.quantiteRecue ?? 0;
     if (qte <= 0) continue;
@@ -969,7 +1103,7 @@ export async function confirmerAchat(params: {
       prixVente: l.prixVente ?? 0,
       reference: achat.reference,
       achatId: achat.id,
-    });
+    }, registre);
   }
 
   /**
@@ -1048,6 +1182,10 @@ export async function livrerVente(params: {
 
   const batch = writeBatch(db);
 
+  const registre = await precharger(vente.lignes.map(l => ({
+    siteId: vente.siteId, produitId: l.produitId,
+  })));
+
   for (const l of vente.lignes) {
     const qte = l.quantiteRecue ?? l.quantiteDemandee;
     if (qte <= 0) continue;
@@ -1074,7 +1212,7 @@ export async function livrerVente(params: {
       prixVente: l.prixVente ?? 0,
       reference: vente.reference,
       venteId: vente.id,
-    });
+    }, registre);
   }
 
   /* La vente prend corps chez le client : une ligne par produit dans sa fiche.
