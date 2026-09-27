@@ -517,6 +517,7 @@ export default function ComptoirPage() {
          pas ; l'écran, lui, n'a pas à l'attendre. */
       const ecriture = (async () => {
         await synchroniserLignes({
+          neuve: true,
           venteId: ref.id,
           lignes: lignes.map((l, i) => ligneDepuisVente({
             siteId, venteId: ref.id, ligneIndex: i, ligne: l,

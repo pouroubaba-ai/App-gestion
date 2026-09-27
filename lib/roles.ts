@@ -227,11 +227,18 @@ export function peutAutoriserCaisse(role: RoleSite | null): boolean {
 
 /** Le site a-t-il quelqu'un pour tenir sa caisse ? */
 export async function aUnCaissier(siteId: string): Promise<boolean> {
-  const snap = await getDocs(query(
+  const connu = caissiersConnus.get(siteId);
+  if (connu) return connu;
+
+  const p = getDocs(query(
     collection(db, 'membres'),
     where('siteId', '==', siteId),
-    where('role', '==', 'caissier')));
-  return snap.docs.some(d => (d.data() as Membre).actif !== false);
+    where('role', '==', 'caissier')))
+    .then(snap => snap.docs.some(d => (d.data() as Membre).actif !== false))
+    .catch(e => { caissiersConnus.delete(siteId); throw e; });
+
+  caissiersConnus.set(siteId, p);
+  return p;
 }
 
 /** Les onglets visibles. `null` en rôle veut dire admin : tout est ouvert. */
@@ -266,21 +273,54 @@ export async function membresDuSite(siteId: string): Promise<Membre[]> {
  * l'activité, soit aucun membre ne le désigne et l'app se comporte comme
  * avant. On ne ferme jamais une porte par accident.
  */
+/**
+ * Ce qu'on a déjà demandé aux `membres`, le temps de la session.
+ *
+ * Le rôle de qui agit et la présence d'un caissier se lisent avant chaque
+ * écriture en caisse — donc à chaque versement, à chaque vente. Ni l'un
+ * ni l'autre ne change entre deux gestes : les redemander posait deux
+ * attentes devant chaque bouton, pour la même réponse.
+ *
+ * On retient la promesse, pas seulement la réponse : deux appels lancés
+ * en même temps — ce qui arrive, `ecrireEnCaisse` les met en parallèle —
+ * partagent alors la même requête au lieu d'en faire deux.
+ *
+ * `oublierRoles` vide tout dès qu'une équipe change.
+ */
+const rolesConnus = new Map<string, Promise<RoleSite | null>>();
+const caissiersConnus = new Map<string, Promise<boolean>>();
+
+/** Oublie ce qui a été retenu : l'équipe d'un site a changé. */
+export function oublierRoles(): void {
+  rolesConnus.clear();
+  caissiersConnus.clear();
+}
+
 export async function roleSurSite(
   uid: string, siteId: string, adminUid?: string | null,
 ): Promise<RoleSite | null> {
   if (adminUid && uid === adminUid) return null;
 
-  const snap = await getDocs(query(
+  const cle = `${siteId}:${uid}`;
+  const connu = rolesConnus.get(cle);
+  if (connu) return connu;
+
+  const p = getDocs(query(
     collection(db, 'membres'),
     where('siteId', '==', siteId),
-    where('compteUid', '==', uid)));
+    where('compteUid', '==', uid)))
+    .then(snap => snap.docs
+      .map(d => d.data() as Membre)
+      .find(m => m.actif !== false)?.role ?? null)
+    .catch(e => {
+      /* Un échec ne se retient pas : le garder condamnerait l'écran
+         jusqu'au rechargement de la page. */
+      rolesConnus.delete(cle);
+      throw e;
+    });
 
-  const membre = snap.docs
-    .map(d => d.data() as Membre)
-    .find(m => m.actif !== false);
-
-  return membre?.role ?? null;
+  rolesConnus.set(cle, p);
+  return p;
 }
 
 /**
@@ -342,6 +382,9 @@ export async function inviterMembre(saisie: {
     actif: true,
     createdAt: serverTimestamp(),
   });
+  /* Inviter quelqu'un change l'équipe : un caissier a pu apparaître, et
+     c'est lui qui décide si l'argent passe par une file d'attente. */
+  oublierRoles();
   return ref.id;
 }
 
@@ -350,16 +393,19 @@ export async function inviterMembre(saisie: {
 export async function changerRole(membreId: string, role: RoleSite): Promise<void> {
   await updateDoc(doc(db, 'membres', membreId), { role });
   oublierAuteur();
+  oublierRoles();
 }
 
 export async function basculerMembre(membreId: string, actif: boolean): Promise<void> {
   await updateDoc(doc(db, 'membres', membreId), { actif });
   oublierAuteur();
+  oublierRoles();
 }
 
 export async function retirerMembre(membreId: string): Promise<void> {
   await deleteDoc(doc(db, 'membres', membreId));
   oublierAuteur();
+  oublierRoles();
 }
 
 /**
@@ -405,6 +451,11 @@ export async function rattacherCompte(
     await setDoc(doc(db, 'membres', cle), { ...m, compteUid: uid });
     await deleteDoc(doc(db, 'membres', d.id));
   }));
+
+  /* Le rattachement pose le `compteUid` — celui-là même que `roleSurSite`
+     interroge. Sans oubli, la session garderait le « aucun rôle » lu
+     avant que l'invitation ne devienne un membre. */
+  if (aPoser.length > 0) oublierRoles();
 
   /**
    * Ce que ce compte a, une fois le rattachement fait.

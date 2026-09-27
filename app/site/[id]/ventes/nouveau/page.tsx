@@ -170,6 +170,7 @@ export default function NouvelleVentePage() {
          imbrique ne s'interroge pas, et le besoin par produit demande de
          partir du produit, pas de la vente. */
       await synchroniserLignes({
+        neuve: true,
         venteId: ref.id,
         lignes: lignes.map((l, i) => ligneDepuisVente({
           siteId, venteId: ref.id, ligneIndex: i, ligne: l,

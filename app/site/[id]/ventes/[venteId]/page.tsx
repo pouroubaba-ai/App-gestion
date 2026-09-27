@@ -493,6 +493,7 @@ export default function FicheVentePage() {
          collection. Celles du devis y restent aussi, mais son acceptation
          les ecarte du compte — sans quoi le produit serait promis deux fois. */
       await synchroniserLignes({
+        neuve: true,
         venteId: ref.id,
         lignes: vente.lignes.map((l, i) => ligneDepuisVente({
           siteId: vente.siteId, venteId: ref.id, ligneIndex: i, ligne: l,

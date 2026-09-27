@@ -1,5 +1,6 @@
 import {
   collection, query, where, getDocs, addDoc, updateDoc, doc, getDoc,
+  increment,
   serverTimestamp,
 } from 'firebase/firestore';
 import { db } from './firebase';
@@ -184,28 +185,42 @@ export async function enregistrerVersement(saisie: SaisieVersement): Promise<Ver
   /* Le dossier porte le total, jamais le détail : l'écran de l'achat doit
      pouvoir dire ce qui reste sans lire toute la collection. */
   const dossierId = saisie.achatId ?? saisie.venteId;
-  if (dossierId) {
+  /* `avanceVersee` ne porte que de l'argent.
+   *
+   * Un remboursement défait ce qu'un versement avait réglé ; tout autre
+   * motif l'augmente. Le sens du flux ne suffit pas à trancher : un
+   * remboursement de fournisseur est une entrée, et il retire pourtant.
+   *
+   * Le retour de marchandise, lui, ne touche pas à ce champ. Il éteint
+   * une dette sans qu'un franc ne circule : l'écrire ici faisait passer
+   * des sacs rendus pour un paiement, et l'écran annonçait « Versé
+   * 6 500 » à côté d'un onglet qui disait « Aucun versement ». Ce qu'un
+   * retour éteint se lit sur le retour. */
+  if (dossierId && saisie.motif !== 'retour_marchandise') {
     const col = saisie.achatId ? 'achats' : 'ventes';
-    const snap = await getDoc(doc(db, col, dossierId));
-    if (snap.exists()) {
-      const avance = snap.data().avanceVersee ?? 0;
-      /* `avanceVersee` ne porte que de l'argent.
-       *
-       * Un remboursement défait ce qu'un versement avait réglé ; tout
-       * autre motif l'augmente. Le sens du flux ne suffit pas à
-       * trancher : un remboursement de fournisseur est une entrée, et il
-       * retire pourtant.
-       *
-       * Le retour de marchandise, lui, ne touche pas à ce champ. Il
-       * éteint une dette sans qu'un franc ne circule : l'écrire ici
-       * faisait passer des sacs rendus pour un paiement, et l'écran
-       * annonçait « Versé 6 500 » à côté d'un onglet qui disait « Aucun
-       * versement ». Ce qu'un retour éteint se lit sur le retour. */
-      if (saisie.motif === 'retour_marchandise') return { id: ref.id, ...saisie, heure, mouvementCaisseId } as Versement;
-      const delta = saisie.motif === 'remboursement' ? -saisie.montant : saisie.montant;
-      await updateDoc(doc(db, col, dossierId), {
-        avanceVersee: Math.max(0, avance + delta),
-      });
+    const ligne = doc(db, col, dossierId);
+
+    if (saisie.motif === 'remboursement') {
+      /* Retirer demande de savoir ce qu'il y avait : le total ne descend
+         pas sous zéro, et rien dans l'écriture seule ne le garantirait.
+         Un remboursement est rare — l'aller-retour se justifie ici. */
+      const snap = await getDoc(ligne);
+      if (snap.exists()) {
+        const avance = snap.data().avanceVersee ?? 0;
+        await updateDoc(ligne, {
+          avanceVersee: Math.max(0, avance - saisie.montant),
+        });
+      }
+    } else {
+      /* Ajouter se fait sans lire : `increment` additionne sur le
+         serveur. Lire puis écrire coûtait deux attentes à chaque
+         versement — et laissait passer, entre les deux, un second
+         versement qui écrasait le premier. */
+      await updateDoc(ligne, { avanceVersee: increment(saisie.montant) })
+        .catch(() => {
+          /* Le dossier a pu disparaître : le versement, lui, est déjà
+             inscrit. On ne perd pas le fait pour un total dérivé. */
+        });
     }
   }
 

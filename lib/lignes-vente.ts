@@ -126,8 +126,23 @@ export async function chargerLignesDuSite(siteId: string): Promise<LigneVente[]>
 export async function synchroniserLignes(params: {
   venteId: string;
   lignes: SaisieLigneVente[];
+  /**
+   * La vente vient de naître : elle n'a aucune ligne à relire.
+   *
+   * Au comptoir, la vente est créée puis ses lignes écrites dans la
+   * foulée. Aller demander ce qu'elle contient déjà ne pouvait rapporter
+   * qu'une réponse vide — une attente entière, à chaque vente, pour
+   * apprendre qu'il n'y a rien.
+   *
+   * Ne se passe que quand l'appelant vient de créer le document. Sur une
+   * vente qu'on modifie, la lecture reste : c'est elle qui dit quelles
+   * lignes ont disparu.
+   */
+  neuve?: boolean;
 }): Promise<void> {
-  const existantes = await chargerLignesDeVente(params.venteId);
+  const existantes = params.neuve
+    ? []
+    : await chargerLignesDeVente(params.venteId);
   const batch = writeBatch(db);
 
   params.lignes.forEach((l, i) => {
