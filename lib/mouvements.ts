@@ -3,7 +3,7 @@ import {
   serverTimestamp, writeBatch, runTransaction,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
-import { ouvrirDetention, type VarianteSite } from '@/lib/produits-site';
+import { ouvrirDetention, detentionDe, type VarianteSite } from '@/lib/produits-site';
 
 export type SensMouvement = 'entree' | 'sortie';
 
@@ -32,9 +32,24 @@ export interface Mouvement {
    * Sorties uniquement : figé à l'instant de la vente.
    * Un achat ultérieur change le coût moyen ; sans ce figeage,
    * le bénéfice des ventes passées serait réécrit rétroactivement.
+   *
+   * `null` quand le rayon ignorait ce qu'il avait payé : il n'y avait
+   * aucun coût à figer.
    */
-  coutMoyenAlors?: number;
-  benefice?: number;
+  coutMoyenAlors?: number | null;
+  /**
+   * Cette entrée n'apporte aucun coût — un stock de départ dont on
+   * ignore le prix d'achat. `valeurUnitaire` vaut zéro faute de mieux,
+   * et ce drapeau empêche de le lire comme « gratuit ».
+   */
+  coutInconnu?: boolean;
+  /**
+   * Cette sortie n'a pas de marge : elle a été prise sur un rayon dont
+   * le coût n'était pas connu. Elle compte en chiffre d'affaires, pas en
+   * bénéfice — zéro en ferait un gain égal au prix de vente.
+   */
+  margeInconnue?: boolean;
+  benefice?: number | null;
   partenaireId?: string | null;
   partenaireNom?: string | null;
   /** site d'origine ou de destination pour un transfert */
@@ -275,12 +290,20 @@ export async function ecrireLignesEnLot(
          alors pour tout le stock, faute de mieux à attribuer aux unités
          d'origine. */
       const entreeSansCout = saisie.sens === 'entree' && !!saisie.coutInconnu;
-      /* Ce qu'on a appris ne se désapprend pas. Un rayon vidé garde le
-         coût de ce qu'il a vendu : y reverser du stock sans coût ne le
-         rend pas ignorant à nouveau, sinon un produit perdrait sa valeur
-         chaque fois qu'il passe par zéro. */
+      /* Trois situations, et elles ne se confondent pas.
+
+         Le rayon n'a jamais rien su — ni coût, ni stock : une entrée
+         sans coût le laisse ignorant, et c'est ainsi qu'un produit naît
+         avec son stock de départ.
+
+         Le rayon ignorait déjà : il continue d'ignorer.
+
+         Le rayon savait : ce qu'on a appris ne se désapprend pas, même
+         si le stock est passé par zéro entre-temps — sinon un produit
+         perdrait sa valeur chaque fois qu'il se vide. */
+      const rayonVierge = stockAvant <= 0 && coutAvant <= 0;
       const inconnuApres = saisie.sens === 'entree'
-        ? inconnuAvant && entreeSansCout
+        ? (inconnuAvant || rayonVierge) && entreeSansCout
         : inconnuAvant;
 
       const nouveauCout = saisie.sens === 'entree'
@@ -403,9 +426,25 @@ export async function enregistrerMouvement(saisie: SaisieMouvement): Promise<Mou
     : undefined;
   const stockAvant = variante ? variante.stock : (detention.stock ?? 0);
   const coutAvant = variante ? variante.coutMoyen : (detention.coutMoyen ?? 0);
+  /* La même règle qu'en lot : un rayon qui ignore ce qu'il a payé ne
+     pondère rien, et ce qu'il a appris ne se désapprend pas. */
+  const inconnuAvant: boolean = variante
+    ? !!variante.coutInconnu
+    : !!detention.coutInconnu;
+  const entreeSansCout = saisie.sens === 'entree' && !!saisie.coutInconnu;
+  /* La même règle qu'en lot : un rayon vierge peut devenir ignorant, un
+     rayon qui savait ne le redevient jamais. */
+  const rayonVierge = stockAvant <= 0 && coutAvant <= 0;
+  const inconnuApres = saisie.sens === 'entree'
+    ? (inconnuAvant || rayonVierge) && entreeSansCout
+    : inconnuAvant;
 
   const nouveauCout = saisie.sens === 'entree'
-    ? coutMoyenApresEntree(stockAvant, coutAvant, qteUnites, saisie.valeurUnitaire)
+    ? (entreeSansCout
+        ? coutAvant
+        : coutMoyenApresEntree(
+            stockAvant, coutAvant, qteUnites, saisie.valeurUnitaire,
+            inconnuAvant))
     : coutAvant;
   const nouveauStock = stockAvant + signe * qteUnites;
 
@@ -429,14 +468,19 @@ export async function enregistrerMouvement(saisie: SaisieMouvement): Promise<Mou
        marge lui donnait pourtant `0 − coût`, soit exactement le calcul
        d'une perte : la distinction s'effondrait à l'écriture, et tout ce
        qui sortait gratuitement grevait le bénéfice. */
-    ...(saisie.sens === 'sortie' && saisie.motif !== 'transfert' ? {
-      coutMoyenAlors: coutAvant,
-      benefice: saisie.motif === 'perte'
-        ? -coutAvant * qteUnites
-        : saisie.valeurUnitaire <= 0
-        ? 0
-        : (saisie.valeurUnitaire - coutAvant) * qteUnites,
-    } : {}),
+    ...(entreeSansCout ? { coutInconnu: true } : {}),
+    ...(saisie.sens === 'sortie' && saisie.motif !== 'transfert' ? (
+      inconnuAvant
+        ? { coutMoyenAlors: null, benefice: null, margeInconnue: true }
+        : {
+          coutMoyenAlors: coutAvant,
+          benefice: saisie.motif === 'perte'
+            ? -coutAvant * qteUnites
+            : saisie.valeurUnitaire <= 0
+            ? 0
+            : (saisie.valeurUnitaire - coutAvant) * qteUnites,
+        }
+    ) : {}),
     partenaireId: saisie.partenaireId ?? null,
     partenaireNom: saisie.partenaireNom ?? null,
     siteLieId: saisie.siteLieId ?? null,
@@ -483,7 +527,15 @@ export async function enregistrerStockInitial(params: {
   produitId: string;
   date: string;
   /** une ligne par variante, ou une seule ligne sans varianteCle */
-  lignes: { varianteCle?: string | null; quantite: number; quantiteUnites: number; emballage?: string | null; cout: number }[];
+  lignes: {
+    varianteCle?: string | null;
+    quantite: number; quantiteUnites: number;
+    emballage?: string | null;
+    cout: number;
+    /* Le coût saisi vaut zéro parce qu'on l'ignore, pas parce que la
+       marchandise est gratuite. */
+    coutInconnu?: boolean;
+  }[];
   /* Qui déclare ce stock de départ : c'est un fait comme un autre. */
   utilisateurNom?: string | null;
   utilisateurFonction?: string | null;
@@ -491,29 +543,46 @@ export async function enregistrerStockInitial(params: {
   const aEcrire = params.lignes.filter(l => l.quantiteUnites > 0);
   if (aEcrire.length === 0) return;
 
-  const batch = writeBatch(db);
-  for (const l of aEcrire) {
-    batch.set(doc(collection(db, 'mouvements')), {
-      siteId: params.siteId,
-      userId: params.userId,
-      produitId: params.produitId,
-      varianteCle: l.varianteCle ?? null,
-      sens: 'entree',
-      motif: 'stock_initial',
-      date: params.date,
-      quantite: l.quantite,
-      emballage: l.emballage ?? null,
-      quantiteUnites: l.quantiteUnites,
-      valeurUnitaire: l.cout,
-      valeurTotale: l.cout * l.quantiteUnites,
-      partenaireId: null,
-      partenaireNom: null,
-      siteLieId: null,
-      documentId: null,
-      utilisateurNom: params.utilisateurNom ?? null,
-      utilisateurFonction: params.utilisateurFonction ?? null,
-      createdAt: serverTimestamp(),
-    });
-  }
-  await batch.commit();
+  /* Le mouvement seul ne suffit pas : il dit ce qui est entré, le rayon
+     dit ce qu'on a. Les écrire séparément laissait un produit naître en
+     rupture alors que son stock de départ était déclaré — l'historique
+     le montrait, l'inventaire l'ignorait.
+
+     `ecrireLignesEnLot` fait les deux d'un geste, et porte la règle du
+     coût inconnu : un seul chemin, une seule vérité. */
+  /* Un seul produit, un seul site : le registre se monte ici plutôt que
+     d'importer `precharger` — `flux-marchandise` importe déjà ce
+     fichier, et le cycle empêcherait les deux de se charger. */
+  const [snapProduit, detention] = await Promise.all([
+    getDoc(doc(db, 'produits', params.produitId)),
+    detentionDe(params.siteId, params.produitId),
+  ]);
+  if (!snapProduit.exists()) throw new Error('Produit introuvable.');
+
+  const idDetention = detention?.id ?? await ouvrirDetention({
+    produitId: params.produitId, siteId: params.siteId, userId: params.userId,
+  });
+  const registre = {
+    produits: new Map([[params.produitId, snapProduit.data()]]),
+    detentions: new Map([[
+      `${params.siteId}:${params.produitId}`,
+      { id: idDetention, data: detention ?? { stock: 0, coutMoyen: 0, variantes: [] } },
+    ]]),
+  };
+
+  await ecrireLignesEnLot(aEcrire.map(l => ({
+    siteId: params.siteId,
+    userId: params.userId,
+    produitId: params.produitId,
+    varianteCle: l.varianteCle ?? null,
+    sens: 'entree' as const,
+    motif: 'stock_initial',
+    date: params.date,
+    quantite: l.quantite,
+    emballage: l.emballage ?? null,
+    valeurUnitaire: l.cout,
+    ...(l.coutInconnu ? { coutInconnu: true } : {}),
+    utilisateurNom: params.utilisateurNom ?? null,
+    utilisateurFonction: params.utilisateurFonction ?? null,
+  })), registre);
 }

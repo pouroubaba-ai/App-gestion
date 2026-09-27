@@ -55,6 +55,14 @@ export interface ProduitSite {
   userId: string;
   stock: number;
   coutMoyen: number;
+  /**
+   * Le rayon ignore ce qu'il a payé sa marchandise.
+   *
+   * Vrai tant qu'aucune entrée réelle n'a posé le coût : `coutMoyen`
+   * vaut alors zéro faute de mieux, et le lire comme une valeur ferait
+   * d'une vente un bénéfice égal à son prix.
+   */
+  coutInconnu?: boolean;
   prixVente: number;
   seuilAlerte?: number | null;
   /** Le stock par variante, quand le produit en a. */
@@ -93,6 +101,9 @@ export async function ouvrirDetention(params: {
   userId: string;
   stock?: number;
   coutMoyen?: number;
+  /** Le rayon ignore ce qu'il a payé : `coutMoyen` vaut zéro faute de
+      mieux, et ce drapeau empêche de le lire comme une valeur. */
+  coutInconnu?: boolean;
   prixVente?: number;
   seuilAlerte?: number | null;
   variantes?: VarianteSite[];
@@ -106,6 +117,7 @@ export async function ouvrirDetention(params: {
     userId: params.userId,
     stock: params.stock ?? 0,
     coutMoyen: params.coutMoyen ?? 0,
+    ...(params.coutInconnu ? { coutInconnu: true } : {}),
     prixVente: params.prixVente ?? 0,
     seuilAlerte: params.seuilAlerte ?? null,
     variantes: params.variantes ?? [],
@@ -129,6 +141,9 @@ export async function ouvrirPartout(params: {
   siteOrigine?: string;
   stockOrigine?: number;
   coutOrigine?: number;
+  /** Le coût du site d'origine n'est pas connu : il sera posé par le
+      premier achat. Les autres sites partent à zéro de toute façon. */
+  coutOrigineInconnu?: boolean;
   prixOrigine?: number;
   seuilOrigine?: number | null;
   variantesOrigine?: VarianteSite[];
@@ -141,6 +156,9 @@ export async function ouvrirPartout(params: {
       userId: params.userId,
       stock: estOrigine ? (params.stockOrigine ?? 0) : 0,
       coutMoyen: estOrigine ? (params.coutOrigine ?? 0) : 0,
+      /* Un site qui ne reçoit rien part de toute façon sans coût : son
+         premier approvisionnement le posera, quel qu'il soit. */
+      coutInconnu: estOrigine ? !!params.coutOrigineInconnu : true,
       /* Le prix se propose partout, même à stock zéro : un site qui reçoit
          un transfert doit pouvoir vendre sans reparamétrer sa fiche. Il
          reste libre de le changer ensuite. */
@@ -149,7 +167,8 @@ export async function ouvrirPartout(params: {
       variantes: estOrigine
         ? (params.variantesOrigine ?? [])
         : (params.variantesOrigine ?? []).map(v => ({
-            cle: v.cle, stock: 0, coutMoyen: 0, prixVente: v.prixVente ?? null,
+            cle: v.cle, stock: 0, coutMoyen: 0, coutInconnu: true,
+            prixVente: v.prixVente ?? null,
           })),
     });
   }

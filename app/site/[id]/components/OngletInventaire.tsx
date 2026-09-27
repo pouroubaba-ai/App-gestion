@@ -659,6 +659,11 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
     const codeBarreProduit = genererCodeBarre();
     const coutProduit = parseMontant(coutAchat);
     const prixProduit = parseMontant(prixVente);
+    /* Un coût laissé vide n'est pas un coût nul : le produit entre en
+       rayon sans qu'on sache ce qu'il a coûté, et c'est le premier achat
+       qui le posera. Écrire zéro le ferait passer pour gratuit, et toute
+       vente compterait en bénéfice le prix entier. */
+    const coutIgnore = coutProduit <= 0;
 
     const variantes: Variante[] = variantesSaisie.map(v => ({
       cle: cleVariante(v.selection, caracsValides),
@@ -667,6 +672,10 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
       stock: enUnites(v.stock, v.stockEmb, emballagesValides),
       /* le coût saisi initialise la moyenne pondérée, à défaut celui du produit */
       coutMoyen: v.cout ? parseMontant(v.cout) : coutProduit,
+      /* Une déclinaison sans coût propre hérite de l'ignorance du
+         produit : ni la sienne ni celle du produit ne dit ce qu'elle a
+         coûté. */
+      ...(v.cout ? {} : coutIgnore ? { coutInconnu: true } : {}),
       ...(v.prix ? { prixVente: parseMontant(v.prix) } : {}),
     }));
 
@@ -703,11 +712,16 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
     await ouvrirPartout({
       produitId: ref.id, siteIds: tousLesSites, userId,
       ...(site ? { siteOrigine: site } : {}),
+      /* Le rayon naît dans l'ignorance si aucun coût n'a été saisi : le
+         premier achat le posera. */
+      coutOrigineInconnu: coutIgnore,
       prixOrigine: prixProduit,
       seuilOrigine: seuilAlerte
         ? enUnites(seuilAlerte, seuilEmballage, emballagesValides) : null,
       variantesOrigine: variantes.map((v: any) => ({
-        cle: v.cle, stock: 0, coutMoyen: 0, prixVente: v.prixVente ?? null,
+        cle: v.cle, stock: 0, coutMoyen: 0,
+        coutInconnu: !!v.coutInconnu,
+        prixVente: v.prixVente ?? null,
       })),
     });
 
@@ -727,12 +741,14 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
             quantiteUnites: enUnites(v.stock, v.stockEmb, emballagesValides),
             emballage: v.stockEmb || null,
             cout: v.cout ? parseMontant(v.cout) : coutProduit,
+            ...(v.cout ? {} : coutIgnore ? { coutInconnu: true } : {}),
           }))
         : [{
             quantite: parseMontant(stockInitial),
             quantiteUnites: enUnites(stockInitial, stockEmballage, emballagesValides),
             emballage: stockEmballage || null,
             cout: coutProduit,
+            ...(coutIgnore ? { coutInconnu: true } : {}),
           }],
     });
     }
@@ -1318,18 +1334,22 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
                               gagne — le produit entier le cachait. */}
                           <td className="px-3 py-2.5 text-center">
                             {(() => {
-                              const b = l.stock * (l.prixVente - l.coutMoyen);
+                              /* Sans coût connu, la marge ne se calcule pas :
+                                 le prix moins zéro serait le prix entier. */
+                              const b = l.coutMoyen > 0
+                                ? l.stock * (l.prixVente - l.coutMoyen) : null;
                               return (
-                                <span className={b > 0 ? 'font-medium text-green-600'
+                                <span className={b == null ? 'text-gray-300 dark:text-gray-600'
+                                  : b > 0 ? 'font-medium text-green-600'
                                   : b < 0 ? 'font-medium text-red-500'
                                   : 'text-gray-300 dark:text-gray-600'}>
-                                  {formatMontant(b)}
+                                  {b == null ? '—' : formatMontant(b)}
                                 </span>
                               );
                             })()}
                           </td>
                           <td className="px-3 py-2.5 text-center text-gray-500">
-                            {formatMontant(l.stock * l.coutMoyen)}
+                            {l.coutMoyen > 0 ? formatMontant(l.stock * l.coutMoyen) : '—'}
                           </td>
                           <td className="px-3 py-2.5 text-center">
                             {(() => {
@@ -1493,10 +1513,16 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
                           <td className="px-3 py-2.5 text-gray-600 dark:text-gray-400 text-center">
                             {stock.toLocaleString('fr-FR')} <span className="text-xs text-gray-400">{p.unite.toLowerCase()}{stock > 1 ? 's' : ''}</span>
                           </td>
-                          <td className={`px-3 py-2.5 font-medium ${beneficeProduit > 0 ? 'text-green-600' : beneficeProduit < 0 ? 'text-red-500' : 'text-gray-400'} text-center`}>
-                            {stock > 0 ? formatMontant(beneficeProduit) : '—'}
+                          {/* Sans coût, pas de marge : la différence avec
+                              zéro ferait un bénéfice égal au prix de vente,
+                              soit exactement le chiffre faux qu'on cherche à
+                              ne pas afficher. */}
+                          <td className={`px-3 py-2.5 font-medium ${p.coutMoyen <= 0 ? 'text-gray-400' : beneficeProduit > 0 ? 'text-green-600' : beneficeProduit < 0 ? 'text-red-500' : 'text-gray-400'} text-center`}>
+                            {p.coutMoyen > 0 && stock > 0 ? formatMontant(beneficeProduit) : '—'}
                           </td>
-                          <td className="px-3 py-2.5 text-gray-900 dark:text-gray-100 font-medium text-center">{formatMontant(valeurCout(p))}</td>
+                          <td className="px-3 py-2.5 text-gray-900 dark:text-gray-100 font-medium text-center">
+                            {p.coutMoyen > 0 ? formatMontant(valeurCout(p)) : '—'}
+                          </td>
                           <td className="px-3 py-2.5 text-center">
                             <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${s.color}`}>{s.label}</span>
                           </td>
