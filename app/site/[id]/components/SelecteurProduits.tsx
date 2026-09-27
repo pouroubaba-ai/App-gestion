@@ -94,7 +94,8 @@ export default function SelecteurProduits({
   chezDestinataire, nomDestinataire, onCreerProduit,
   vente = false, futur = false,
   produitsNeufs, onCreerGamme,
-  partsFrais, onCorrigerPart, fraisCle, onChangerCleFrais,
+  partsFrais, totalFrais: totalDesFrais, partsImposees, onCorrigerPart,
+  fraisCle, onChangerCleFrais,
 }: Props & {
   /**
    * Créer la marchandise qu'on ne trouve pas, sans quitter le bon.
@@ -138,6 +139,22 @@ export default function SelecteurProduits({
    * frais n'a rien à répartir.
    */
   partsFrais?: number[] | null;
+  /**
+   * Ce qu'il y a à répartir en tout.
+   *
+   * Une part ne peut pas dépasser ce que les autres lignes laissent :
+   * sur 50 000 dont une ligne porte déjà 30 000, une autre ne peut pas
+   * monter à 31 000 — ces mille-là n'existent pas. Le champ a besoin de
+   * ce total pour connaître son plafond.
+   */
+  totalFrais?: number;
+  /**
+   * Les parts posées à la main, par index de ligne.
+   *
+   * Ce sont elles qui bornent : une ligne libre se repartage ce qui
+   * reste, elle ne retient rien.
+   */
+  partsImposees?: Record<number, number> | null;
   /** Poser une part à la main ; celui qui a vu le camion décide. */
   onCorrigerPart?: (index: number, valeur: number) => void;
   /**
@@ -475,6 +492,23 @@ export default function SelecteurProduits({
                l'emballage retenu — on la ramène donc à l'unité de
                saisie avant de l'ajouter. */
             const partFrais = partsFrais?.[i] ?? 0;
+            /* Ce que cette ligne peut porter au plus : tout ce que les
+               autres lignes ne se sont pas vu imposer.
+
+               On compte les parts POSÉES À LA MAIN, pas toutes : les
+               lignes libres se repartagent ce qui reste, donc la somme
+               fait toujours le total, et s'en servir donnerait un
+               plafond égal à la part du moment — la ligne serait gelée,
+               impossible à monter comme à baisser.
+
+               Baisser reste libre, et c'est même le seul moyen de
+               donner davantage à un produit : il faut d'abord retirer
+               ailleurs. */
+            const plafondPart = partsFrais
+              ? Math.max(0, (totalDesFrais ?? 0)
+                  - Object.entries(partsImposees ?? {}).reduce(
+                      (n, [j, v]) => Number(j) === i ? n : n + (v ?? 0), 0))
+              : 0;
             const coutReel = l.quantiteDemandee > 0
               ? l.valeurUnitaire + partFrais / l.quantiteDemandee
               : l.valeurUnitaire;
@@ -488,6 +522,13 @@ export default function SelecteurProduits({
               : Math.round(coutReel);
             const sousLeCout = (l.prixVente ?? 0) > 0
               && l.prixVente! < coutQuiBorne;
+            /* Ce que la ligne ferait perdre en entier, pas à l'unité :
+               177 de moins sur un carton n'alarme personne, les 8 850
+               que font cinquante cartons, si. C'est la quantité qui
+               transforme un écart en perte. */
+            const perteLigne = sousLeCout
+              ? (coutQuiBorne - l.prixVente!) * l.quantiteDemandee
+              : 0;
             /* Ce qu'on n'a pas ne se transfère pas ; une commande, si — on se
                réapprovisionne avant de livrer. Le plafond ne vaut donc que là
                où la marchandise part d'ici aujourd'hui. */
@@ -515,6 +556,17 @@ export default function SelecteurProduits({
                     <span>
                       {l.designation}{l.varianteLibelle ? ` · ${l.varianteLibelle}` : ''}
                     </span>
+                    {/* La perte après le nom, chiffrée : « ce produit est
+                        mal vendu » fait hausser les épaules, « 15 000 de
+                        perte » fait corriger le prix. C'est la ligne
+                        entière qui est comptée — 400 de moins sur un
+                        carton n'alarme personne, les cinquante cartons
+                        qu'on achète, si. */}
+                    {perteLigne > 0 && (
+                      <span className="shrink-0 rounded-full bg-red-100 px-1.5 py-0.5 text-[10px] font-bold text-red-700 dark:bg-red-900/30 dark:text-red-400">
+                        −{formatMontant(perteLigne)}
+                      </span>
+                    )}
                     {/* Né pendant cette saisie : on le voit en relisant son
                         bon, et notamment qu'on vient de créer le doublon
                         d'une référence mal orthographiée. */}
@@ -679,8 +731,8 @@ export default function SelecteurProduits({
                     <>
                       <label className="flex items-center gap-1.5">
                         <span className="text-xs text-gray-400">Part frais</span>
-                        <ChampNombre valeur={partFrais}
-                          onChange={n => onCorrigerPart?.(i, n)}
+                        <ChampNombre valeur={partFrais} max={plafondPart}
+                          onChange={n => onCorrigerPart?.(i, Math.min(n, plafondPart))}
                           className="w-24 rounded-lg border border-gray-200 bg-gray-50 px-2 py-1 text-center text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:border-gray-700 dark:bg-gray-800" />
                       </label>
                       <span className="flex items-center gap-1.5">

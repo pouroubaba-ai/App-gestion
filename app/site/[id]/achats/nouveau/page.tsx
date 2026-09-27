@@ -501,7 +501,8 @@ export default function NouvelAchatPage() {
           onCreerGamme={setGamme}
           produitsNeufs={produitsNeufs}
           coutEditable montrerStock={false} labelCout="Coût d'achat"
-          partsFrais={partsFrais}
+          partsFrais={partsFrais} totalFrais={totalFrais(frais)}
+          partsImposees={fraisCorrection}
           onCorrigerPart={(i, v) =>
             setFraisCorrection(c => ({ ...(c ?? {}), [i]: v }))}
           fraisCle={fraisCle}
