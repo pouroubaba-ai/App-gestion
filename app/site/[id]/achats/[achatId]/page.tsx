@@ -32,7 +32,7 @@ import {
   ArrowLeft, Loader2, CheckCheck, Check, ArrowDownLeft, Clock, Wallet, X, Info, Plus } from 'lucide-react';
 import {
   Achat, EtatAchat, LIBELLES_ACHAT,
-  valeurEnvoyee, valeurRecue, ecartValeur, aUnEcart, lignesEnEcart, confirmerAchat,
+  valeurEnvoyee, valeurRecue, ecartValeur, aUnEcart, lignesEnEcart, confirmerAchat, totalAchat,
   peutConfirmerAchat,
   VersementAchat, peutAnnulerDossier, type Role,
 } from '@/lib/flux-marchandise';
@@ -208,7 +208,11 @@ export default function FicheAchatPage() {
        aucune echeance, et le dossier redemanderait a chaque ouverture. */
     if (!achat || planifDemandee || achat.planifieLe) return;
     if (achat.etat !== 'confirme' || !achat.fournisseurId) return;
-    const du = valeurRecue(achat.lignes) - (achat.avanceVersee ?? 0);
+    /* Ce qu'on doit, frais compris : le transport est dû au même
+       fournisseur, et l'échéance qui l'oublie laisserait une part de la
+       dette sans date. `totalAchat` est la seule façon de compter ce
+       que coûte un achat. */
+    const du = totalAchat(achat) - (achat.avanceVersee ?? 0);
     if (du <= 0) return;
 
     let vivant = true;
