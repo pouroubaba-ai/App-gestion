@@ -17,7 +17,7 @@ import { ChampRecherche } from '@/components/Champs';
 /* Le conditionnement vient de `lib/mouvements` : le redéclarer ici
    laissait les deux diverger, et c'est ce qui est arrivé quand il a
    gagné son lien aux déclinaisons. */
-import type { Emballage } from '@/lib/mouvements';
+import { nomDejaPris, type Emballage } from '@/lib/mouvements';
 
 interface Caracteristique {
   nom: string;
@@ -398,7 +398,7 @@ export default function FicheProduitPage() {
     if (!produit) return;
     const nom = embNom.trim();
     const qte = parseMontant(embQte);
-    if (!nom || qte < 2 || emballages.some(e => e.nom.toLowerCase() === nom.toLowerCase())) return;
+    if (!nom || qte < 2 || nomDejaPris(emballages, nom, embVariantes)) return;
     setSaving(true);
     /* Aucune déclinaison cochée : le conditionnement vaut pour tout le
        produit. C'est ce que portaient tous les emballages avant que la
@@ -1143,7 +1143,7 @@ export default function FicheProduitPage() {
         {modalEmballage && (() => {
           const nom = embNom.trim();
           const qte = parseMontant(embQte);
-          const doublonEmb = !!nom && emballages.some(e => e.nom.toLowerCase() === nom.toLowerCase());
+          const doublonEmb = !!nom && nomDejaPris(emballages, nom, embVariantes);
           return (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
               <div className="bg-white dark:bg-gray-900 rounded-2xl w-full max-w-sm shadow-xl p-5">
@@ -1163,7 +1163,13 @@ export default function FicheProduitPage() {
                       className={`w-full px-3 py-2.5 rounded-xl border bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 ${qte === 1 ? 'border-red-400' : 'border-gray-200 dark:border-gray-700'}`} />
                   </div>
                 </div>
-                {doublonEmb && <p className="text-xs text-red-500 mb-3">Cet emballage existe déjà.</p>}
+                {doublonEmb && (
+                  <p className="text-xs text-red-500 mb-3">
+                    {variantes.length > 0
+                      ? 'Ce nom est déjà pris pour ces déclinaisons.'
+                      : 'Cet emballage existe déjà.'}
+                  </p>
+                )}
                 {qte === 1 && <p className="text-xs text-red-500 mb-3">Un emballage de 1 {uniteLabel}, c&apos;est l&apos;unité elle-même.</p>}
                 {!doublonEmb && qte !== 1 && (
                   <p className="text-xs text-gray-400 mb-3">

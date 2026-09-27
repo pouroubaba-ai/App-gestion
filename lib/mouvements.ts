@@ -112,6 +112,40 @@ export function emballagesDe(
   });
 }
 
+/**
+ * Deux conditionnements peuvent-ils porter le même nom ?
+ *
+ * Oui, tant qu'ils ne se rencontrent jamais. « Carton » vaut 10 pièces
+ * pour le 10W et 6 pour le 30W : c'est le même mot parce que c'est le
+ * même objet, seul son contenu change. Interdire le doublon obligeait à
+ * l'appeler « Carton 30W », ce qui répète dans le nom ce que la colonne
+ * des déclinaisons dit déjà.
+ *
+ * Ce qui reste interdit, c'est qu'une même déclinaison voie deux
+ * « Carton » de contenus différents : le vendeur ne saurait pas lequel
+ * il tient. Un conditionnement commun se heurte donc à tous, et deux
+ * conditionnements réservés ne se heurtent que s'ils partagent une
+ * déclinaison.
+ */
+export function nomDejaPris(
+  emballages: Emballage[] | null | undefined,
+  nom: string,
+  variantes: string[] | null | undefined,
+): boolean {
+  const cherche = nom.trim().toLowerCase();
+  if (!cherche) return false;
+  const miennes = variantes ?? [];
+
+  return (emballages ?? []).some(e => {
+    if (e.nom.trim().toLowerCase() !== cherche) return false;
+    const siennes = e.variantes ?? [];
+    /* L'un des deux vaut pour tout le produit : il croise forcément
+       l'autre, quelle que soit sa portée. */
+    if (miennes.length === 0 || siennes.length === 0) return true;
+    return miennes.some(v => siennes.includes(v));
+  });
+}
+
 /** Convertit une quantité exprimée dans un emballage en unités de base. */
 export function enUnitesBase(
   quantite: number, nomEmballage: string | null | undefined,
