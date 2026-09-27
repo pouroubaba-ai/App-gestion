@@ -15,7 +15,8 @@ import { formatMontant } from '@/lib/format';
 import { Loader2, Check, ShoppingCart } from 'lucide-react';
 import PanneauFrais from '../../components/PanneauFrais';
 import {
-  totalFrais, controlerRepartition, type Frais,
+  totalFrais, controlerRepartition, repartirFrais,
+  CLE_PAR_DEFAUT, type Frais, type CleRepartition,
 } from '@/lib/frais';
 import SelecteurProduits, { ProduitChoisissable } from '../../components/SelecteurProduits';
 import { LigneFlux, referenceFlux } from '@/lib/flux-marchandise';
@@ -86,6 +87,10 @@ export default function NouvelAchatPage() {
   const [frais, setFrais] = useState<Frais[]>([]);
   const [fraisCorrection, setFraisCorrection] =
     useState<Record<number, number> | null>(null);
+  /* La règle de partage vaut pour tout l'achat : un même camion ne se
+     partage pas autrement selon qu'on regarde le transport ou la
+     manutention. */
+  const [fraisCle, setFraisCle] = useState<CleRepartition>(CLE_PAR_DEFAUT);
   const [enCours, setEnCours] = useState(false);
   const [erreur, setErreur] = useState('');
 
@@ -277,7 +282,14 @@ export default function NouvelAchatPage() {
   /* Les frais se posent en entier, ou le dossier ne s'enregistre pas :
      un frais à moitié réparti fait disparaître de l'argent du coût. */
   const controleFrais = controlerRepartition(
-    lignes as any, frais, fraisCorrection);
+    lignes as any, frais, fraisCorrection, fraisCle);
+
+  /* Ce que chaque ligne porte des frais. Calculé ici pour être passé à
+     la marchandise, qui l'affiche à côté du prix : c'est là que se juge
+     ce que le transport fait à une marge. */
+  const partsFrais = totalFrais(frais) > 0
+    ? repartirFrais(lignes as any, frais, fraisCorrection, fraisCle)
+    : null;
   /* Payer d'avance plus que le total commandé n'a pas de sens : le trop-perçu
      n'aurait aucune contrepartie. On borne au lieu d'accepter puis corriger. */
   const avanceExcessive = verse > total;
@@ -331,6 +343,7 @@ export default function NouvelAchatPage() {
            stock. Sa part sur chaque produit se déduit à la lecture. */
         frais: frais.filter(f => f.montant > 0),
         fraisCorrection,
+        fraisCle,
         dateCommande: dateFinale,
         dateReception: immediat ? dateFinale : null,
         parCommande: user!.uid,
@@ -488,10 +501,22 @@ export default function NouvelAchatPage() {
           onCreerGamme={setGamme}
           produitsNeufs={produitsNeufs}
           coutEditable montrerStock={false} labelCout="Coût d'achat"
+          partsFrais={partsFrais}
+          onCorrigerPart={(i, v) =>
+            setFraisCorrection(c => ({ ...(c ?? {}), [i]: v }))}
+          fraisCle={fraisCle}
+          onChangerCleFrais={c => {
+            setFraisCle(c);
+            /* Changer la règle refait toute la répartition : les parts
+               posées à la main désignaient l'ancienne, les garder
+               mélangerait deux calculs. */
+            setFraisCorrection(null);
+          }}
         />
 
         <PanneauFrais
           frais={frais} lignes={lignes as any} correction={fraisCorrection}
+          cle={fraisCle}
           onChange={f => {
             setFrais(f);
             /* Le total vient de changer : un versé devenu excessif se

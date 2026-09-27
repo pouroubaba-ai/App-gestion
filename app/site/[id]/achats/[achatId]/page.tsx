@@ -4,7 +4,10 @@ import { doc, getDoc, updateDoc, collection, query, where, getDocs } from 'fireb
 import { db } from '@/lib/firebase';
 import { produitsDuSite } from '@/lib/produits-site';
 import PanneauFrais from '../../components/PanneauFrais';
-import { totalFrais, controlerRepartition, type Frais } from '@/lib/frais';
+import {
+  totalFrais, controlerRepartition, repartirFrais,
+  CLE_PAR_DEFAUT, type Frais, type CleRepartition,
+} from '@/lib/frais';
 import { useAuth } from '@/lib/auth-context';
 import { ecrireEnCaisse } from '@/lib/ecrire-caisse';
 import { chargerDisponible } from '@/lib/attente-caisse';
@@ -128,6 +131,8 @@ export default function FicheAchatPage() {
     useState<Record<number, number> | null>(null);
   /* Ce qui a changé et n'est pas encore inscrit. */
   const [fraisSales, setFraisSales] = useState(false);
+  /* La règle de partage du dossier : celle qui a pondéré les coûts. */
+  const [fraisCle, setFraisCle] = useState<CleRepartition>(CLE_PAR_DEFAUT);
   const [enCours, setEnCours] = useState(false);
   const [erreur, setErreur] = useState('');
   const [retour, setRetour] = useState<number | null>(null);
@@ -233,6 +238,7 @@ export default function FicheAchatPage() {
         if (!sale) {
           setFrais(a.frais ?? []);
           setFraisCorrection(a.fraisCorrection ?? null);
+          setFraisCle(a.fraisCle ?? CLE_PAR_DEFAUT);
         }
         return sale;
       });
@@ -308,6 +314,7 @@ export default function FicheAchatPage() {
       await updateDoc(doc(db, 'achats', achat.id), {
         frais: frais.filter(f => f.montant > 0),
         fraisCorrection,
+        fraisCle,
       });
       setFraisSales(false);
       await charger();
@@ -359,6 +366,14 @@ export default function FicheAchatPage() {
      des ventes qui ont eu lieu. Un dossier annulé ne bouge plus non
      plus. */
   const fraisModifiables = achat.etat !== 'confirme' && achat.etat !== 'annule';
+
+  /* Ce que chaque ligne porte des frais, pour le tableau de la
+     marchandise. On lit les frais en cours de saisie plutôt que ceux du
+     dossier : tant qu'on modifie, le tableau doit montrer ce qu'on est
+     en train de décider, pas ce qui était inscrit avant. */
+  const partsFrais = totalFrais(frais) > 0
+    ? repartirFrais(achat.lignes, frais, fraisCorrection, fraisCle)
+    : null;
 
   /* La marchandise est arrivée : on le constate, on ne compte pas encore. */
   async function receptionner() {
@@ -868,6 +883,14 @@ export default function FicheAchatPage() {
                   <th className="text-center px-3 py-2.5 font-medium">Reçu</th>
                   {montreArgent && <>
                     <th className="text-center px-3 py-2.5 font-medium">Coût unitaire</th>
+                    {/* Ce que la ligne porte du transport, et ce qu'elle
+                        coûte une fois qu'il est dedans. Absentes quand
+                        l'achat n'a pas de frais : deux colonnes vides
+                        feraient chercher ce qui manque. */}
+                    {partsFrais && <>
+                      <th className="text-center px-3 py-2.5 font-medium">Part frais</th>
+                      <th className="text-center px-3 py-2.5 font-medium">Coût réel</th>
+                    </>}
                     <th className="text-center px-3 py-2.5 font-medium">Total</th>
                   </>}
                   {/* Les actions ont leur place : serrées sous le chiffre reçu,
@@ -939,6 +962,24 @@ export default function FicheAchatPage() {
                       </td>
                       {montreArgent && <>
                         <td className="px-3 py-2.5 text-center text-gray-500">{formatMontant(l.valeurUnitaire)}</td>
+                        {partsFrais && (() => {
+                          const part = partsFrais[i] ?? 0;
+                          /* Le coût rendu en rayon : c'est lui qui a
+                             pondéré le coût moyen, pas le prix facturé. */
+                          const reel = qte > 0
+                            ? l.valeurUnitaire + part / qte
+                            : l.valeurUnitaire;
+                          return (
+                            <>
+                              <td className="px-3 py-2.5 text-center text-gray-500">
+                                {formatMontant(part)}
+                              </td>
+                              <td className="px-3 py-2.5 text-center font-bold text-gray-900 dark:text-gray-100">
+                                {formatMontant(Math.round(reel))}
+                              </td>
+                            </>
+                          );
+                        })()}
                         <td className="px-3 py-2.5 text-center font-medium text-gray-900 dark:text-gray-100">
                           {formatMontant(qte * l.valeurUnitaire)}
                         </td>
@@ -1091,7 +1132,7 @@ export default function FicheAchatPage() {
           <>
             <PanneauFrais
               frais={frais} lignes={achat.lignes} correction={fraisCorrection}
-              lectureSeule={!fraisModifiables}
+              cle={fraisCle} lectureSeule={!fraisModifiables}
               onChange={f => { setFrais(f); setFraisSales(true); }}
               onCorriger={c => { setFraisCorrection(c); setFraisSales(true); }} />
 
@@ -1103,6 +1144,7 @@ export default function FicheAchatPage() {
                   onClick={() => {
                     setFrais(achat.frais ?? []);
                     setFraisCorrection(achat.fraisCorrection ?? null);
+                    setFraisCle(achat.fraisCle ?? CLE_PAR_DEFAUT);
                     setFraisSales(false);
                   }}
                   className="rounded-xl border border-gray-200 px-3 py-2 text-xs font-bold text-gray-500 transition-colors hover:bg-gray-50 disabled:opacity-40 dark:border-gray-700 dark:hover:bg-gray-800">
@@ -1110,7 +1152,7 @@ export default function FicheAchatPage() {
                 </button>
                 <button type="button" onClick={enregistrerFrais}
                   disabled={enCours || !controlerRepartition(
-                    achat.lignes, frais, fraisCorrection).juste}
+                    achat.lignes, frais, fraisCorrection, fraisCle).juste}
                   className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-3 py-2 text-xs font-bold text-white transition-colors hover:bg-indigo-700 disabled:opacity-40">
                   {enCours ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
                   Inscrire les frais

@@ -6,6 +6,7 @@ import {
   Trash2, Package, Info, Plus, Minus, BarChart3, Loader2, Settings2,
 } from 'lucide-react';
 import { ChampRecherche, ChampNombre } from '@/components/Champs';
+import { LIBELLES_REPARTITION, type CleRepartition } from '@/lib/frais';
 import type { LigneFlux } from '@/lib/flux-marchandise';
 import ModalMargeRecu from './ModalMargeRecu';
 
@@ -93,6 +94,7 @@ export default function SelecteurProduits({
   chezDestinataire, nomDestinataire, onCreerProduit,
   vente = false, futur = false,
   produitsNeufs, onCreerGamme,
+  partsFrais, onCorrigerPart, fraisCle, onChangerCleFrais,
 }: Props & {
   /**
    * Créer la marchandise qu'on ne trouve pas, sans quitter le bon.
@@ -122,6 +124,31 @@ export default function SelecteurProduits({
    * quoi décrire ce qui varie, et rend toutes les déclinaisons d'un coup.
    */
   onCreerGamme?: (designation: string) => void;
+  /**
+   * Ce que chaque ligne porte des frais d'approche, dans l'ordre des
+   * lignes.
+   *
+   * La part se lit sur la marchandise plutôt que dans un tableau à
+   * part : c'est là qu'on voit le prix d'achat et le prix de vente,
+   * donc c'est là que se juge ce que le transport en fait. Un tableau
+   * séparé obligeait à lire deux fois la même ligne pour comprendre
+   * une seule marge.
+   *
+   * Absent, la ligne ne montre ni part ni coût réel : un achat sans
+   * frais n'a rien à répartir.
+   */
+  partsFrais?: number[] | null;
+  /** Poser une part à la main ; celui qui a vu le camion décide. */
+  onCorrigerPart?: (index: number, valeur: number) => void;
+  /**
+   * La règle de partage, commune à tous les frais de l'achat.
+   *
+   * Elle se règle sur la ligne de recherche, au-dessus de la
+   * marchandise : c'est elle qui décide de ce que chaque ligne en
+   * dessous affichera.
+   */
+  fraisCle?: CleRepartition | null;
+  onChangerCleFrais?: (cle: CleRepartition) => void;
 }) {
   /* La création en cours : le nom qu'on vient de taper, et l'attente
      pendant que le produit naît. */
@@ -274,8 +301,15 @@ export default function SelecteurProduits({
       </div>
 
       {/* La recherche est la seule porte d'entrée : la liste s'ouvre à la
-          frappe et se referme au choix. */}
-      <ChampRecherche className="mb-4" placeholder="Rechercher un produit…"
+          frappe et se referme au choix.
+
+          La règle de partage des frais se tient à côté : elle vaut pour
+          tout l'achat, et elle décide de la part que chaque ligne en
+          dessous affichera. La poser ici, au-dessus de la marchandise,
+          la met là où se lit son effet. */}
+      <div className="mb-4 flex flex-wrap items-start gap-2">
+      <div className="min-w-[200px] flex-1">
+      <ChampRecherche placeholder="Rechercher un produit…"
         valeur={recherche}
         onChange={v => { setRecherche(v); setSurvol(0); }}
         onKeyDown={e => {
@@ -358,6 +392,19 @@ export default function SelecteurProduits({
             ))}
           </div>
         ) : undefined} />
+      </div>
+      {/* Visible seulement s'il y a des frais : sans montant à
+          répartir, la règle ne décide de rien. */}
+      {onChangerCleFrais && partsFrais && (
+        <select value={fraisCle ?? 'valeur'}
+          onChange={e => onChangerCleFrais(e.target.value as CleRepartition)}
+          className="shrink-0 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2.5 text-xs font-medium text-gray-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300">
+          {(Object.keys(LIBELLES_REPARTITION) as CleRepartition[]).map(c => (
+            <option key={c} value={c}>{LIBELLES_REPARTITION[c]}</option>
+          ))}
+        </select>
+      )}
+      </div>
 
       {lignes.length === 0 ? (
         <div className="py-12 text-center">
@@ -419,9 +466,26 @@ export default function SelecteurProduits({
                Le champ remonte au plancher plutôt que d'interdire l'envoi :
                bloquer laissait l'utilisateur devant un bouton éteint sans
                lui dire quoi taper. */
+            /* Ce que la ligne porte du transport, et ce qu'elle coûte
+               une fois qu'il est dedans. C'est ce chiffre-là qui
+               pondérera le coût moyen : le prix facturé ne dit pas ce
+               que la marchandise a coûté rendue en rayon.
+
+               La part vaut pour toute la ligne, le coût se lit dans
+               l'emballage retenu — on la ramène donc à l'unité de
+               saisie avant de l'ajouter. */
+            const partFrais = partsFrais?.[i] ?? 0;
+            const coutReel = l.quantiteDemandee > 0
+              ? l.valeurUnitaire + partFrais / l.quantiteDemandee
+              : l.valeurUnitaire;
+
+            /* Vendre sous son coût, c'est perdre à chaque unité — et le
+               transport suffit à faire passer une marge sous zéro sans
+               que rien ne le dise. C'est le coût réel qui borne, pas le
+               prix facturé. */
             const coutQuiBorne = coutChezLui != null
               ? Math.round(coutChezLui * contenance)
-              : l.valeurUnitaire;
+              : Math.round(coutReel);
             const sousLeCout = (l.prixVente ?? 0) > 0
               && l.prixVente! < coutQuiBorne;
             /* Ce qu'on n'a pas ne se transfère pas ; une commande, si — on se
@@ -602,6 +666,30 @@ export default function SelecteurProduits({
                         onChange={n => majLigne(i, { valeurUnitaire: n })}
                         className="w-24 px-2 py-1 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-xs text-center focus:outline-none focus:ring-2 focus:ring-indigo-500" />
                     </label>
+                  )}
+
+                  {/* Ce que cette ligne porte des frais, et ce qu'elle
+                      coûte une fois qu'ils sont dedans.
+
+                      La part se corrige à la main : la règle donne une
+                      base juste, celui qui a vu le camion garde le
+                      dernier mot. Le coût réel suit sans se saisir —
+                      c'est une conséquence, pas une décision. */}
+                  {partsFrais && (
+                    <>
+                      <label className="flex items-center gap-1.5">
+                        <span className="text-xs text-gray-400">Part frais</span>
+                        <ChampNombre valeur={partFrais}
+                          onChange={n => onCorrigerPart?.(i, n)}
+                          className="w-24 rounded-lg border border-gray-200 bg-gray-50 px-2 py-1 text-center text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:border-gray-700 dark:bg-gray-800" />
+                      </label>
+                      <span className="flex items-center gap-1.5">
+                        <span className="text-xs text-gray-400">Coût réel</span>
+                        <span className="w-24 rounded-lg border border-transparent bg-gray-100 px-2 py-1 text-center text-xs font-bold tabular-nums text-gray-900 dark:bg-gray-800 dark:text-gray-100">
+                          {formatMontant(Math.round(coutReel))}
+                        </span>
+                      </span>
+                    </>
                   )}
 
                   {/* En transfert, le prix qu'on pose est celui que le

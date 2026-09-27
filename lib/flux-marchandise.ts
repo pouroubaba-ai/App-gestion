@@ -9,7 +9,8 @@ import {
 import { coutMoyenApresEntree, enUnitesBase } from '@/lib/mouvements';
 import { lireParSite, lireDocs, type Portee } from '@/lib/portee';
 import {
-  repartirFrais, totalFrais, controlerRepartition, type Frais,
+  repartirFrais, totalFrais, controlerRepartition,
+  type Frais, type CleRepartition,
 } from '@/lib/frais';
 
 /**
@@ -448,6 +449,14 @@ export interface Achat {
    * reste se partage entre les autres lignes.
    */
   fraisCorrection?: Record<number, number> | null;
+  /**
+   * La règle de partage des frais, commune à tout l'achat.
+   *
+   * Elle est enregistrée avec le dossier : relire une facture confirmée
+   * doit rendre exactement les parts qui ont pondéré les coûts moyens,
+   * et non celles qu'un réglage changé depuis donnerait.
+   */
+  fraisCle?: CleRepartition | null;
   dateCommande: string;
   dateReception?: string | null;
   dateConfirmation?: string | null;
@@ -1123,7 +1132,7 @@ export async function confirmerAchat(params: {
    * La garde est ici et pas seulement sur le bouton : un écran peut être
    * contourné, l'écriture non. */
   const controle = controlerRepartition(
-    achat.lignes, achat.frais, achat.fraisCorrection);
+    achat.lignes, achat.frais, achat.fraisCorrection, achat.fraisCle);
   if (!controle.juste) {
     throw new Error(controle.motif ?? 'Les frais ne se répartissent pas en entier.');
   }
@@ -1143,7 +1152,8 @@ export async function confirmerAchat(params: {
      manutention. La part se déduit des frais et des quantités reçues —
      elle n'est écrite nulle part, sinon la première quantité corrigée la
      contredirait. */
-  const parts = repartirFrais(achat.lignes, achat.frais, achat.fraisCorrection);
+  const parts = repartirFrais(
+    achat.lignes, achat.frais, achat.fraisCorrection, achat.fraisCle);
 
   for (const [i, l] of achat.lignes.entries()) {
     const qte = l.quantiteRecue ?? 0;

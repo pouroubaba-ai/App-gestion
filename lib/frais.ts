@@ -31,19 +31,33 @@ export interface Frais {
   libelle: string;
   montant: number;
   /**
-   * La règle de partage.
+   * La règle de partage, du temps où chaque frais avait la sienne.
    *
-   * La valeur par défaut : elle ne demande rien à saisir, ne peut pas
-   * donner de résultat absurde, et garde le taux de marge cohérent d'un
-   * produit à l'autre — un article cher porte plus de frais, mais il
-   * rapporte plus.
+   * Elle ne se saisit plus : la clé vaut pour la répartition entière.
+   * Un camion qui monte trois palettes ne se partage pas autrement
+   * selon qu'on regarde le transport ou la manutention — c'est le même
+   * voyage, et laisser deux règles cohabiter donnait deux répartitions
+   * à vérifier là où il n'y a qu'une facture.
    *
-   * La quantité convient quand les articles se ressemblent. Sur un
-   * catalogue où les prix vont de cinq cents à vingt mille, elle ferait
-   * porter autant à une ampoule qu'à une balance.
+   * Le champ reste lu sur les dossiers déjà enregistrés, qui le
+   * portaient ligne par ligne.
    */
-  cle: CleRepartition;
+  cle?: CleRepartition;
 }
+
+/**
+ * La règle de partage d'un achat.
+ *
+ * La valeur par défaut : elle ne demande rien à saisir, ne peut pas
+ * donner de résultat absurde, et garde le taux de marge cohérent d'un
+ * produit à l'autre — un article cher porte plus de frais, mais il
+ * rapporte plus.
+ *
+ * La quantité convient quand les articles se ressemblent. Sur un
+ * catalogue où les prix vont de cinq cents à vingt mille, elle ferait
+ * porter autant à une ampoule qu'à une balance.
+ */
+export const CLE_PAR_DEFAUT: CleRepartition = 'valeur';
 
 /** Ce qu'une ligne pèse, selon la clé choisie. */
 function poids(l: LigneFlux, cle: CleRepartition): number {
@@ -70,6 +84,13 @@ export function repartirFrais(
   frais: Frais[] | null | undefined,
   /** une part imposée à la main, par index de ligne */
   correction?: Record<number, number> | null,
+  /**
+   * La règle de partage de l'achat. Absente, on relit celle que chaque
+   * frais portait — les dossiers enregistrés avant que la clé devienne
+   * commune doivent rendre les mêmes parts qu'au jour de leur
+   * confirmation.
+   */
+  cleGlobale?: CleRepartition | null,
 ): number[] {
   const parts = lignes.map(() => 0);
   const total = (frais ?? []).reduce((n, f) => n + (f.montant ?? 0), 0);
@@ -98,18 +119,19 @@ export function repartirFrais(
   for (const f of frais ?? []) {
     const m = f.montant ?? 0;
     if (m <= 0) continue;
+    const cle = cleGlobale ?? f.cle ?? CLE_PAR_DEFAUT;
     /* La part de ce frais dans ce qui reste à répartir. */
     const m2 = Math.round(m * restant / total);
-    const poidsTotal = libres.reduce((n, i) => n + poids(lignes[i], f.cle), 0);
+    const poidsTotal = libres.reduce((n, i) => n + poids(lignes[i], cle), 0);
     if (poidsTotal <= 0) continue;
 
     let pose = 0;
     let plusLourde = libres[0];
     for (const i of libres) {
-      const part = Math.floor(m2 * poids(lignes[i], f.cle) / poidsTotal);
+      const part = Math.floor(m2 * poids(lignes[i], cle) / poidsTotal);
       parts[i] += part;
       pose += part;
-      if (poids(lignes[i], f.cle) > poids(lignes[plusLourde], f.cle)) plusLourde = i;
+      if (poids(lignes[i], cle) > poids(lignes[plusLourde], cle)) plusLourde = i;
     }
     /* Le reste de l'arrondi, à la ligne la plus lourde : c'est elle qui
        l'aurait porté si on avait pu couper le franc. */
@@ -139,6 +161,7 @@ export function controlerRepartition(
   lignes: LigneFlux[],
   frais: Frais[] | null | undefined,
   correction?: Record<number, number> | null,
+  cleGlobale?: CleRepartition | null,
 ): { juste: boolean; reparti: number; total: number; motif?: string } {
   const total = totalFrais(frais);
 
@@ -171,7 +194,7 @@ export function controlerRepartition(
     };
   }
 
-  const parts = repartirFrais(lignes, frais, correction);
+  const parts = repartirFrais(lignes, frais, correction, cleGlobale);
   const reparti = parts.reduce((n, p) => n + p, 0);
 
   if (reparti !== total) {
