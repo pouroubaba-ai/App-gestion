@@ -4,6 +4,7 @@ import {
 import { db } from './firebase';
 import type { RoleTiers } from './soldes';
 import { valeurRecue, valeurVente } from './flux-marchandise';
+import { totalFrais } from './frais';
 
 /**
  * Répartir un versement sur les factures, de la plus ancienne à la plus
@@ -49,9 +50,13 @@ interface Ouvert {
  * de compter la même chose finissent toujours par se contredire — on
  * réutilise celles qui font foi.
  */
-function valeurLignes(lignes: any[], role: RoleTiers): number {
+function valeurLignes(
+  lignes: any[], role: RoleTiers, dossier?: any,
+): number {
+  /* Côté fournisseur, les frais d'approche font partie de la dette :
+     ils lui sont dus au même titre que la marchandise. */
   return role === 'fournisseur'
-    ? valeurRecue(lignes ?? [])
+    ? valeurRecue(lignes ?? []) + totalFrais(dossier?.frais)
     : valeurVente(lignes ?? []);
 }
 

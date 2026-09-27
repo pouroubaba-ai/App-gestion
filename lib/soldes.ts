@@ -1,6 +1,6 @@
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from './firebase';
-import { valeurRecue, valeurVente } from './flux-marchandise';
+import { valeurRecue, valeurVente, totalAchat } from './flux-marchandise';
 import { lireParSite, type Portee } from '@/lib/portee';
 
 /**
@@ -129,8 +129,10 @@ export async function soldesDuSite(siteId: Portee): Promise<SoldesParRole> {
     /* `avanceVersee` ne porte que de l'argent : un retour n'y entre
        plus. Le retirer une seconde fois le comptait deux fois. */
     const parRet = parRetour.get(d.id) ?? 0;
+    /* Frais compris : le transport est dû au même fournisseur, et
+       l'omettre soldait un dossier qu'il restait à payer. */
     cumuler(fournisseur, a.fournisseurId,
-      valeurRecue(a.lignes ?? []),
+      totalAchat(a),
       a.avanceVersee ?? 0,
       a.dateConfirmation ?? a.dateReception ?? a.dateCommande ?? null,
       parRet);

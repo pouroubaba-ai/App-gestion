@@ -8,6 +8,9 @@ import {
 } from '@/lib/produits-site';
 import { coutMoyenApresEntree, enUnitesBase } from '@/lib/mouvements';
 import { lireParSite, lireDocs, type Portee } from '@/lib/portee';
+import {
+  repartirFrais, totalFrais, controlerRepartition, type Frais,
+} from '@/lib/frais';
 
 /**
  * Transferts et achats partagent le même automate : un engagement est pris,
@@ -424,6 +427,27 @@ export interface Achat {
   versements?: VersementAchat[];
   /** rendu en caisse à la confirmation quand l'avance dépasse le reçu */
   retourCaisse?: number;
+  /**
+   * Ce qu'il a fallu payer en plus pour que la marchandise arrive :
+   * transport, douane, manutention.
+   *
+   * Dû au même fournisseur — il livre et facture ensemble. Le montant
+   * s'ajoute donc à ce qu'on lui doit, et se répartit sur les produits
+   * pour entrer dans leur coût. Un service, pas de la marchandise :
+   * aucune quantité n'entre au stock.
+   *
+   * Modifiable jusqu'à la confirmation. Après, le coût moyen en porte la
+   * trace et le changer réécrirait des marges déjà figées.
+   */
+  frais?: Frais[] | null;
+  /**
+   * Une part imposée à la main, par index de ligne.
+   *
+   * La règle donne une base juste ; celui qui a vu le camion sait qu'une
+   * tôle encombre plus qu'un carton d'ampoules de même valeur. Ce qui
+   * reste se partage entre les autres lignes.
+   */
+  fraisCorrection?: Record<number, number> | null;
   dateCommande: string;
   dateReception?: string | null;
   dateConfirmation?: string | null;
@@ -523,6 +547,26 @@ export function valeurEnvoyee(lignes: LigneFlux[]): number {
 /** Ce que le destinataire déclare avoir reçu ; 0 tant qu'il n'a pas compté. */
 export function valeurRecue(lignes: LigneFlux[]): number {
   return lignes.reduce((s, l) => s + valeurLigne(l, l.quantiteRecue), 0);
+}
+
+/**
+ * Ce qu'un achat doit au fournisseur : la marchandise et ce qui l'a
+ * amenée.
+ *
+ * Le transport est dû au même fournisseur — il livre et facture
+ * ensemble. Le laisser hors du total ferait afficher une dette inférieure
+ * à ce qu'on doit vraiment, et un dossier soldé alors qu'il reste le
+ * transport à payer.
+ *
+ * Toute lecture de ce que coûte un achat passe par ici : la fiche, les
+ * soldes, l'imputation d'un versement. Deux façons de compter la même
+ * chose finissent toujours par se contredire.
+ */
+export function totalAchat(achat: {
+  lignes?: LigneFlux[] | null;
+  frais?: Frais[] | null;
+}): number {
+  return valeurRecue(achat.lignes ?? []) + totalFrais(achat.frais);
 }
 
 /**
@@ -1070,6 +1114,20 @@ export async function confirmerAchat(params: {
     throw new Error('Cet achat ne peut plus être confirmé.');
   }
 
+  /* Les frais se posent entièrement, ou le dossier ne se confirme pas.
+   *
+   * Un frais à moitié réparti fait disparaître de l'argent : la dette le
+   * porte, le coût des produits ne le porte pas, et la marge annoncée
+   * est fausse de la différence. Rien à l'écran ne le dirait.
+   *
+   * La garde est ici et pas seulement sur le bouton : un écran peut être
+   * contourné, l'écriture non. */
+  const controle = controlerRepartition(
+    achat.lignes, achat.frais, achat.fraisCorrection);
+  if (!controle.juste) {
+    throw new Error(controle.motif ?? 'Les frais ne se répartissent pas en entier.');
+  }
+
   const date = new Date().toISOString().split('T')[0];
   const recu = valeurRecue(achat.lignes);
   /* l'avance non consommée revient en caisse ; jamais négatif */
@@ -1081,15 +1139,36 @@ export async function confirmerAchat(params: {
     siteId: achat.siteId, produitId: l.produitId,
   })));
 
-  for (const l of achat.lignes) {
+  /* Ce que chaque ligne porte du transport, de la douane, de la
+     manutention. La part se déduit des frais et des quantités reçues —
+     elle n'est écrite nulle part, sinon la première quantité corrigée la
+     contredirait. */
+  const parts = repartirFrais(achat.lignes, achat.frais, achat.fraisCorrection);
+
+  for (const [i, l] of achat.lignes.entries()) {
     const qte = l.quantiteRecue ?? 0;
     if (qte <= 0) continue;
+
+    /* Le coût qui entre au rayon, frais compris.
+     *
+     * C'est lui qui pondère le coût moyen, pas le prix facturé : une
+     * marchandise achetée 100 000 et transportée pour 10 000 a coûté
+     * 110 000. Revendue 110 000 elle ne rapporte rien — et sans les
+     * frais dans le coût, l'écran annoncerait 10 000 de bénéfice.
+     *
+     * La part est exprimée en unités de base ; `valeurUnitaire` est dans
+     * l'emballage saisi. On divise donc par la quantité dans ce même
+     * emballage, pour que les deux s'additionnent. */
+    const part = parts[i] ?? 0;
+    const coutLigne = part > 0
+      ? l.valeurUnitaire + part / qte
+      : l.valeurUnitaire;
 
     await appliquerLigne(batch, {
       siteId: achat.siteId, userId: params.userId,
       produitId: l.produitId, varianteCle: l.varianteCle,
       sens: 'entree', motif: 'achat', date,
-      quantite: qte, emballage: l.emballage, valeurUnitaire: l.valeurUnitaire,
+      quantite: qte, emballage: l.emballage, valeurUnitaire: coutLigne,
       partenaireId: achat.fournisseurId ?? null,
       partenaireNom: achat.fournisseurNom,
       documentId: achat.id,
