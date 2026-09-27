@@ -519,7 +519,8 @@ service cloud.firestore {
           'employes', 'employe_avances', 'employe_avance_configs',
           'employe_prelevements', 'employe_remunerations',
           'employe_rem_configs', 'employe_rem_assignations',
-          'employe_versements'
+          'employe_versements',
+          'vente_montants_configs'
         ]
         && travailleSur(resource.data.get('siteId', ''));
 
@@ -538,7 +539,8 @@ service cloud.firestore {
           'employes', 'employe_avances', 'employe_avance_configs',
           'employe_prelevements', 'employe_remunerations',
           'employe_rem_configs', 'employe_rem_assignations',
-          'employe_versements'
+          'employe_versements',
+          'vente_montants_configs'
         ]
         && travailleSur(siteEnvoye());
 
@@ -552,7 +554,8 @@ service cloud.firestore {
           'employes', 'employe_avances', 'employe_avance_configs',
           'employe_prelevements', 'employe_remunerations',
           'employe_rem_configs', 'employe_rem_assignations',
-          'employe_versements'
+          'employe_versements',
+          'vente_montants_configs'
         ]
         && travailleSur(siteDuDoc());
     }

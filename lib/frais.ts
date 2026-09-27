@@ -18,12 +18,13 @@ import type { LigneFlux } from './flux-marchandise';
  * voit que l'effet sur le coût. Le même montant, deux lectures.
  */
 
-/** Comment un frais se partage entre les produits. */
-export type CleRepartition = 'valeur' | 'quantite';
+/** Comment un montant se partage entre les produits. */
+export type CleRepartition = 'valeur' | 'quantite' | 'marge';
 
 export const LIBELLES_REPARTITION: Record<CleRepartition, string> = {
   valeur: 'Au prorata de la valeur',
   quantite: 'Au prorata de la quantité',
+  marge: 'Au prorata de la marge',
 };
 
 export interface Frais {
@@ -59,11 +60,27 @@ export interface Frais {
  */
 export const CLE_PAR_DEFAUT: CleRepartition = 'valeur';
 
-/** Ce qu'une ligne pèse, selon la clé choisie. */
+/**
+ * Ce qu'une ligne pèse, selon la clé choisie.
+ *
+ * `marge` est la clé des ventes : la ligne porte à hauteur de ce qu'elle
+ * peut céder sans passer sous son coût. Au prorata de la valeur, une
+ * remise de 20 % coule d'abord les produits à faible marge — la vis à
+ * 6 % de marge tombe sous son coût pendant que le bon reste
+ * bénéficiaire. Au prorata de la marge, chacun cède ce qu'il a, et
+ * l'encaissement est rigoureusement le même.
+ *
+ * Une ligne sans marge ne pèse rien : lui donner une part la ferait
+ * vendre à perte pour soulager une autre.
+ */
 function poids(l: LigneFlux, cle: CleRepartition): number {
   const qte = l.quantiteRecue ?? l.quantiteDemandee ?? 0;
   if (qte <= 0) return 0;
-  return cle === 'quantite' ? qte : qte * (l.valeurUnitaire ?? 0);
+  if (cle === 'quantite') return qte;
+  if (cle === 'marge') {
+    return Math.max(0, qte * ((l.prixVente ?? 0) - (l.valeurUnitaire ?? 0)));
+  }
+  return qte * (l.valeurUnitaire ?? 0);
 }
 
 /**

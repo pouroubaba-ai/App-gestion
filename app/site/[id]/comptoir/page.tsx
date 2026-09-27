@@ -27,9 +27,14 @@ import {
 import { ChampRecherche, ChampNombre, SelectCherchable } from '@/components/Champs';
 import type { ProduitChoisissable } from '../components/SelecteurProduits';
 import ModalMargeRecu from '../components/ModalMargeRecu';
+import PanneauMontants from '../components/PanneauMontants';
+import {
+  prixApresMontants, piedDocument,
+  type MontantVente,
+} from '@/lib/reductions';
 import {
   Loader2, Plus, Minus, Trash2, Check, ArrowLeft, ShoppingCart, Package, X, Info,
-  BarChart3, WifiOff,
+  BarChart3, WifiOff, Percent,
 } from 'lucide-react';
 
 interface ClientBref { id: string; nom: string }
@@ -219,6 +224,10 @@ export default function ComptoirPage() {
   const [detail, setDetail] = useState<string | null>(null);
   /* Ce que le reçu rapporte et ce qu'il coûte, quand on veut le savoir. */
   const [marge, setMarge] = useState(false);
+  /* Les remises et frais du reçu. Rien n'est posé par défaut : au
+     comptoir la remise est l'exception, pas la règle. */
+  const [montants, setMontants] = useState<MontantVente[]>([]);
+  const [montantsOuverts, setMontantsOuverts] = useState(false);
 
   /* Le bouton caché n'empêche pas d'ouvrir l'adresse : la page se garde
      elle-même. */
@@ -337,16 +346,37 @@ export default function ComptoirPage() {
     });
   }, [articles, recherche, categorie]);
 
-  const total = panier.reduce((s, l) => s + l.quantiteDemandee * (l.prixVente ?? 0), 0);
+  /* Le sous-total : la marchandise au prix du catalogue. C'est la base
+     des pourcentages, jamais un total qui porterait déjà une remise. */
+  const sousTotal = panier.reduce(
+    (s, l) => s + l.quantiteDemandee * (l.prixVente ?? 0), 0);
+
+  /* Les prix après réduction et frais annexes. Un seul calcul, le même
+     que le cycle de vente : deux façons de répartir le même geste
+     finiraient par se contredire, et c'est la marge qui mentirait. */
+  const { prix: prixReels } = prixApresMontants(panier as any, montants);
+  /* Ce qu'on encaisse vraiment. Les prix rendus SONT les prix de vente :
+     c'est eux qui partent au mouvement, donc eux qui font le total. */
+  const total = panier.reduce(
+    (s, l, i) => s + l.quantiteDemandee * (prixReels[i] ?? l.prixVente ?? 0), 0);
+
+  /* Le pied se cale sur ce que les lignes encaissent : l'arrondi des
+     prix unitaires se loge dans la réduction, jamais dans un écart muet
+     entre ce qu'on annonce et ce qu'on prend. */
+  const pied = piedDocument(sousTotal, total, montants);
+  const reductionRecu = pied.reduction;
+  const fraisRecu = pied.frais;
 
   /* Ce que le reçu fait perdre.
      Une ligne vendue sous son coût creuse l'activité ; une autre vendue avec
      marge ne la comble pas — ce sont deux faits distincts, et compenser l'un
      par l'autre masquerait celui qui coûte. Seules les lignes en perte
-     comptent donc ici. */
-  const perte = panier.reduce((s, l) => {
-    const coutLigne = l.valeurUnitaire;
-    const manque = coutLigne - (l.prixVente ?? 0);
+     comptent donc ici.
+
+     La comparaison porte sur le prix réel : une remise peut faire passer
+     une ligne sous son coût, et c'est précisément ce qu'il faut voir. */
+  const perte = panier.reduce((s, l, i) => {
+    const manque = l.valeurUnitaire - (prixReels[i] ?? l.prixVente ?? 0);
     return manque > 0 ? s + manque * l.quantiteDemandee : s;
   }, 0);
   /* Au comptant, le client paie tout ; à crédit, il paie ce qu'il veut. */
@@ -462,6 +492,9 @@ export default function ComptoirPage() {
 
   function vider() {
     setPanier([]); setClientId(''); setACredit(false); setEncaisse(0); setErreur('');
+    /* La remise appartient au client qu'on vient de servir : la laisser
+       la ferait accorder au suivant sans que personne ne l'ait voulu. */
+    setMontants([]); setMontantsOuverts(false);
   }
 
   async function valider() {
@@ -474,10 +507,18 @@ export default function ComptoirPage() {
       const reference = referenceFlux('VC', date);
 
       /* Ce que le client emporte est ce qu'il a demandé : au comptoir, la
-         quantité reçue ne diffère jamais de la quantité voulue. */
+         quantité reçue ne diffère jamais de la quantité voulue.
+
+         Le prix enregistré est celui d'après remise. Ce n'est pas un
+         prix catalogue amputé de quelque chose : c'est le prix auquel
+         on a vendu, et c'est lui qui part au mouvement, dans la marge,
+         dans le tableau de bord. Le reçu garde l'explication ; rien en
+         aval n'a besoin de la connaître. */
       const lignes: LigneFlux[] = panier.map(
-        ({ cle, stockUnites, contenance, prixUnitaire, coutUnitaire, ...l }) => ({
-          ...l, quantiteRecue: l.quantiteDemandee,
+        ({ cle, stockUnites, contenance, prixUnitaire, coutUnitaire, ...l }, i) => ({
+          ...l,
+          prixVente: prixReels[i] ?? l.prixVente ?? 0,
+          quantiteRecue: l.quantiteDemandee,
         }));
 
       /* La vente naît en préparation le temps d'être livrée : `livrerVente`
@@ -490,6 +531,11 @@ export default function ComptoirPage() {
         clientNom: c?.nom ?? 'Client de passage',
         etat: 'preparation' as const,
         lignes,
+        /* Ce qu'on a accordé, et la base sur laquelle les pourcentages
+           ont été résolus. Les lignes portent déjà le prix d'après
+           remise : ceci n'explique que le chemin. */
+        montants,
+        sousTotalOrigine: sousTotal,
         avanceVersee: 0,
         versements: [],
         devisId: null,
@@ -945,16 +991,74 @@ export default function ComptoirPage() {
                 </span>
                 <span className="text-xl font-bold">{formatMontant(total)}</span>
               </div>
+
+              {/* Ce qu'on a accordé et ce qu'on a facturé en plus. Le
+                  détail du catalogue n'apparaît que si une remise
+                  existe : sinon le total se suffit, et trois lignes
+                  pour dire la même chose encombreraient un écran où
+                  l'on sert un client qui attend. */}
+              {(reductionRecu > 0 || fraisRecu > 0) && (
+                <div className="mt-1.5 space-y-0.5 text-xs">
+                  <div className="flex items-baseline justify-between text-gray-400">
+                    <span>Sous-total</span>
+                    <span className="tabular-nums">{formatMontant(sousTotal)}</span>
+                  </div>
+                  {reductionRecu > 0 && (
+                    <div className="flex items-baseline justify-between">
+                      <span className="text-gray-400">Réduction</span>
+                      <span className="font-bold tabular-nums text-red-500">
+                        −{formatMontant(reductionRecu)}
+                      </span>
+                    </div>
+                  )}
+                  {fraisRecu > 0 && (
+                    <div className="flex items-baseline justify-between">
+                      <span className="text-gray-400">Frais annexes</span>
+                      <span className="font-bold tabular-nums text-indigo-600">
+                        +{formatMontant(fraisRecu)}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Ce que le reçu coûte à l'activité. Il ne s'affiche qu'en
                   existant : montré à zéro, il passerait inaperçu le jour où
-                  il compte. */}
+                  il compte.
+
+                  Une remise peut le faire apparaître : c'est exactement
+                  ce qu'on veut voir avant de valider. */}
               {perte > 0 && (
                 <div className="flex justify-between items-baseline mt-1">
                   <span className="text-xs font-bold text-red-500">Perte sur ce reçu</span>
                   <span className="text-xs font-bold text-red-500">{formatMontant(perte)}</span>
                 </div>
               )}
+
+              {/* Une ligne, pas un panneau : la remise est l'exception au
+                  comptoir. Elle s'ouvre quand on en a besoin et se
+                  referme derrière soi. */}
+              {panier.length > 0 && (
+                <button onClick={() => setMontantsOuverts(o => !o)}
+                  className={`mt-2 flex items-center gap-1 text-[11px] font-bold transition-colors ${montants.length > 0
+                    ? 'text-indigo-600 hover:text-indigo-700'
+                    : 'text-gray-400 hover:text-indigo-600'}`}>
+                  <Percent size={11} />
+                  {montants.length > 0
+                    ? `${montants.length} ${montants.length > 1 ? 'montants appliqués' : 'montant appliqué'}`
+                    : 'Remise ou frais'}
+                </button>
+              )}
             </div>
+
+            {montantsOuverts && panier.length > 0 && (
+              <div className="-mt-1 mb-3">
+                <PanneauMontants
+                  siteId={siteId} userId={user?.uid ?? ''}
+                  montants={montants} sousTotal={sousTotal}
+                  onChange={setMontants} />
+              </div>
+            )}
 
             {/* Comptant ou crédit : au comptoir l'un est la règle, l'autre
                 l'exception, et l'exception demande un nom. */}
@@ -1017,15 +1121,17 @@ export default function ComptoirPage() {
       </div>
       {marge && (
         <ModalMargeRecu onFermer={() => setMarge(false)}
-          lignes={panier.map(l => ({
+          lignes={panier.map((l, i) => ({
             cle: l.cle,
             designation: l.designation,
             varianteLibelle: l.varianteLibelle,
             emballage: l.emballage,
             quantiteDemandee: l.quantiteDemandee,
-            /* Le coût et le prix de ce qu'on vend : un carton, pas une pièce. */
+            /* Le coût et le prix de ce qu'on vend : un carton, pas une pièce.
+               Le prix est celui d'après remise : lire le catalogue
+               annoncerait une marge qu'on n'encaisse pas. */
             cout: l.valeurUnitaire,
-            prix: l.prixVente ?? 0,
+            prix: prixReels[i] ?? l.prixVente ?? 0,
           }))} />
       )}
 

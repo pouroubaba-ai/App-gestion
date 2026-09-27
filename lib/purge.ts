@@ -63,6 +63,9 @@ const STRUCTURE = [
   'employes',
   'employe_rem_configs',
   'employe_rem_assignations',
+  /* Les remises et frais qu'on accorde d'habitude : une habitude de la
+     maison, pas un fait d'exploitation. */
+  'vente_montants_configs',
   'employe_avance_configs',
   'recouvrement_config',
   'recouvrement_config_defaut',

@@ -12,6 +12,7 @@ import {
   repartirFrais, totalFrais, controlerRepartition,
   type Frais, type CleRepartition,
 } from '@/lib/frais';
+import type { MontantVente } from '@/lib/reductions';
 
 /**
  * Transferts et achats partagent le même automate : un engagement est pris,
@@ -499,6 +500,25 @@ export interface Vente {
   versements?: VersementAchat[];
   /** rendu au client à la livraison quand l'avance dépasse le livré */
   retourCaisse?: number;
+  /**
+   * Les réductions et frais annexes du document.
+   *
+   * Ils sont déjà répartis : les lignes portent le prix d'après remise,
+   * et c'est lui qui part au mouvement et dans la marge. Ceci ne sert
+   * qu'à expliquer comment on y est arrivé — relire une vente six mois
+   * plus tard sans savoir qu'une remise a joué laisserait croire à un
+   * prix catalogue plus bas qu'il n'était.
+   */
+  montants?: MontantVente[] | null;
+  /**
+   * La marchandise au prix du catalogue, avant remise.
+   *
+   * Il s'enregistre plutôt que de se déduire : les lignes portent le
+   * prix d'après remise, et remonter à l'envers à travers les arrondis
+   * des prix unitaires rendait un sous-total faux de quelques francs.
+   * Un document doit dire exactement ce qui s'est passé, pas à peu près.
+   */
+  sousTotalOrigine?: number | null;
   /** le devis dont cette vente est née ; absent si elle a commencé en commande.
       Posé au moment de la transformation : sans ce geste, aucun lien n'existe
       et le taux de devis aboutis ne veut plus rien dire. */

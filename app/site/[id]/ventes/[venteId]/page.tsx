@@ -34,6 +34,9 @@ import {
   peutAnnulerDossier, type Role,
 } from '@/lib/flux-marchandise';
 import {
+  sousTotalOrigine, piedDocument, valeurEnFrancs, LIBELLES_SENS,
+} from '@/lib/reductions';
+import {
   estEnsemble, retourHistorique, marqueOrigine, racineRetour,
 } from '@/lib/retour';
 import ModalPlanification from '../../components/ModalPlanification';
@@ -594,6 +597,19 @@ export default function FicheVentePage() {
 
   const total = valeurVente(vente.lignes);
   const marge = beneficeAttendu(vente.lignes);
+  /* Ce qui a été accordé et facturé en plus.
+
+     Les lignes portent le prix D APRES remise : on ne peut donc pas
+     relire le sous-total sur elles. On le retrouve à l envers, du total
+     encaissé — remettre ce qu on a cédé, retirer ce qu on a facturé.
+     Un pourcentage se résout alors sur cette base, la même qu au jour
+     de la saisie. */
+  /* Enregistré à la saisie. Les documents antérieurs ne le portent pas :
+     on le reconstitue alors du total, à quelques francs d'arrondi près. */
+  const stDoc = vente.sousTotalOrigine ?? sousTotalOrigine(total, vente.montants);
+  const pied = piedDocument(stDoc, total, vente.montants);
+  const reductionDoc = pied.reduction;
+  const fraisDoc = pied.frais;
   /* `avanceVersee` porte les deux : l'argent reçu et ce qu'un retour a
      éteint. On les sépare — la fiche annonçait « versé » une
      marchandise revenue, et le client passait pour avoir payé. */
@@ -1154,6 +1170,28 @@ export default function FicheVentePage() {
           {/* Tout ce bloc n'est que de l'argent : totaux, marge, versé, reste. */}
           {montreArgent && <div className="flex justify-end mt-4 pt-4 border-t border-gray-100 dark:border-gray-800">
             <div className="flex flex-col gap-1.5 text-sm min-w-[280px]">
+              {/* Comment on est arrivé à ce total. Les lignes portent
+                  déjà le prix d'après remise — ceci n'explique que le
+                  chemin. Sans cette trace, relire la vente six mois plus
+                  tard laisserait croire à un prix catalogue plus bas
+                  qu'il n'était. */}
+              {(vente.montants ?? []).length > 0 && (() => {
+                const st = total + reductionDoc - fraisDoc;
+                return (
+                  <>
+                    <LigneTotal label="Sous-total" valeur={formatMontant(st)}
+                      classeValeur="text-gray-500" />
+                    {(vente.montants ?? []).map((m, i) => (
+                      <LigneTotal key={i}
+                        label={m.libelle || LIBELLES_SENS[m.sens]}
+                        valeur={`${m.sens === 'reduction' ? '−' : '+'}${formatMontant(valeurEnFrancs(m, st))}`}
+                        classeValeur={m.sens === 'reduction'
+                          ? 'font-medium text-red-500'
+                          : 'font-medium text-indigo-600'} />
+                    ))}
+                  </>
+                );
+              })()}
               <LigneTotal label="Total" valeur={formatMontant(total)}
                 classeValeur="font-bold text-gray-900 dark:text-gray-100" />
               {/* La marge n'est figée qu'à la livraison, au coût moyen de ce

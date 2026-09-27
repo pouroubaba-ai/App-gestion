@@ -12,6 +12,10 @@ import { formatMontant } from '@/lib/format';
 import { auteurEtape } from '@/lib/auteur';
 import { Loader2, Check, FileText, ClipboardList } from 'lucide-react';
 import SelecteurProduits, { ProduitChoisissable } from '../../components/SelecteurProduits';
+import PanneauMontants from '../../components/PanneauMontants';
+import {
+  prixApresMontants, type MontantVente,
+} from '@/lib/reductions';
 import { LigneFlux, referenceFlux } from '@/lib/flux-marchandise';
 import { SelectCherchable, ChampNombre } from '@/components/Champs';
 
@@ -71,6 +75,9 @@ export default function NouvelleVentePage() {
 
   const [clientId, setClientId] = useState('');
   const [lignes, setLignes] = useState<LigneFlux[]>([]);
+  /* Ce qu'on accorde et ce qu'on facture en plus. Rien par défaut : la
+     vente se fait au prix du catalogue tant qu'on n'a rien décidé. */
+  const [montants, setMontants] = useState<MontantVente[]>([]);
   const [date, setDate] = useState(aujourdhui());
   /* Facultatif : beaucoup de commerces ne bornent pas leurs devis. Rempli,
      il protège — au-delà, le prix proposé n'engage plus. */
@@ -114,7 +121,14 @@ export default function NouvelleVentePage() {
 
   /* Une vente se totalise au prix obtenu, jamais au coût : le coût sert
      à figer la marge, pas à dire ce que le client doit. */
-  const total = lignes.reduce((s, l) => s + l.quantiteDemandee * (l.prixVente ?? 0), 0);
+  /* La marchandise au prix du catalogue : la base des pourcentages. */
+  const sousTotal = lignes.reduce(
+    (s, l) => s + l.quantiteDemandee * (l.prixVente ?? 0), 0);
+  /* Les prix après réduction et frais annexes — le même calcul qu'au
+     comptoir. Le prix rendu EST le prix de vente. */
+  const { prix: prixReels } = prixApresMontants(lignes, montants);
+  const total = lignes.reduce(
+    (s, l, i) => s + l.quantiteDemandee * (prixReels[i] ?? l.prixVente ?? 0), 0);
   const cout = lignes.reduce((s, l) => s + l.quantiteDemandee * l.valeurUnitaire, 0);
   const benefice = total - cout;
   const reste = Math.max(0, total - verse);
@@ -141,7 +155,17 @@ export default function NouvelleVentePage() {
         clientId,
         clientNom: c?.nom ?? '—',
         etat: estDevis ? 'devis' : 'commande',
-        lignes,
+        /* Le prix enregistré est celui d'après remise : c'est le prix
+           auquel on a vendu, et c'est lui qui part au mouvement et dans
+           la marge. Le document garde l'explication. */
+        lignes: lignes.map((l, i) => ({
+          ...l, prixVente: prixReels[i] ?? l.prixVente ?? 0,
+        })),
+        montants,
+        /* La base des pourcentages, telle qu'elle était au moment de la
+           saisie : la relecture ne peut pas la retrouver sur les lignes,
+           qui portent déjà le prix d'après remise. */
+        sousTotalOrigine: sousTotal,
         /* un devis n'encaisse rien : le versement n'existe qu'en commande */
         avanceVersee: estDevis ? 0 : verse,
         versements: !estDevis && verse > 0
@@ -330,7 +354,23 @@ export default function NouvelleVentePage() {
             setVerse(v => Math.min(v, t));
           }}
           coutEditable={false} montrerStock labelCout="Coût" vente futur
+          partsFrais={null}
         />
+
+        {lignes.length > 0 && (
+          <PanneauMontants
+            siteId={siteId} userId={user?.uid ?? ''}
+            montants={montants} sousTotal={sousTotal}
+            onChange={m => {
+              setMontants(m);
+              /* Le total vient de changer : un versé devenu excessif se
+                 ramène, comme lorsqu'une ligne bouge. */
+              const { prix } = prixApresMontants(lignes, m);
+              const t = lignes.reduce(
+                (s, l, i) => s + l.quantiteDemandee * (prix[i] ?? l.prixVente ?? 0), 0);
+              setVerse(v => Math.min(v, t));
+            }} />
+        )}
 
         {erreur && <p className="text-xs text-red-500 mt-3">{erreur}</p>}
 
