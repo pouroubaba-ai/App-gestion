@@ -20,10 +20,10 @@ import { auteurCourant } from '@/lib/auteur';
 import { chargerCatalogue, catalogueReprise } from '@/lib/reprise-catalogue';
 
 /** Emballage : un conditionnement exprimé en unités de base (ex. Carton = 12 pièces). */
-interface Emballage {
-  nom: string;
-  quantite: number;
-}
+/* Le conditionnement vient de `lib/mouvements` : le redéclarer ici
+   laissait les deux diverger, et c'est ce qui est arrivé quand il a
+   gagné son lien aux déclinaisons. */
+import { nomDejaPris, type Emballage } from '@/lib/mouvements';
 
 /** Caractéristique d'un produit (ex. Couleur → Rouge, Bleu). */
 interface Caracteristique {
@@ -433,6 +433,14 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
   const emballagesUtiles = emballages.filter(e => e.nom.trim() && e.quantite > 1);
   const caracsValides = caracs.filter(c => c.nom.trim() && c.valeurs.length > 0);
   /* une variante n'apparaît dans Tarifs que si elle a reçu au moins une valeur */
+  /* Les déclinaisons en cours de saisie, sous la forme qu'elles auront
+     une fois écrites. Un conditionnement peut s'y rattacher avant même
+     que le produit existe — c'est le moment où l'on sait qu'un carton de
+     10W n'en contient pas le même nombre qu'un carton de 30W. */
+  const clesVariantes = variantesSaisie
+    .map(v => cleVariante(v.selection, caracs.filter(c => c.nom.trim())))
+    .filter(Boolean);
+
   const tarifsVariantes = variantesSaisie
     .map((v, index) => ({ v, index }))
     .filter(({ v }) => v.stock || v.cout || v.prix);
@@ -469,13 +477,36 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
       return;
     }
     /* un emballage de 1 unité serait l'unité elle-même */
-    const emballagesValides = emballages.filter(c => c.nom.trim() && c.quantite > 1);
+    const emballagesValides = emballages
+      .filter(c => c.nom.trim() && c.quantite > 1)
+      /* Une liste vide veut dire « toutes les déclinaisons » : l'écrire
+         quand même ferait un champ qui ne dit rien, et les produits
+         existants n'en ont pas. */
+      .map(c => ((c.variantes?.length ?? 0) > 0
+        ? { nom: c.nom.trim(), quantite: c.quantite, variantes: c.variantes }
+        : { nom: c.nom.trim(), quantite: c.quantite }));
     if (emballages.length !== emballagesValides.length) {
       setOngletForm('emballages');
       setErreur(emballages.some(c => c.quantite === 1)
         ? `Un emballage doit contenir au moins 2 ${unite.trim() ? `${unite.toLowerCase()}s` : 'unités'}.`
         : 'Chaque emballage doit avoir un nom et une quantité.');
       return;
+    }
+
+    /* Deux conditionnements de même nom ne peuvent pas se rencontrer sur
+       une même déclinaison : le vendeur ne saurait pas lequel il tient.
+       Ils le peuvent s'ils ne se croisent jamais — « Carton » vaut dix
+       pièces pour le 10W et six pour le 30W. */
+    for (let i = 0; i < emballagesValides.length; i++) {
+      const avant = emballagesValides.slice(0, i);
+      const e = emballagesValides[i];
+      if (nomDejaPris(avant, e.nom, (e as any).variantes)) {
+        setOngletForm('emballages');
+        setErreur(clesVariantes.length > 0
+          ? `« ${e.nom} » est déjà pris pour ces déclinaisons.`
+          : `« ${e.nom} » existe déjà.`);
+        return;
+      }
     }
     /* une caractéristique entièrement vide vient d'un clic par erreur : on l'ignore.
        À moitié remplie, c'est une saisie inachevée : on bloque. */
@@ -1318,6 +1349,49 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
                       <p className="text-xs text-red-500 mt-1">
                         Un emballage de 1 {unite.trim() ? unite.toLowerCase() : 'unité'}, c&apos;est l&apos;unité elle-même.
                       </p>
+                    )}
+                    {/* À quelles déclinaisons ce conditionnement
+                        s'applique. Un carton de 10W n'en contient pas le
+                        même nombre qu'un carton de 30W : les proposer
+                        tous les deux laisse choisir le mauvais au moment
+                        de vendre.
+
+                        Ne paraît que si des déclinaisons existent déjà —
+                        sinon la question ne se pose pas. */}
+                    {clesVariantes.length > 0 && (
+                      <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                        <button type="button"
+                          onClick={() => setEmballages(prev => prev.map((x, j) =>
+                            j === i ? { ...x, variantes: [] } : x))}
+                          className={`rounded-lg px-2 py-0.5 text-[11px] font-bold transition-colors ${
+                            (c.variantes?.length ?? 0) === 0
+                              ? 'bg-indigo-600 text-white'
+                              : 'border border-gray-200 text-gray-500 dark:border-gray-700'}`}>
+                          Toutes
+                        </button>
+                        {clesVariantes.map(cle => {
+                          const prise = (c.variantes ?? []).includes(cle);
+                          return (
+                            <button key={cle} type="button"
+                              onClick={() => setEmballages(prev => prev.map((x, j) => {
+                                if (j !== i) return x;
+                                const liees = x.variantes ?? [];
+                                return {
+                                  ...x,
+                                  variantes: prise
+                                    ? liees.filter(y => y !== cle)
+                                    : [...liees, cle],
+                                };
+                              }))}
+                              className={`rounded-lg px-2 py-0.5 text-[11px] font-bold transition-colors ${
+                                prise
+                                  ? 'bg-indigo-600 text-white'
+                                  : 'border border-gray-200 text-gray-500 dark:border-gray-700'}`}>
+                              {cle}
+                            </button>
+                          );
+                        })}
+                      </div>
                     )}
                     </div>
                   ))}
