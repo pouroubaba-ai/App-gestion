@@ -78,6 +78,9 @@ export default function NouvelAjustementPage() {
      ne fait pas entrer de marchandise. */
   const regle = MOTIFS_AJUSTEMENT[motif];
   const entree = regle.sens === 'entree';
+  /* Ce qu'on ne peut pas savoir ne se saisit pas : à l'ouverture du
+     compte, la quantité est un fait, le coût n'en est pas un. */
+  const sansCout = motif === 'stock_initial';
 
   /* Le stock ne se lit qu'à la sortie : à l'entrée il ne limite rien, et
      l'afficher ferait croire qu'il borne la saisie. */
@@ -110,8 +113,18 @@ export default function NouvelAjustementPage() {
           quantiteDeclaree: l.quantiteDemandee ?? 0,
           emballage: l.emballage ?? null,
           /* Une sortie ne porte aucun coût saisi : elle vaut ce que le
-             rayon dit qu'elle vaut. */
-          ...(entree ? { cout: l.valeurUnitaire ?? 0 } : {}),
+             rayon dit qu'elle vaut.
+
+             Un stock initial non plus : il entre en quantité, sans
+             valeur. Écrire zéro dirait « ça n'a rien coûté », ce qui est
+             faux ; écrire un chiffre au jugé dirait « ça a coûté ça »,
+             ce qui l'est tout autant. L'absence est la seule réponse
+             vraie. */
+          /* La case cochée le dit : cette ligne n'a pas de coût connu.
+             On n'écrit alors aucun coût — ni zéro, qui se lirait
+             « gratuit », ni le coût moyen du rayon, qui n'a rien à voir
+             avec ce qu'on a payé. */
+          ...(entree && !l.coutInconnu ? { cout: l.valeurUnitaire ?? 0 } : {}),
           /* Le prix du rayon, figé : il dit ce que la maison n'encaissera
              pas, là où le coût dit ce qu'elle avait payé. */
           prixVente: produits.find(x => x.id === l.produitId)?.prixVente ?? null,
@@ -257,6 +270,17 @@ export default function NouvelAjustementPage() {
                 : 'Cette sortie est une charge : la marchandise a servi, elle n’est pas perdue.'}
             </p>
           )}
+
+          {/* Un champ laissé vide sans explication passe pour un oubli. */}
+          {sansCout && (
+            <p className="mt-3 rounded-xl bg-indigo-50 p-2.5 text-[12px] text-indigo-700 dark:bg-indigo-900/20 dark:text-indigo-300">
+              Renseignez le coût d’achat sur les produits dont vous avez la
+              facture. Pour les autres, cochez « Coût inconnu » : leur coût
+              sera posé par la première entrée réelle — un achat ou un
+              transfert — et vaudra pour tout le stock. D’ici là, la marge
+              de ces produits reste inconnue.
+            </p>
+          )}
         </div>
 
         <div className="mt-4">
@@ -266,8 +290,23 @@ export default function NouvelAjustementPage() {
             onChange={setLignes}
             /* Une sortie se valorise au coût moyen du rayon. Laisser saisir
                un coût ici permettrait de décider soi-même ce que valait la
-               marchandise qui disparaît — donc d'inventer une perte. */
+               marchandise qui disparaît — donc d'inventer une perte.
+
+               Le stock initial, lui, garde son champ mais ne le remplit
+               pas d'avance : sur certaines références le responsable a la
+               facture, sur d'autres il ne l'a pas. Ce qu'il sait, il
+               l'écrit ; ce qu'il ignore, il le laisse vide — et le coût
+               de cette ligne-là reste inconnu jusqu'au premier achat.
+
+               Ce qu'on évite est le chiffre posé au jugé pour remplir la
+               case : il pèserait dans le coût moyen comme un coût réel,
+               et la première facture ne compterait plus que pour une
+               part — sur 922 unités d'origine et 375 achetées, elle n'en
+               ferait que 29 %. */
             coutEditable={entree}
+            coutVideParDefaut={sansCout}
+            coutInconnuPossible={sansCout}
+            coutInconnuParDefaut={sansCout}
             montrerStock={!entree}
             labelCout={entree ? 'Coût unitaire' : 'Coût moyen'}
           />

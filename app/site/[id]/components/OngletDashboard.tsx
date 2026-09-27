@@ -35,6 +35,15 @@ interface Vente {
   date: string;
   montant: number;
   benefice: number;
+  /**
+   * Vendue sur un rayon dont on ignorait le coût.
+   *
+   * Son montant compte dans le chiffre d'affaires — l'argent est bien
+   * entré — mais pas dans le bénéfice, qu'on ne sait pas calculer. Sans
+   * cette distinction, le taux de marge se diviserait par des ventes
+   * qu'il n'a pas mesurées.
+   */
+  sansMarge?: boolean;
   /* De quel site vient la vente : la vue par site les sépare. */
   siteId?: string | null;
 }
@@ -159,6 +168,16 @@ export default function OngletDashboard({ siteId, userId, onNaviguer, sites, tit
         /* un transfert déplace la valeur sans la réaliser */
         if (m.motif === 'transfert') return;
         if (m.sens === 'sortie' && m.motif === 'vente') {
+          /* Vendu sur un rayon dont on ignorait le coût : la vente a bien
+             eu lieu, sa marge non. La compter à zéro ferait un bénéfice
+             égal au prix de vente ; la reconstituer du coût inventerait
+             ce qu'on cherche justement à ne pas inventer. On la met de
+             côté, et l'écran dit combien il en reste. */
+          if (m.margeInconnue) {
+            v.push({ date: m.date, montant: m.valeurTotale ?? 0, benefice: 0,
+                     sansMarge: true, siteId: m.siteId ?? null });
+            return;
+          }
           /* La marge est figée sur le mouvement au moment du geste. Les lignes
              écrites avant qu'elle le soit ne la portent pas : on la reconstitue
              alors du prix et du coût, que la ligne a toujours gardés. */
@@ -273,6 +292,12 @@ export default function OngletDashboard({ siteId, userId, onNaviguer, sites, tit
 
   const totalVentes = ventesP.reduce((s, v) => s + v.montant, 0);
   const totalBenefice = ventesP.reduce((s, v) => s + v.benefice, 0);
+  /* Ce que le bénéfice ne couvre pas : des ventes réelles, prises sur un
+     rayon dont le coût n'était pas encore connu. Le taux de marge se
+     rapporte à ce qui a été mesuré — diviser par un total qui les inclut
+     écraserait le pourcentage sans que rien ne l'explique. */
+  const ventesSansMarge = ventesP.filter(v => v.sansMarge);
+  const montantSansMarge = ventesSansMarge.reduce((s, v) => s + v.montant, 0);
   /* rapportés aux ventes : l'encaissé peut dépasser 100 % quand on rattrape des créances */
 
   /* Le fonds vient du registre, jamais d'un recalcul : deux écrans qui
@@ -565,6 +590,8 @@ export default function OngletDashboard({ siteId, userId, onNaviguer, sites, tit
       <VentesCard
         ventes={totalVentes}
         benefice={totalBenefice}
+        ventesSansMarge={montantSansMarge}
+        nbSansMarge={ventesSansMarge.length}
         encaisse={encaisse}
         reste={resteAEncaisser}
         retours={totalRetours}

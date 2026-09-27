@@ -197,6 +197,12 @@ export interface LigneAjustement {
    * d'inventer une perte — décider soi-même ce que valait la marchandise
    * qui disparaît.
    */
+  /**
+   * Ce que la ligne a coûté. Absent sur un stock initial : le
+   * responsable compte ce qui est en rayon, il ne sait pas ce qu'il l'a
+   * payé. Zéro dirait « gratuit », un chiffre au jugé dirait « ça a
+   * coûté ça » — l'absence est la seule réponse vraie.
+   */
   cout?: number | null;
   /**
    * Le prix auquel le site vend cet article, figé au moment du dossier.
@@ -301,7 +307,9 @@ export async function declarerAjustement(saisie: {
       /* Le constat viendra du rayon, pas de la déclaration. */
       quantiteConstatee: null,
       emballage: l.emballage ?? null,
-      cout: regle.sens === 'entree' ? (l.cout ?? 0) : null,
+      /* Un coût absent le reste : le forcer à zéro en ferait une valeur,
+         et le rayon vaudrait soudain « rien ». */
+      cout: regle.sens === 'entree' ? (l.cout ?? null) : null,
     })),
     note: saisie.note ?? null,
     parUid: saisie.parUid,
@@ -479,6 +487,14 @@ export async function confirmerAjustement(params: {
      * elle a son client et sa créance, et elle sait gérer une vente à
      * perte, ce qui n'a pas de sens ici. Le coût, lui, vient du rayon. */
     valeurUnitaire: regle.sens === 'entree' ? (l.cout ?? 0) : 0,
+    /* Ce que cette entrée ne dit pas.
+     *
+     * `valeurUnitaire` vaut zéro faute de mieux — un mouvement porte
+     * toujours un nombre. Mais zéro serait lu comme « gratuit » par tout
+     * ce qui additionne, et c'est faux : on ne sait pas. Ce drapeau le
+     * dit, et c'est lui que le coût moyen regarde pour savoir qu'il n'a
+     * rien à pondérer. */
+    ...(regle.sens === 'entree' && l.cout == null ? { coutInconnu: true } : {}),
     documentId: d.id,
     utilisateurNom: params.utilisateurNom ?? null,
     utilisateurFonction: params.utilisateurFonction ?? null,

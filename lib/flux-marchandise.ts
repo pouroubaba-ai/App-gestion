@@ -275,6 +275,15 @@ export interface LigneFlux {
    * Absent = le produit garde le prix qu'il a déjà.
    */
   prixVente?: number | null;
+  /**
+   * Cette ligne ne sait pas ce qu'elle a coûté.
+   *
+   * Déclaré à l'ouverture d'un compte, référence par référence : on a la
+   * facture de certaines, pas des autres. `valeurUnitaire` vaut alors
+   * zéro faute de mieux, et ce drapeau empêche de le lire comme
+   * « gratuit ». La première entrée réelle posera le coût.
+   */
+  coutInconnu?: boolean;
 }
 
 export interface Transfert {
@@ -856,9 +865,21 @@ async function appliquerLigne(
     : undefined;
   const stockAvant = variante ? variante.stock : (detention.stock ?? 0);
   const coutAvant = variante ? variante.coutMoyen : (detention.coutMoyen ?? 0);
+  /* Le rayon sait-il ce qu'il a payé ? Lu sur la détention qu'on tient
+     déjà : un stock initial entre en quantité sans valeur, et ce qu'il
+     ignore ne doit pas peser dans une moyenne. */
+  const inconnuAvant: boolean = variante
+    ? !!(variante as any).coutInconnu
+    : !!detention.coutInconnu;
+
+  /* Une entrée réelle — un achat, un transfert — porte un coût : elle
+     lève l'ignorance, et son prix vaut pour tout le stock faute de mieux
+     à attribuer aux unités d'origine. */
+  const inconnuApres = params.sens === 'entree' ? false : inconnuAvant;
 
   const nouveauCout = params.sens === 'entree'
-    ? coutMoyenApresEntree(stockAvant, coutAvant, qteUnites, params.valeurUnitaire)
+    ? coutMoyenApresEntree(
+        stockAvant, coutAvant, qteUnites, params.valeurUnitaire, inconnuAvant)
     : coutAvant;
   const nouveauStock = stockAvant + (params.sens === 'entree' ? 1 : -1) * qteUnites;
 
@@ -885,13 +906,21 @@ async function appliquerLigne(
        décembre la ferait mentir. D'où ce chiffre écrit une fois.
        Un transfert déplace de la valeur sans la réaliser : ni bénéfice ni
        perte. Une perte détruit le stock : elle coûte son coût moyen. */
-    ...(params.sens === 'sortie' && params.motif !== 'transfert' ? {
-      coutMoyenAlors: coutAvant,
-      benefice: params.motif === 'perte'
-        ? -coutAvant * qteUnites
-        : (params.valeurUnitaire - (params.cout ?? params.valeurUnitaire))
-          * params.quantite,
-    } : {}),
+    ...(params.sens === 'sortie' && params.motif !== 'transfert' ? (
+      /* Une sortie prise sur un rayon au coût inconnu n'a pas de marge.
+         Zéro en ferait un bénéfice égal au prix de vente — l'inverse de
+         ce qu'on cherche. Le drapeau dit qu'on ne sait pas, et le
+         tableau de bord compte la vente sans compter son bénéfice. */
+      inconnuAvant
+        ? { coutMoyenAlors: null, benefice: null, margeInconnue: true }
+        : {
+          coutMoyenAlors: coutAvant,
+          benefice: params.motif === 'perte'
+            ? -coutAvant * qteUnites
+            : (params.valeurUnitaire - (params.cout ?? params.valeurUnitaire))
+              * params.quantite,
+        }
+    ) : {}),
     partenaireId: params.partenaireId ?? null,
     partenaireNom: params.partenaireNom ?? null,
     siteLieId: params.siteLieId ?? null,
@@ -943,11 +972,13 @@ async function appliquerLigne(
       ? variantesSite.map(v => v.cle === params.varianteCle
           ? {
               ...v, stock: nouveauStock, coutMoyen: nouveauCout,
+              coutInconnu: inconnuApres,
               ...(nouveauPrix != null ? { prixVente: nouveauPrix } : {}),
             }
           : v)
       : [...variantesSite, {
           cle: params.varianteCle, stock: nouveauStock, coutMoyen: nouveauCout,
+          coutInconnu: inconnuApres,
           prixVente: nouveauPrix ?? null,
         }];
     const total = maj.reduce((s, v) => s + v.stock, 0);
@@ -967,6 +998,7 @@ async function appliquerLigne(
   } else {
     batch.update(refDetention, {
       stock: nouveauStock, coutMoyen: nouveauCout,
+      coutInconnu: inconnuApres,
       ...(nouveauPrix != null ? { prixVente: nouveauPrix } : {}),
     });
     if (enMemoire || registre?.detentions.has(cle)) {
@@ -974,6 +1006,7 @@ async function appliquerLigne(
         id: refDetention.id,
         data: {
           ...detention, stock: nouveauStock, coutMoyen: nouveauCout,
+          coutInconnu: inconnuApres,
           ...(nouveauPrix != null ? { prixVente: nouveauPrix } : {}),
         },
       });

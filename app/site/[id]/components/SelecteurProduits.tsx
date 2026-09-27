@@ -95,7 +95,8 @@ export default function SelecteurProduits({
   vente = false, futur = false,
   produitsNeufs, onCreerGamme,
   partsFrais, totalFrais: totalDesFrais, partsImposees, onCorrigerPart,
-  fraisCle, onChangerCleFrais,
+  fraisCle, onChangerCleFrais, coutVideParDefaut, coutInconnuPossible,
+  coutInconnuParDefaut,
 }: Props & {
   /**
    * Créer la marchandise qu'on ne trouve pas, sans quitter le bon.
@@ -166,6 +167,32 @@ export default function SelecteurProduits({
    */
   fraisCle?: CleRepartition | null;
   onChangerCleFrais?: (cle: CleRepartition) => void;
+  /**
+   * La ligne naît sans coût, au lieu d'hériter du coût moyen du rayon.
+   *
+   * À l'ouverture d'un compte, ce coût moyen n'a aucun fondement : le
+   * proposer ferait valider un chiffre que personne n'a vérifié. Le
+   * champ reste saisissable — qui a la facture l'écrit — mais il faut un
+   * geste pour le remplir.
+   */
+  coutVideParDefaut?: boolean;
+  /**
+   * Chaque ligne peut déclarer que son coût n'est pas connu.
+   *
+   * À l'ouverture d'un compte, le responsable a la facture de certaines
+   * références et pas des autres. Laisser le champ vide serait ambigu —
+   * ignoré ou oublié ? La case le dit, et ce qu'elle déclare se lit
+   * ensuite sur le rayon.
+   */
+  coutInconnuPossible?: boolean;
+  /**
+   * La ligne naît en déclarant son coût inconnu.
+   *
+   * C'est l'état vrai à l'ouverture d'un compte : on n'a pas encore
+   * regardé la facture. Décocher est le geste de celui qui la tient —
+   * l'inverse ferait valider l'ignorance par inattention.
+   */
+  coutInconnuParDefaut?: boolean;
 }) {
   /* La création en cours : le nom qu'on vient de taper, et l'attente
      pendant que le produit naît. */
@@ -247,7 +274,14 @@ export default function SelecteurProduits({
       /* Firestore refuse d'écrire un champ undefined : une ligne saisie à
          l'unité doit porter un emballage nul, pas un emballage absent. */
       emballage: null,
-      valeurUnitaire: v ? v.coutMoyen : (p.coutMoyen ?? 0),
+      /* Le coût moyen du rayon prérempli la ligne — sauf là où il ne
+         veut rien dire. À l'ouverture d'un compte, le proposer ferait
+         valider un chiffre que personne n'a vérifié : on préfère le
+         vide, qui demande un geste pour être rempli. */
+      valeurUnitaire: coutVideParDefaut
+        ? 0
+        : (v ? v.coutMoyen : (p.coutMoyen ?? 0)),
+      ...(coutInconnuParDefaut ? { coutInconnu: true } : {}),
       /* une variante sans prix propre hérite de celui du produit */
       prixVente: (v?.prixVente ?? p.prixVente) || null,
     }]);
@@ -715,8 +749,35 @@ export default function SelecteurProduits({
                     <label className="flex items-center gap-1.5">
                       <span className="text-xs text-gray-400">{labelCout}</span>
                       <ChampNombre valeur={l.valeurUnitaire}
+                        disabled={!!l.coutInconnu}
                         onChange={n => majLigne(i, { valeurUnitaire: n })}
-                        className="w-24 px-2 py-1 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-xs text-center focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                        placeholder={l.coutInconnu ? 'inconnu' : undefined}
+                        className={`w-24 rounded-lg border px-2 py-1 text-center text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 ${l.coutInconnu
+                          ? 'cursor-not-allowed border-dashed border-gray-300 bg-transparent italic text-gray-400 placeholder:text-[11px] dark:border-gray-600'
+                          : 'border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-800'}`} />
+                    </label>
+                  )}
+
+                  {/* Le dire plutôt que le laisser deviner.
+                      Un champ vide est ambigu — vide parce qu'on ignore, ou
+                      vide parce qu'on a oublié ? La case tranche : cochée,
+                      la ligne déclare que le coût n'est pas connu, et la
+                      première entrée réelle le posera. */}
+                  {coutInconnuPossible && coutEditable && !vente && (
+                    <label className="flex cursor-pointer items-center gap-1.5 select-none">
+                      <input type="checkbox" checked={!!l.coutInconnu}
+                        onChange={e => majLigne(i, {
+                          coutInconnu: e.target.checked || undefined,
+                          /* Une valeur tapée puis déclarée inconnue ne doit
+                             pas rester derrière la case. */
+                          ...(e.target.checked ? { valeurUnitaire: 0 } : {}),
+                        })}
+                        className="h-3.5 w-3.5 cursor-pointer rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 dark:border-gray-600" />
+                      <span className={`text-xs ${l.coutInconnu
+                        ? 'font-bold text-indigo-600 dark:text-indigo-400'
+                        : 'text-gray-400'}`}>
+                        Coût inconnu
+                      </span>
                     </label>
                   )}
 

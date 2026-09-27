@@ -8,10 +8,21 @@ import { formatMontant } from '@/lib/format';
  */
 export default function VentesCard({
   ventes, benefice, encaisse, reste, retours = 0, fonds, sousTitreFonds,
+  ventesSansMarge = 0, nbSansMarge = 0,
   onNaviguer,
 }: {
   ventes: number;
   benefice: number;
+  /**
+   * Ce qui a été vendu sans qu'on sache ce que ça avait coûté.
+   *
+   * Un stock initial entre en quantité sans valeur : tant qu'aucun achat
+   * n'a posé le coût, la marge de ces ventes est inconnue. Elles
+   * comptent dans le chiffre d'affaires — l'argent est entré — et le
+   * taux se rapporte au reste, qui est ce qu'on a mesuré.
+   */
+  ventesSansMarge?: number;
+  nbSansMarge?: number;
   encaisse: number;
   /**
    * Ce que les clients ont rendu sur la période.
@@ -35,7 +46,12 @@ export default function VentesCard({
   sousTitreFonds?: string;
   onNaviguer?: (onglet: string) => void;
 }) {
-  const tauxMarge = ventes > 0 ? Math.round((benefice / ventes) * 100) : 0;
+  /* Le taux se rapporte aux ventes mesurées : diviser par un total qui
+     comprend des ventes sans marge connue écraserait le pourcentage, et
+     rien à l'écran ne dirait pourquoi. */
+  const ventesMesurees = Math.max(0, ventes - ventesSansMarge);
+  const tauxMarge = ventesMesurees > 0
+    ? Math.round((benefice / ventesMesurees) * 100) : 0;
   const tauxReste = ventes > 0 ? Math.round((reste / ventes) * 100) : 0;
 
   return (
@@ -56,6 +72,14 @@ export default function VentesCard({
         <p className="mt-1.5 text-xs font-semibold text-lime-300">
           Bénéfice {formatMontant(benefice)} ({tauxMarge}%)
         </p>
+        {/* Ce que le bénéfice ne couvre pas. Ne s'affiche qu'en existant :
+            montré à zéro, il passerait inaperçu le jour où il compte. */}
+        {nbSansMarge > 0 && (
+          <p className="mt-0.5 text-[11px] text-indigo-200">
+            dont {formatMontant(ventesSansMarge)} sans coût connu
+            {' '}({nbSansMarge} vente{nbSansMarge > 1 ? 's' : ''})
+          </p>
+        )}
       </div>
 
       <button

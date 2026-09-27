@@ -36,6 +36,15 @@ export interface VarianteSite {
   stock: number;
   coutMoyen: number;
   prixVente?: number | null;
+  /**
+   * Le rayon ignore ce qu'il a payé cette marchandise.
+   *
+   * Vrai après un stock initial : on compte ce qui est là, on ne sait
+   * pas ce qu'il a coûté. `coutMoyen` vaut alors zéro faute de mieux, et
+   * ce drapeau dit de ne pas le lire comme une valeur. La première
+   * entrée réelle le pose et lève le drapeau.
+   */
+  coutInconnu?: boolean;
 }
 
 /** Ce qu'un site détient d'un produit. */

@@ -59,13 +59,27 @@ interface Variante {
  * Nouveau coût moyen pondéré après une entrée.
  * (ancien stock × ancien coût + entrée × coût d'entrée) ÷ stock total.
  * Un stock nul ou négatif ne peut pas pondérer : on prend le coût d'entrée.
+ *
+ * Un stock dont le coût est inconnu ne pondère pas davantage. Le stock
+ * initial entre en quantité sans valeur : le responsable sait ce qu'il a
+ * en rayon, pas ce qu'il l'a payé. Le moyenner avec un chiffre posé au
+ * jugé donnerait un coût dont la plus grande part serait inventée — sur
+ * 922 unités d'origine et 375 achetées, l'invention garderait 71 % du
+ * poids, et ne s'effacerait qu'au rythme des ventes.
+ *
+ * La première entrée réelle pose donc le coût entier, et il vaut pour
+ * tout le stock : c'est le seul chiffre qu'on possède sur ce produit.
+ * La part qui couvre les unités d'origine reste une estimation, mais
+ * fondée sur une facture plutôt que sur une impression.
  */
 export function coutMoyenApresEntree(
   stockActuel: number, coutActuel: number,
   quantiteEntree: number, coutEntree: number,
+  coutInconnu?: boolean,
 ): number {
   if (quantiteEntree <= 0) return coutActuel;
   if (stockActuel <= 0) return coutEntree;
+  if (coutInconnu) return coutEntree;
   return Math.round(
     (stockActuel * coutActuel + quantiteEntree * coutEntree) / (stockActuel + quantiteEntree)
   );
@@ -167,6 +181,13 @@ export interface SaisieMouvement {
   quantite: number;
   emballage?: string | null;
   valeurUnitaire: number;
+  /**
+   * Cette entrée n'apporte aucun coût : elle compte de la marchandise
+   * sans savoir ce qu'elle a coûté. `valeurUnitaire` vaut zéro faute de
+   * mieux — un mouvement porte toujours un nombre — et ce drapeau
+   * empêche de le lire comme « gratuit ».
+   */
+  coutInconnu?: boolean;
   partenaireId?: string | null;
   partenaireNom?: string | null;
   siteLieId?: string | null;
@@ -243,9 +264,27 @@ export async function ecrireLignesEnLot(
         : undefined;
       const stockAvant = variante ? variante.stock : (det.data.stock ?? 0);
       const coutAvant = variante ? variante.coutMoyen : (det.data.coutMoyen ?? 0);
+      /* Le rayon sait-il ce qu'il a payé ? Lu sur la détention, qu'on
+         tient déjà en main : pas une lecture de plus. */
+      const inconnuAvant: boolean = variante
+        ? !!variante.coutInconnu
+        : !!det.data.coutInconnu;
+
+      /* Une entrée sans coût n'apprend rien : le rayon reste dans son
+         ignorance. Une entrée qui en porte un la lève — et son coût vaut
+         alors pour tout le stock, faute de mieux à attribuer aux unités
+         d'origine. */
+      const entreeSansCout = saisie.sens === 'entree' && !!saisie.coutInconnu;
+      const inconnuApres = saisie.sens === 'entree'
+        ? (inconnuAvant || stockAvant <= 0) && entreeSansCout
+        : inconnuAvant;
 
       const nouveauCout = saisie.sens === 'entree'
-        ? coutMoyenApresEntree(stockAvant, coutAvant, qteUnites, saisie.valeurUnitaire)
+        ? (entreeSansCout
+            ? coutAvant
+            : coutMoyenApresEntree(
+                stockAvant, coutAvant, qteUnites, saisie.valeurUnitaire,
+                inconnuAvant))
         : coutAvant;
       const nouveauStock = stockAvant + (saisie.sens === 'entree' ? 1 : -1) * qteUnites;
 
@@ -265,14 +304,25 @@ export async function ecrireLignesEnLot(
         /* La même règle qu'à l'unité : une perte coûte son coût moyen, une
            sortie sans prix ne réalise rien. La réécrire ici la ferait
            diverger le jour où l'une des deux changerait. */
-        ...(saisie.sens === 'sortie' && saisie.motif !== 'transfert' ? {
-          coutMoyenAlors: coutAvant,
-          benefice: saisie.motif === 'perte'
-            ? -coutAvant * qteUnites
-            : saisie.valeurUnitaire <= 0
-            ? 0
-            : (saisie.valeurUnitaire - coutAvant) * qteUnites,
-        } : {}),
+        /* Une entrée qui ne sait pas ce qu'elle a coûté le dit. */
+        ...(entreeSansCout ? { coutInconnu: true } : {}),
+        /* Une sortie prise sur un rayon au coût inconnu n'a pas de marge.
+           Écrire zéro en ferait un bénéfice égal au prix de vente — pire
+           que le chiffre inventé qu'on cherchait à éviter. Le drapeau dit
+           qu'on ne sait pas, et le tableau de bord compte la vente en
+           chiffre d'affaires sans la compter en bénéfice. */
+        ...(saisie.sens === 'sortie' && saisie.motif !== 'transfert' ? (
+          inconnuAvant
+            ? { coutMoyenAlors: null, benefice: null, margeInconnue: true }
+            : {
+              coutMoyenAlors: coutAvant,
+              benefice: saisie.motif === 'perte'
+                ? -coutAvant * qteUnites
+                : saisie.valeurUnitaire <= 0
+                ? 0
+                : (saisie.valeurUnitaire - coutAvant) * qteUnites,
+            }
+        ) : {}),
         partenaireId: saisie.partenaireId ?? null,
         partenaireNom: saisie.partenaireNom ?? null,
         siteLieId: saisie.siteLieId ?? null,
@@ -287,10 +337,12 @@ export async function ecrireLignesEnLot(
         const connue = variantesSite.some(v => v.cle === saisie.varianteCle);
         const maj: VarianteSite[] = connue
           ? variantesSite.map(v => v.cle === saisie.varianteCle
-              ? { ...v, stock: nouveauStock, coutMoyen: nouveauCout }
+              ? { ...v, stock: nouveauStock, coutMoyen: nouveauCout,
+                  coutInconnu: inconnuApres }
               : v)
           : [...variantesSite, {
               cle: saisie.varianteCle, stock: nouveauStock, coutMoyen: nouveauCout,
+              coutInconnu: inconnuApres,
             }];
         const total = maj.reduce((n, v) => n + (v.stock ?? 0), 0);
         batch.update(refDetention, { variantes: maj, stock: total });
@@ -298,12 +350,19 @@ export async function ecrireLignesEnLot(
           id: det.id, data: { ...det.data, variantes: maj, stock: total },
         });
       } else {
-        batch.update(refDetention, { stock: nouveauStock, coutMoyen: nouveauCout });
+        batch.update(refDetention, {
+          stock: nouveauStock, coutMoyen: nouveauCout,
+          coutInconnu: inconnuApres,
+        });
         /* Le rayon suit ce que le lot écrira : deux lignes du même article
-           s'enchaînent au lieu de repartir du même stock. */
+           s'enchaînent au lieu de repartir du même stock. Le drapeau les
+           suit aussi — sinon la seconde ligne d'un même produit croirait
+           encore le coût inconnu alors que la première vient de le
+           poser. */
         registre.detentions.set(cle, {
           id: det.id,
-          data: { ...det.data, stock: nouveauStock, coutMoyen: nouveauCout },
+          data: { ...det.data, stock: nouveauStock, coutMoyen: nouveauCout,
+                  coutInconnu: inconnuApres },
         });
       }
 
