@@ -54,6 +54,12 @@ export default function ListeMouvementsStock({
      l'écran s'ouvrait sur les sorties — vide — pendant qu'un dossier
      d'entrée attendait juste à côté. */
   const [sens, setSens] = useState<SensAjustement>('entree');
+  /* Deux façons de lire la même chose. Les dossiers répondent « qu'est-ce
+     qui attend un geste » ; les motifs répondent « où part la
+     marchandise » — trois cartons cassés et deux cents ne se lisent pas
+     dans une liste de références. Le responsable des commandes n'a que
+     les dossiers : c'est eux qu'il va compter. */
+  const [vue, setVue] = useState<'dossiers' | 'motifs'>('dossiers');
   const [recherche, setRecherche] = useState('');
   /* Échafaudage d'essai : déclarer d'un coup le stock de départ d'un
      catalogue qu'on vient de charger. Part avec le test. */
@@ -109,19 +115,63 @@ export default function ListeMouvementsStock({
    * marchandise a valu, pas ce qu'elle aurait rapporté. */
   const quantiteEtat = (e: EtatAjustement) => duSens
     .filter(d => d.etat === e)
-    .reduce((n, d) => n + d.lignes.reduce(
-      (m, l) => m + (d.etat === 'confirme'
-        ? (l.quantiteConstatee ?? 0) : l.quantiteDeclaree), 0), 0);
+    .reduce((n, d) => n + quantiteDossier(d), 0);
 
-  const valeurEtat = (e: EtatAjustement) => duSens
-    .filter(d => d.etat === e)
-    .reduce((n, d) => n + d.lignes.reduce((m, l) => {
+  /* Ce que pèse un dossier, en argent.
+   *
+   * Un seul endroit le calcule : les cartes d'étape, la colonne du
+   * tableau et le regroupement par motif lisent tous cette fonction. Deux
+   * calculs séparés finiraient par donner deux chiffres pour le même
+   * dossier. */
+  const valeurDossier = (d: DossierAjustement) =>
+    d.lignes.reduce((m, l) => {
       const q = d.etat === 'confirme'
         ? (l.quantiteConstatee ?? 0) : l.quantiteDeclaree;
       /* À l'entrée, le coût est sur la ligne ; à la sortie, il vient du
          rayon. On prend celui qui existe. */
       return m + q * (l.cout ?? couts.get(l.produitId) ?? 0);
-    }, 0), 0);
+    }, 0);
+
+  const quantiteDossier = (d: DossierAjustement) =>
+    d.lignes.reduce((n, l) => n + (d.etat === 'confirme'
+      ? (l.quantiteConstatee ?? 0) : l.quantiteDeclaree), 0);
+
+  const valeurEtat = (e: EtatAjustement) => duSens
+    .filter(d => d.etat === e)
+    .reduce((n, d) => n + valeurDossier(d), 0);
+
+  /* Ce que chaque motif pèse, sur le sens regardé.
+   *
+   * Seuls les dossiers confirmés comptent. Un motif dit ce que la maison
+   * a perdu ou gagné par cette voie — ce qui est réellement sorti du
+   * rayon. Une casse déclarée n'a encore rien cassé : la marchandise est
+   * là, personne n'est allé compter, et l'inscrire gonflerait la perte
+   * d'un dossier qui peut être annulé ou corrigé au comptage. C'est la
+   * confirmation qui fait le fait.
+   *
+   * Les motifs sans aucun dossier confirmé ne paraissent pas : une ligne
+   * à zéro n'apprend rien. Ce qui attend se lit dans la vue dossiers, et
+   * dans les cartes d'étape juste au-dessus. */
+  const parMotif = Object.entries(MOTIFS_AJUSTEMENT)
+    .filter(([, r]) => r.sens === sens)
+    .map(([cle, regle]) => {
+      const siens = duSens.filter(d => d.motif === cle && d.etat === 'confirme');
+      return {
+        cle, regle,
+        nb: siens.length,
+        quantite: siens.reduce((n, d) => n + quantiteDossier(d), 0),
+        valeur: siens.reduce((n, d) => n + valeurDossier(d), 0),
+        /* Ce qui n'a pas encore été confirmé sur ce motif : pas compté
+           dans la valeur, mais dit à part — sinon on croirait qu'il n'y
+           a rien en route. */
+        attente: duSens.filter(
+          d => d.motif === cle && d.etat !== 'confirme' && d.etat !== 'annule').length,
+      };
+    })
+    .filter(m => m.nb > 0 || m.attente > 0)
+    .sort((a, b) => b.valeur - a.valeur || b.nb - a.nb);
+
+  const totalMotifs = parMotif.reduce((n, m) => n + m.valeur, 0);
 
   const terme = recherche.trim().toLowerCase();
   const affiches = duSens.filter(d => !terme
@@ -159,13 +209,16 @@ export default function ListeMouvementsStock({
       cle: 'quantite', label: 'Quantité', rang: 'corps',
       /* Le constaté ne s'affiche qu'une fois confirmé : avant, il
          annoncerait un comptage qui n'a pas eu lieu. */
-      rendu: d => (
-        <span className="font-bold">
-          {d.lignes.reduce((n, l) => n + (d.etat === 'confirme'
-            ? (l.quantiteConstatee ?? 0) : l.quantiteDeclaree), 0)}
-        </span>
-      ),
+      rendu: d => <span className="font-bold">{quantiteDossier(d)}</span>,
     },
+    /* Ce que le mouvement engage. Le responsable des commandes compte des
+       sacs, pas des francs : la colonne ne paraît pas pour lui. */
+    ...(voitLArgent ? [{
+      cle: 'valeur', label: 'Valeur', rang: 'corps' as const,
+      rendu: (d: DossierAjustement) => (
+        <span className="font-bold">{formatMontant(valeurDossier(d))}</span>
+      ),
+    }] : []),
     {
       cle: 'par', label: 'Déclaré par', rang: 'pied',
       rendu: d => d.parNom ?? '—',
@@ -306,19 +359,125 @@ export default function ListeMouvementsStock({
           s'arrêter. */}
       <div className="mt-4 rounded-2xl border border-gray-100 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-gray-900">
         <div className="mb-4 flex flex-wrap items-center gap-3">
-          <ChampRecherche valeur={recherche} onChange={setRecherche}
-            placeholder="Référence, motif, produit…"
-            className="min-w-[200px] flex-1" />
+          {/* Deux angles sur la même matière. Le choix ne paraît que pour
+              qui voit l'argent : aux commandes, il n'y a qu'une liste à
+              aller compter. */}
+          {voitLArgent && (
+            <div className="flex items-center rounded-xl bg-gray-100 p-1 dark:bg-gray-800">
+              {([
+                { cle: 'dossiers' as const, label: 'Dossiers' },
+                { cle: 'motifs' as const, label: 'Par motif' },
+              ]).map(o => (
+                <button key={o.cle} type="button" onClick={() => setVue(o.cle)}
+                  className={`rounded-lg px-3 py-1.5 text-xs font-bold transition-all ${
+                    vue === o.cle
+                      ? 'bg-white text-indigo-600 shadow-sm dark:bg-gray-700 dark:text-indigo-400'
+                      : 'text-gray-400 hover:text-gray-600'}`}>
+                  {o.label}
+                </button>
+              ))}
+            </div>
+          )}
+          {/* Chercher une référence n'a de sens que dans la liste : la
+              vue par motif tient en quelques lignes. */}
+          {(!voitLArgent || vue === 'dossiers') && (
+            <ChampRecherche valeur={recherche} onChange={setRecherche}
+              placeholder="Référence, motif, produit…"
+              className="min-w-[200px] flex-1" />
+          )}
         </div>
 
-        <ListeDossiers
-          dossiers={affiches}
-          colonnes={colonnes}
-          cleDe={d => d.id}
-          onOuvrir={d => router.push(
-            `/site/${d.siteId}/ajustements/${d.id}${marqueOrigine(ensemble, false)}`)}
-          compte={`${affiches.length} mouvement${affiches.length > 1 ? 's' : ''}`}
-        />
+        {voitLArgent && vue === 'motifs' ? (
+          parMotif.length === 0 ? (
+            <p className="py-10 text-center text-xs text-gray-400">
+              Aucun mouvement confirmé sur ce sens.
+            </p>
+          ) : (
+            <>
+              {/* Le compte seul : le total redisait la colonne Valeur,
+                  mot pour mot quand il n'y a qu'un motif. */}
+              <p className="mb-3 text-xs text-gray-400">
+                {parMotif.filter(m => m.nb > 0).length} motif
+                {parMotif.filter(m => m.nb > 0).length > 1 ? 's' : ''}
+              </p>
+              <div className="overflow-x-auto">
+                <table className="w-full text-center text-xs">
+                  <thead>
+                    <tr className="bg-indigo-600 text-white">
+                      <th className="rounded-l-lg px-3 py-2.5 text-left font-bold">Motif</th>
+                      <th className="px-3 py-2.5 font-bold">Mouvements</th>
+                      <th className="px-3 py-2.5 font-bold">Articles</th>
+                      <th className="px-3 py-2.5 font-bold">Valeur</th>
+                      <th className="rounded-r-lg px-3 py-2.5 font-bold">Part</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {parMotif.map(m => {
+                      const part = totalMotifs > 0
+                        ? Math.round((m.valeur / totalMotifs) * 100) : 0;
+                      return (
+                        <tr key={m.cle}
+                          className="border-b border-gray-50 last:border-0 dark:border-gray-800">
+                          <td className="px-3 py-3 text-left">
+                            <span className="font-bold text-gray-900 dark:text-gray-100">
+                              {m.regle.libelle}
+                            </span>
+                            {/* Ce qui appauvrit la maison se dit : une
+                                casse n'est pas un usage interne. */}
+                            {m.regle.perte && (
+                              <span className="ml-2 rounded-full bg-red-50 px-1.5 py-0.5 text-[10px] font-bold text-red-600 dark:bg-red-900/20 dark:text-red-400">
+                                Perte
+                              </span>
+                            )}
+                            {/* Ce qui attend n'entre pas dans la valeur :
+                                on le dit à part, sinon on croirait que
+                                rien n'est en route. */}
+                            {m.attente > 0 && (
+                              <span className="ml-2 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+                                {m.attente} en attente
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-3 py-3 text-gray-500">{m.nb}</td>
+                          <td className="px-3 py-3 text-gray-500">{m.quantite}</td>
+                          <td className={`px-3 py-3 font-bold ${m.regle.perte
+                            ? 'text-red-500'
+                            : 'text-gray-900 dark:text-gray-100'}`}>
+                            {formatMontant(m.valeur)}
+                          </td>
+                          <td className="px-3 py-3">
+                            {/* La part se voit d'un coup d'œil : deux
+                                nombres côte à côte demandent une division
+                                de tête. */}
+                            <div className="mx-auto flex max-w-[110px] items-center gap-2">
+                              <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800">
+                                <div className={`h-full rounded-full ${m.regle.perte
+                                  ? 'bg-red-400' : 'bg-indigo-500'}`}
+                                  style={{ width: `${part}%` }} />
+                              </div>
+                              <span className="w-8 text-right text-[11px] font-medium text-gray-400">
+                                {part}%
+                              </span>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )
+        ) : (
+          <ListeDossiers
+            dossiers={affiches}
+            colonnes={colonnes}
+            cleDe={d => d.id}
+            onOuvrir={d => router.push(
+              `/site/${d.siteId}/ajustements/${d.id}${marqueOrigine(ensemble, false)}`)}
+            compte={`${affiches.length} mouvement${affiches.length > 1 ? 's' : ''}`}
+          />
+        )}
       </div>
     </div>
   );
