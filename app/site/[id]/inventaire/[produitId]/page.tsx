@@ -743,6 +743,13 @@ export default function FicheProduitPage() {
                         <thead>
                           <tr className="bg-indigo-600 text-white">
                             <th className="text-center px-3 py-2.5 font-medium">Emballage</th>
+                            {/* À quelles déclinaisons ce conditionnement
+                                s'applique. La colonne ne paraît que s'il
+                                y a des déclinaisons : sans elles, la
+                                question ne se pose pas. */}
+                            {variantes.length > 0 && (
+                              <th className="text-center px-3 py-2.5 font-medium">Variantes</th>
+                            )}
                             <th className="text-center px-3 py-2.5 font-medium">Contenu</th>
                             <th className="text-center px-3 py-2.5 font-medium">Stock</th>
                             <th className="text-center px-3 py-2.5 font-medium">Prix</th>
@@ -752,21 +759,29 @@ export default function FicheProduitPage() {
                         <tbody className="divide-y divide-gray-50 dark:divide-gray-800">
                           {emballages.map(e => (
                             <tr key={e.nom} className="hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
-                              <td className="px-3 py-2.5 text-center">
-                                <span className="font-medium text-gray-900 dark:text-gray-100">
-                                  {e.nom}
-                                </span>
-                                {/* À quelles déclinaisons il s'applique.
-                                    Sans cette mention, on ne peut plus
-                                    relire ce qu'on a posé — et on
-                                    recrée un conditionnement qui
-                                    existait déjà pour une autre. */}
-                                {(e.variantes?.length ?? 0) > 0 && (
-                                  <span className="ml-2 rounded-full bg-indigo-50 px-1.5 py-0.5 text-[10px] font-bold text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-400">
-                                    {e.variantes!.join(' · ')}
-                                  </span>
-                                )}
+                              <td className="px-3 py-2.5 font-medium text-gray-900 dark:text-gray-100 text-center">
+                                {e.nom}
                               </td>
+                              {/* Sans cette colonne, on ne peut plus
+                                  relire ce qu'on a posé — et on recrée un
+                                  conditionnement qui existait déjà pour
+                                  une autre déclinaison. */}
+                              {variantes.length > 0 && (
+                                <td className="px-3 py-2.5 text-center">
+                                  {(e.variantes?.length ?? 0) === 0 ? (
+                                    <span className="text-xs text-gray-400">Toutes</span>
+                                  ) : (
+                                    <span className="inline-flex flex-wrap justify-center gap-1">
+                                      {e.variantes!.map(v => (
+                                        <span key={v}
+                                          className="rounded-full bg-indigo-50 px-1.5 py-0.5 text-[10px] font-bold text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-400">
+                                          {v}
+                                        </span>
+                                      ))}
+                                    </span>
+                                  )}
+                                </td>
+                              )}
                               <td className="px-3 py-2.5 text-gray-600 dark:text-gray-400 text-center">{e.quantite} {uniteLabel}{e.quantite > 1 ? 's' : ''}</td>
                               {/* Combien d'emballages *complets* le stock permet de former :
                                   un carton à moitié rempli n'est pas un carton, d'où la
