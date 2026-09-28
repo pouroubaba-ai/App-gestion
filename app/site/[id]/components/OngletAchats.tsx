@@ -369,6 +369,15 @@ export default function OngletAchats({ siteId, userId, role, sites, titre }: Pro
         ]).map(c => {
           const liste = c.etats.flatMap(e => parEtat(e));
           const actif = c.cle === 'confirme' ? vue === 'confirme' : vue !== 'confirme';
+          /* Ce que la carte pèse, et ce qu'il reste à payer dessus. Le
+             compte seul disait combien de dossiers, jamais combien ils
+             engagent — or c'est la question qu'on se pose en ouvrant
+             l'écran. Un dossier confirmé vaut ce qui est arrivé ; les
+             autres, ce qui était annoncé. */
+          const valeur = liste.reduce((n, a) => n + (c.cle === 'confirme'
+            ? valeurRecue(a.lignes) : valeurEnvoyee(a.lignes)), 0);
+          const verse = liste.reduce((n, a) => n + (a.avanceVersee ?? 0), 0);
+          const reste = Math.max(0, valeur - verse);
           return (
             <button key={c.cle} type="button"
               onClick={() => {
@@ -396,8 +405,36 @@ export default function OngletAchats({ siteId, userId, role, sites, titre }: Pro
               </span>
               <span className={`${hankenGrotesk.className} mt-1.5 block text-[19px] font-bold leading-7 tracking-tight sm:text-[26px] sm:leading-8 ${
                 actif ? 'text-white' : 'text-neutral-900 dark:text-white'}`}>
-                {liste.length}
+                {montreArgent ? formatMontant(valeur) : liste.length}
               </span>
+              {!montreArgent && (
+                <span className={`mt-0.5 block text-[11px] font-medium ${
+                  actif ? 'text-indigo-100' : 'text-neutral-400'}`}>
+                  dossier{liste.length > 1 ? 's' : ''}
+                </span>
+              )}
+              {/* Le même pied qu'en vue par statut : versé d'un côté, dû de
+                  l'autre. Deux écrans qui montrent le même dossier n'ont
+                  pas à le dire différemment. */}
+              {montreArgent && (
+                <span className={`mt-2.5 flex justify-between gap-2 border-t pt-2 text-xs ${
+                  actif ? 'border-white/15' : 'border-black/[0.06] dark:border-white/10'}`}>
+                  <span className="flex items-baseline gap-1.5">
+                    <span className={actif ? 'text-indigo-100' : 'text-neutral-400'}>Versé</span>
+                    <span className={`font-bold ${actif ? 'text-white' : 'text-neutral-900 dark:text-white'}`}>
+                      {formatMontant(verse)}
+                    </span>
+                  </span>
+                  <span className="flex items-baseline gap-1.5">
+                    <span className={actif ? 'text-indigo-100' : 'text-neutral-400'}>Reste</span>
+                    <span className={`font-bold ${reste > 0
+                      ? (actif ? 'text-amber-200' : 'text-orange-500')
+                      : (actif ? 'text-white' : 'text-neutral-900 dark:text-white')}`}>
+                      {formatMontant(reste)}
+                    </span>
+                  </span>
+                </span>
+              )}
             </button>
           );
         })}
