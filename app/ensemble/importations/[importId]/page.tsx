@@ -241,9 +241,13 @@ export default function FicheImportationPage() {
           if (!(prix > 0)) return;
           (parProduit[cle] ??= []).push({ siteId: d.siteId, prix, stock });
         };
-        ajoute(d.produitId, d.prixVente ?? 0, d.stock ?? 0);
+        /* Le marché relevé, et lui seul : le prix qu'on pratique est une
+           décision, le lire comme un prix de marché ferait passer notre
+           propre choix pour une contrainte extérieure. */
+        ajoute(d.produitId, d.prixMarche ?? 0, d.stock ?? 0);
         for (const v of (d.variantes ?? [])) {
-          ajoute(`${d.produitId}:${v.cle}`, v.prixVente ?? 0, v.stock ?? 0);
+          ajoute(`${d.produitId}:${v.cle}`,
+            v.prixMarche ?? d.prixMarche ?? 0, v.stock ?? 0);
         }
       }
       setPrixParSite(parProduit);

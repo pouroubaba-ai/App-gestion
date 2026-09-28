@@ -35,6 +35,8 @@ export interface VarianteSite {
   stock: number;
   coutMoyen: number;
   prixVente?: number | null;
+  /** Ce qui se pratique autour : un fait, pas une décision. */
+  prixMarche?: number | null;
   /**
    * Le rayon ignore ce qu'il a payé cette marchandise.
    *
@@ -63,6 +65,15 @@ export interface ProduitSite {
    */
   coutInconnu?: boolean;
   prixVente: number;
+  /**
+   * Ce qui se pratique autour, quand on le sait.
+   *
+   * Le prix de vente est une décision ; celui-ci est un fait extérieur,
+   * qui ne dépend pas de nous et peut passer sous notre coût. Les
+   * confondre ferait passer une contrainte du marché pour un choix.
+   * Absent tant que personne ne l'a constaté.
+   */
+  prixMarche?: number | null;
   seuilAlerte?: number | null;
   /** Le stock par variante, quand le produit en a. */
   variantes?: VarianteSite[];
@@ -104,6 +115,7 @@ export async function ouvrirDetention(params: {
       mieux, et ce drapeau empêche de le lire comme une valeur. */
   coutInconnu?: boolean;
   prixVente?: number;
+  prixMarche?: number | null;
   seuilAlerte?: number | null;
   variantes?: VarianteSite[];
 }): Promise<string> {
@@ -118,6 +130,7 @@ export async function ouvrirDetention(params: {
     coutMoyen: params.coutMoyen ?? 0,
     ...(params.coutInconnu ? { coutInconnu: true } : {}),
     prixVente: params.prixVente ?? 0,
+    prixMarche: params.prixMarche ?? null,
     seuilAlerte: params.seuilAlerte ?? null,
     variantes: params.variantes ?? [],
     createdAt: serverTimestamp(),
@@ -144,6 +157,9 @@ export async function ouvrirPartout(params: {
       premier achat. Les autres sites partent à zéro de toute façon. */
   coutOrigineInconnu?: boolean;
   prixOrigine?: number;
+  /** Le marché constaté : il vaut pour tous les sites tant qu'aucun
+      n'en relève un autre. */
+  marcheOrigine?: number | null;
   seuilOrigine?: number | null;
   variantesOrigine?: VarianteSite[];
 }): Promise<void> {
@@ -162,6 +178,7 @@ export async function ouvrirPartout(params: {
          un transfert doit pouvoir vendre sans reparamétrer sa fiche. Il
          reste libre de le changer ensuite. */
       prixVente: params.prixOrigine ?? 0,
+      prixMarche: params.marcheOrigine ?? null,
       seuilAlerte: estOrigine ? (params.seuilOrigine ?? null) : null,
       variantes: estOrigine
         ? (params.variantesOrigine ?? [])

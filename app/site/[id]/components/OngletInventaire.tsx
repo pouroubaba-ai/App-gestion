@@ -384,6 +384,9 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
   const [prixMarche, setPrixMarche] =
     useState<Record<string, { siteId: string; prix: number }[]>>({});
   const [prixVente, setPrixVente] = useState('');
+  /* Ce qui se pratique autour, quand on le connaît. Facultatif : un
+     produit neuf n'a pas encore de marché. */
+  const [prixMarcheSaisi, setPrixMarcheSaisi] = useState('');
   const [coutAchat, setCoutAchat] = useState('');
   /* stock saisi, et l'emballage dans lequel il est exprimé ('' = unité de base) */
   const [stockInitial, setStockInitial] = useState('');
@@ -482,9 +485,12 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
         if (!(prix > 0)) return;
         (marche[cle] ??= []).push({ siteId: d.siteId, prix });
       };
-      noter(d.produitId, d.prixVente ?? 0);
+      /* Le marché relevé, et lui seul. Le prix qu'on pratique est une
+         décision : le lire comme un prix de marché ferait passer notre
+         propre choix pour une contrainte extérieure. */
+      noter(d.produitId, d.prixMarche ?? 0);
       for (const v of (d.variantes ?? [])) {
-        noter(`${d.produitId}:${v.cle}`, v.prixVente ?? 0);
+        noter(`${d.produitId}:${v.cle}`, v.prixMarche ?? d.prixMarche ?? 0);
       }
     }
     for (const k of Object.keys(marche)) marche[k].sort((a, b) => a.prix - b.prix);
@@ -560,7 +566,7 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
     /* rien à choisir dans une liste vide : on ouvre directement en saisie */
     setModeCategorie(categories.length > 0 ? 'existant' : 'nouveau');
     setModeUnite(unites.length > 0 ? 'existant' : 'nouveau');
-    setPrixVente(''); setCoutAchat(''); setStockInitial(''); setStockEmballage(''); setSeuilAlerte(''); setSeuilEmballage('');
+    setPrixVente(''); setPrixMarcheSaisi(''); setCoutAchat(''); setStockInitial(''); setStockEmballage(''); setSeuilAlerte(''); setSeuilEmballage('');
     setEmballages([]); setCaracs([]); setSaisieValeur({}); setVariantesSaisie([]);
     setModalVariante(false); setSelectionEnCours({}); setErreurVariante('');
     setOngletForm('general');
@@ -738,6 +744,7 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
          premier achat le posera. */
       coutOrigineInconnu: coutIgnore,
       prixOrigine: prixProduit,
+      marcheOrigine: parseMontant(prixMarcheSaisi) || null,
       seuilOrigine: seuilAlerte
         ? enUnites(seuilAlerte, seuilEmballage, emballagesValides) : null,
       variantesOrigine: variantes.map((v: any) => ({
@@ -1333,7 +1340,7 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
                         <th className="px-3 py-2.5 text-center font-medium">Catégorie</th>
                         {([
                           { cle: 'cout' as const,     label: 'Coût' },
-                          { cle: 'prix' as const,     label: 'Prix' },
+                          { cle: 'prix' as const,     label: 'Prix recommandé' },
                           { cle: 'marche' as const,   label: 'Prix du marché' },
                           { cle: 'stock' as const,    label: 'Stock' },
                           { cle: 'benefice' as const, label: 'Bénéfice' },
@@ -1803,9 +1810,20 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
                       <input type="number" placeholder="Ex. 500" value={coutAchat} onChange={e => setCoutAchat(e.target.value)}
                         className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
                     </div>
+                    {/* Deux prix, deux natures. Le recommandé est ce
+                        qu'on décide de pratiquer ; le marché est ce qui
+                        se pratique autour, qu'on le veuille ou non. Les
+                        confondre sous « prix de vente » faisait passer un
+                        fait extérieur pour une décision. */}
                     <div className="flex-1 min-w-0">
-                      <p className="text-xs font-bold text-gray-400 uppercase mb-1">Prix de vente</p>
+                      <p className="text-xs font-bold text-gray-400 uppercase mb-1">Prix recommandé</p>
                       <input type="number" placeholder="Ex. 750" value={prixVente} onChange={e => setPrixVente(e.target.value)}
+                        className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-bold text-gray-400 uppercase mb-1">Prix du marché</p>
+                      <input type="number" placeholder="Facultatif" value={prixMarcheSaisi}
+                        onChange={e => setPrixMarcheSaisi(e.target.value)}
                         className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
                     </div>
                     {/* Un stock se pose dans un rayon : sans site désigné,

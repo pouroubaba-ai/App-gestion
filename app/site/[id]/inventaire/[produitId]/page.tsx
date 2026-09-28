@@ -31,6 +31,8 @@ interface Variante {
   stock: number;
   coutMoyen: number;
   prixVente?: number;
+  /* Ce qui se pratique autour : un fait, pas une décision. */
+  prixMarche?: number | null;
 }
 
 interface Produit {
@@ -40,6 +42,7 @@ interface Produit {
   categorie?: string;
   unite: string;
   prixVente: number;
+  prixMarche?: number | null;
   coutMoyen: number;
   stock: number;
   seuilAlerte?: number | null;
@@ -134,6 +137,9 @@ export default function FicheProduitPage() {
   const [suppVariante, setSuppVariante] = useState<Variante | null>(null);
   const [editVariante, setEditVariante] = useState<Variante | null>(null);
   const [edVPrix, setEdVPrix] = useState('');
+  /* Le marché constaté, sur le produit et sur chaque variante. */
+  const [edMarche, setEdMarche] = useState('');
+  const [edVMarche, setEdVMarche] = useState('');
 
   /* emballages */
   const [modalEmballage, setModalEmballage] = useState(false);
@@ -183,6 +189,7 @@ export default function FicheProduitPage() {
           stock: det?.stock ?? 0,
           coutMoyen: det?.coutMoyen ?? 0,
           prixVente: det?.prixVente ?? 0,
+          prixMarche: (det as any)?.prixMarche ?? null,
           seuilAlerte: det?.seuilAlerte ?? null,
           variantes: (d.variantes ?? []).map((v: any) => {
             const vs = (det?.variantes ?? []).find((x: any) => x.cle === v.cle);
@@ -191,6 +198,7 @@ export default function FicheProduitPage() {
               stock: vs?.stock ?? 0,
               coutMoyen: vs?.coutMoyen ?? 0,
               prixVente: vs?.prixVente ?? v.prixVente ?? 0,
+              prixMarche: vs?.prixMarche ?? v.prixMarche ?? null,
             };
           }),
         } as Produit);
@@ -313,10 +321,15 @@ export default function FicheProduitPage() {
     if (!produit || !editVariante) return;
     setSaving(true);
     const prix = parseMontant(edVPrix);
+    const marche = parseMontant(edVMarche);
     const maj = variantes.map(v => v.cle === editVariante.cle
       ? (() => {
-          const { prixVente, ...reste } = v;
-          return prix > 0 ? { ...reste, prixVente: prix } : reste;
+          const { prixVente, prixMarche, ...reste } = v as any;
+          return {
+            ...reste,
+            ...(prix > 0 ? { prixVente: prix } : {}),
+            ...(marche > 0 ? { prixMarche: marche } : {}),
+          };
         })()
       : v);
     /* Le prix d'une variante est une décision de ce site : il s'inscrit
@@ -324,7 +337,8 @@ export default function FicheProduitPage() {
     const detId = detention?.id
       ?? await ouvrirDetention({ produitId, siteId, userId: user!.uid });
     const varsSite = (detention?.variantes ?? []).map(v => v.cle === editVariante.cle
-      ? { ...v, prixVente: prix > 0 ? prix : null }
+      ? { ...v, prixVente: prix > 0 ? prix : null,
+          prixMarche: marche > 0 ? marche : null }
       : v);
     await updateDoc(doc(db, 'produits_site', detId), { variantes: varsSite });
     setDetention(d => (d ? { ...d, variantes: varsSite } : d));
@@ -360,6 +374,7 @@ export default function FicheProduitPage() {
     setEdNom(produit.designation);
     setEdCategorie(produit.categorie ?? '');
     setEdPrix(produit.prixVente ? String(produit.prixVente) : '');
+    setEdMarche(produit.prixMarche ? String(produit.prixMarche) : '');
     setEdSeuil(produit.seuilAlerte != null ? String(produit.seuilAlerte) : '');
     setEdSeuilEmb('');
     setErreurEdition('');
@@ -381,6 +396,7 @@ export default function FicheProduitPage() {
     };
     const local = {
       prixVente: parseMontant(edPrix),
+      prixMarche: parseMontant(edMarche) || null,
       seuilAlerte: edSeuil ? enUnites(edSeuil, edSeuilEmb, emballages) : null,
     };
     await updateDoc(doc(db, 'produits', produitId), commun);
@@ -501,7 +517,7 @@ export default function FicheProduitPage() {
           </div>
 
           {vue === 'infos' ? (
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
               <div className="bg-gray-50 dark:bg-gray-800 rounded-xl p-3">
                 <p className="text-xs text-gray-400 mb-0.5">Stock</p>
                 <p className="text-sm font-bold text-gray-900 dark:text-gray-100">{stockTotal} {uniteLabel}{stockTotal > 1 ? 's' : ''}</p>
@@ -510,9 +526,18 @@ export default function FicheProduitPage() {
                 <p className="text-xs text-gray-400 mb-0.5">Coût unitaire</p>
                 <p className="text-sm font-bold text-gray-900 dark:text-gray-100">{produit.coutMoyen > 0 ? formatMontant(produit.coutMoyen) : '—'}</p>
               </div>
+              {/* Deux prix, deux natures : celui qu'on décide de
+                  pratiquer, et celui qui se pratique autour — un fait
+                  extérieur, qui peut passer sous notre coût. */}
               <div className="bg-gray-50 dark:bg-gray-800 rounded-xl p-3">
-                <p className="text-xs text-gray-400 mb-0.5">Prix de vente</p>
+                <p className="text-xs text-gray-400 mb-0.5">Prix recommandé</p>
                 <p className="text-sm font-bold text-gray-900 dark:text-gray-100">{produit.prixVente > 0 ? formatMontant(produit.prixVente) : '—'}</p>
+              </div>
+              <div className="bg-gray-50 dark:bg-gray-800 rounded-xl p-3">
+                <p className="text-xs text-gray-400 mb-0.5">Prix du marché</p>
+                <p className="text-sm font-bold text-gray-900 dark:text-gray-100">
+                  {(produit.prixMarche ?? 0) > 0 ? formatMontant(produit.prixMarche!) : '—'}
+                </p>
               </div>
               <div className="bg-gray-50 dark:bg-gray-800 rounded-xl p-3">
                 <p className="text-xs text-gray-400 mb-0.5">Seuil d&apos;alerte</p>
@@ -623,7 +648,11 @@ export default function FicheProduitPage() {
                               <th className="text-center px-3 py-2.5 font-medium">Variante</th>
                               <th className="text-center px-3 py-2.5 font-medium">Code-barres</th>
                               <th className="text-center px-3 py-2.5 font-medium">Coût</th>
-                              <th className="text-center px-3 py-2.5 font-medium">Prix</th>
+                              {/* Ce qu'on recommande, puis ce qui se
+                                  pratique autour : le second ne se
+                                  décide pas. */}
+                              <th className="text-center px-3 py-2.5 font-medium">Prix recommandé</th>
+                              <th className="text-center px-3 py-2.5 font-medium">Prix du marché</th>
                               <th className="text-center px-3 py-2.5 font-medium">Stock</th>
                               <th className="text-center px-3 py-2.5 font-medium">Bénéfice</th>
                               <th className="text-center px-3 py-2.5 font-medium">Valeur</th>
@@ -660,6 +689,14 @@ export default function FicheProduitPage() {
                                   {formatMontant(v.prixVente ?? produit.prixVente)}
                                   {v.prixVente == null && <span className="text-xs text-gray-400 ml-1">hérité</span>}
                                 </td>
+                                <td className="px-3 py-2.5 text-center text-gray-600 dark:text-gray-400">
+                                  {(v.prixMarche ?? produit.prixMarche ?? 0) > 0
+                                    ? formatMontant(v.prixMarche ?? produit.prixMarche!)
+                                    : '—'}
+                                  {v.prixMarche == null && (produit.prixMarche ?? 0) > 0 && (
+                                    <span className="ml-1 text-xs text-gray-400">hérité</span>
+                                  )}
+                                </td>
                                 <td className="px-3 py-2.5 text-gray-600 dark:text-gray-400 text-center">{v.stock}</td>
                                 <td className={`px-3 py-2.5 font-medium ${beneficeVar > 0 ? 'text-green-600' : beneficeVar < 0 ? 'text-red-500' : 'text-gray-400'} text-center`}>
                                   {v.stock > 0 ? formatMontant(beneficeVar) : '—'}
@@ -672,7 +709,11 @@ export default function FicheProduitPage() {
                                 </td>
                                 <td className="px-3 py-2.5 text-center">
                                   <div className="flex items-center gap-1.5">
-                                    <button onClick={() => { setEditVariante(v); setEdVPrix(v.prixVente != null ? String(v.prixVente) : ''); }}
+                                    <button onClick={() => {
+                                      setEditVariante(v);
+                                      setEdVPrix(v.prixVente != null ? String(v.prixVente) : '');
+                                      setEdVMarche(v.prixMarche != null ? String(v.prixMarche) : '');
+                                    }}
                                       className="p-1.5 rounded-lg text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-colors">
                                       <Pencil size={12} />
                                     </button>
@@ -1089,8 +1130,16 @@ export default function FicheProduitPage() {
                     </p>
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-xs font-bold text-gray-400 uppercase mb-1">Prix de vente</p>
+                    <p className="text-xs font-bold text-gray-400 uppercase mb-1">Prix recommandé</p>
                     <input type="number" value={edPrix} onChange={e => setEdPrix(e.target.value)}
+                      className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                  </div>
+                  {/* Ce qui se pratique autour : on le constate, on ne le
+                      décide pas. Il peut passer sous notre coût. */}
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-bold text-gray-400 uppercase mb-1">Prix du marché</p>
+                    <input type="number" placeholder="Facultatif" value={edMarche}
+                      onChange={e => setEdMarche(e.target.value)}
                       className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
                   </div>
                 </div>
@@ -1402,12 +1451,26 @@ export default function FicheProduitPage() {
                 <button onClick={() => setEditVariante(null)} className="text-gray-400 hover:text-gray-600 p-1"><X size={18} /></button>
               </div>
 
-              <p className="text-xs font-bold text-gray-400 uppercase mb-1">Prix de vente</p>
+              <p className="text-xs font-bold text-gray-400 uppercase mb-1">Prix recommandé</p>
               <input type="number" placeholder={produit.prixVente > 0 ? String(produit.prixVente) : '—'} value={edVPrix}
                 onChange={e => setEdVPrix(e.target.value)}
                 className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 mb-1 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
               <p className="text-xs text-gray-400 mb-4">
                 Vide = prix du produit ({formatMontant(produit.prixVente)}).
+              </p>
+
+              {/* Le marché d'une variante : une taille rare ne se vend pas
+                  au prix d'une courante. */}
+              <p className="text-xs font-bold text-gray-400 uppercase mb-1">Prix du marché</p>
+              <input type="number"
+                placeholder={(produit.prixMarche ?? 0) > 0 ? String(produit.prixMarche) : 'Facultatif'}
+                value={edVMarche}
+                onChange={e => setEdVMarche(e.target.value)}
+                className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 mb-1 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+              <p className="text-xs text-gray-400 mb-4">
+                {(produit.prixMarche ?? 0) > 0
+                  ? `Vide = marché du produit (${formatMontant(produit.prixMarche!)}).`
+                  : 'Ce qui se pratique autour, quand on le connaît.'}
               </p>
 
               <p className="text-xs font-bold text-gray-400 uppercase mb-1">Coût moyen</p>
