@@ -18,11 +18,15 @@ import {
   valeurEnvoyee, confirmerAchat, type LigneFlux,
 } from '@/lib/flux-marchandise';
 import { ChampNombre } from '@/components/Champs';
+import {
+  prixPourBenefice, beneficeActuel, coutTotal, tauxDeMarge,
+} from '@/lib/benefice';
 import SelecteurProduits, { type ProduitChoisissable }
   from '@/app/site/[id]/components/SelecteurProduits';
 import ModalGammeProduit from '@/app/site/[id]/components/ModalGammeProduit';
 import { produitsDuSite, sitesDeLActivite } from '@/lib/produits-site';
 import { creerProduitRapide, creerGammeRapide } from '@/lib/produit-rapide';
+import { coutMoyenApresEntree, enUnitesBase, emballagesDe } from '@/lib/mouvements';
 import { chargerDisponible } from '@/lib/attente-caisse';
 import DisponibleCaisse from '@/app/site/[id]/components/DisponibleCaisse';
 import { ecrireEnCaisse } from '@/lib/ecrire-caisse';
@@ -108,6 +112,18 @@ export default function FicheImportationPage() {
   const [lignesSales, setLignesSales] = useState(false);
   const [lignes, setLignes] = useState<LigneFlux[]>([]);
 
+  /* Le coût et les quantités se corrigent jusqu'à la confirmation : une
+     facture arrive avec d'autres chiffres qu'un devis, et rouvrir le
+     dossier pour cela n'aurait pas de sens. */
+  const [couts, setCouts] = useState<Record<number, number>>({});
+  const [qtes, setQtes] = useState<Record<number, number>>({});
+  const [chiffresSales, setChiffresSales] = useState(false);
+
+  /* Le bénéfice qu'on cherche sur le dossier entier. L'app en déduit des
+     prix — produit par produit on perd le total de vue. */
+  const [objectif, setObjectif] = useState(0);
+  const [blocBenefice, setBlocBenefice] = useState(false);
+
   /* Le prix de vente, ligne par ligne. Il se décide tard : tant que le
      fret et la douane ne sont pas répartis, on ignore ce que la
      marchandise aura coûté, et un prix posé avant serait posé à
@@ -151,6 +167,15 @@ export default function FicheImportationPage() {
       }
       return sale;
     });
+    setChiffresSales(sale => {
+      if (!sale) {
+        setCouts(Object.fromEntries(
+          (d.lignes ?? []).map((l, i) => [i, l.valeurUnitaire ?? 0])));
+        setQtes(Object.fromEntries(
+          (d.lignes ?? []).map((l, i) => [i, l.quantiteDemandee ?? 0])));
+      }
+      return sale;
+    });
     setFraisSales(sale => {
       if (!sale) {
         setFrais(d.frais ?? []);
@@ -168,14 +193,16 @@ export default function FicheImportationPage() {
     chargerReceptions(importId).then(setReceptions).catch(() => {});
   }, [importId]);
 
-  /* Le catalogue du site destinataire : c'est son rayon qu'on garnit. On
-     ne le lit que tant que la liste peut bouger. */
+  /* Le catalogue du site destinataire. Il sert à compléter la liste tant
+     qu'elle bouge, mais aussi — à tous les états — à dire ce que le rayon
+     détient déjà : son prix de vente en place, et le coût moyen que cette
+     entrée va déplacer. */
   useEffect(() => {
-    if (!dossier || dossier.etat !== 'en_attente') return;
+    if (!dossier) return;
     produitsDuSite(dossier.siteId)
       .then(p => setProduits(p as ProduitChoisissable[]))
       .catch(() => {});
-  }, [dossier?.siteId, dossier?.etat]);
+  }, [dossier?.siteId]);
 
   /* Le rôle se lit sur le site destinataire : c'est lui qui recevra la
      marchandise, et c'est son responsable des commandes qui comptera. */
@@ -230,6 +257,68 @@ export default function FicheImportationPage() {
   const fraisModifiables = dossier.etat !== 'confirme' && dossier.etat !== 'annule';
   const parts = fraisTotal > 0
     ? repartirFrais(dossier.lignes, frais, fraisCorrection, fraisCle) : null;
+
+  /**
+   * Ce que le rayon sait déjà de chaque ligne : son prix de vente en
+   * place, son stock et son coût moyen.
+   *
+   * Le dossier dit ce qu'on achète ; le rayon dit ce qu'on en fera. Les
+   * deux ensemble permettent de voir si le prix tient et où le coût
+   * moyen va se poser.
+   */
+  const rayon = dossier.lignes.map(l => {
+    const p = produits.find(x => x.id === l.produitId);
+    if (!p) return null;
+    const v = l.varianteCle
+      ? (p.variantes ?? []).find((x: any) => x.cle === l.varianteCle)
+      : null;
+    const contenance = l.emballage
+      ? (emballagesDe(p as any, l.varianteCle)
+          .find(e => e.nom === l.emballage)?.quantite ?? 1)
+      : 1;
+    return {
+      stock: v ? (v.stock ?? 0) : (p.stock ?? 0),
+      coutMoyen: v ? (v.coutMoyen ?? 0) : (p.coutMoyen ?? 0),
+      /* Le prix se tient à l'unité dans le rayon ; ici on raisonne dans
+         l'emballage commandé — il faut les mettre au même pas. */
+      prixVente: (v ? (v.prixVente ?? 0) : (p.prixVente ?? 0)) * contenance,
+      contenance,
+    };
+  });
+
+  /* Le prix déjà pratiqué, ramené à l'emballage du dossier. */
+  const etablis: Record<number, number> = {};
+  rayon.forEach((r, i) => { if (r && r.prixVente > 0) etablis[i] = r.prixVente; });
+
+  /**
+   * Où le coût moyen se posera, une fois cette entrée passée.
+   *
+   * C'est le chiffre qui décide de la marge, et ce n'est pas celui qu'on
+   * paie : un produit acheté 900 quand le rayon en tient mille à 700 ne
+   * coûtera pas 900, mais 714. Le voir avant de poser le prix évite de
+   * se croire à peine rentable — ou de découvrir à la première vente que
+   * le coût est passé au-dessus du prix.
+   *
+   * Frais compris : c'est le coût réel qui entre, pas le prix facturé.
+   */
+  const cumpApres = dossier.lignes.map((l, i) => {
+    const r = rayon[i];
+    if (!r) return null;
+    const qte = compte ? (recu[i] ?? 0) : (qtes[i] ?? l.quantiteDemandee ?? 0);
+    if (qte <= 0) return null;
+    const part = parts?.[i] ?? 0;
+    const reel = (couts[i] ?? l.valeurUnitaire ?? 0) + part / qte;
+    const p = produits.find(x => x.id === l.produitId);
+    const unites = p
+      ? enUnitesBase(qte, l.emballage, emballagesDe(p as any, l.varianteCle))
+      : qte;
+    if (unites <= 0) return null;
+    /* Le rayon compte à l'unité ; on y revient pour moyenner, puis on
+       remonte dans l'emballage du dossier pour l'afficher. */
+    const apres = coutMoyenApresEntree(
+      r.stock, r.coutMoyen, unites, (reel * qte) / unites);
+    return Math.round(apres * r.contenance);
+  });
 
   /* Les frais se posent entièrement, ou le dossier n'avance pas. */
   const controle = controlerRepartition(dossier.lignes, frais, fraisCorrection, fraisCle);
@@ -348,6 +437,12 @@ export default function FicheImportationPage() {
      marges en portent la trace, et le changer réécrirait le passé. */
   const prixEditables = dossier.etat !== 'confirme' && dossier.etat !== 'annule'
     && montreArgent;
+
+  /* Le coût et les quantités se corrigent tant que rien n'est figé : une
+     facture arrive avec d'autres chiffres qu'un devis, et c'est elle qui
+     fait foi. Après la confirmation, le coût moyen en porte la trace. */
+  const chiffresEditables = prixEditables && estAdmin
+    && dossier.etat !== 'en_attente';
 
   /* La liste ne se complète que tant que rien n'est parti : « Validé »
      dit que le fournisseur a accepté cette commande-là. */
@@ -480,11 +575,20 @@ export default function FicheImportationPage() {
     if (!dossier) return;
     setEnCours(true); setErreur('');
     try {
+      /* Prix, coût et quantités partent ensemble : ils décrivent la même
+         ligne, et les écrire séparément les ferait diverger le temps
+         d'une écriture. */
       await majPrixImportation({
         id: importId,
-        lignes: dossier.lignes.map((l, i) => ({ ...l, prixVente: prix[i] || null })),
+        lignes: dossier.lignes.map((l, i) => ({
+          ...l,
+          prixVente: prix[i] || null,
+          valeurUnitaire: couts[i] ?? l.valeurUnitaire,
+          quantiteDemandee: qtes[i] ?? l.quantiteDemandee,
+        })),
       });
       setPrixSales(false);
+      setChiffresSales(false);
       await charger();
     } catch (e: any) { setErreur(e?.message ?? 'Échec.'); }
     finally { setEnCours(false); }
@@ -799,8 +903,12 @@ export default function FicheImportationPage() {
                       <th className="px-3 py-2.5 font-medium">Part frais</th>
                       <th className="px-3 py-2.5 font-medium">Coût réel</th>
                     </>}
-                    {/* Le prix se pose ici, une fois le coût réel connu :
-                        avant les frais, on le poserait à l'aveugle. */}
+                    {/* Le prix du rayon, puis celui qu'on pose : on voit
+                        d'un coup d'œil de combien on s'en écarte. */}
+                    {/* Où le coût moyen du rayon va se poser : c'est lui
+                        qui décidera de la marge, pas le prix payé. */}
+                    <th className="px-3 py-2.5 font-medium">CUMP après</th>
+                    <th className="px-3 py-2.5 font-medium">Prix établi</th>
                     <th className="px-3 py-2.5 font-medium">Prix de vente</th>
                     <th className="px-3 py-2.5 font-medium">Total</th>
                   </>}
@@ -853,8 +961,23 @@ export default function FicheImportationPage() {
                       <td className="px-3 py-2.5 text-gray-500">
                         {l.emballage ?? l.unite ?? 'unité'}
                       </td>
-                      <td className="px-3 py-2.5 text-gray-500">
-                        {l.quantiteDemandee.toLocaleString('fr-FR')}
+                      {/* Le commandé se corrige : le fournisseur annonce
+                          parfois autre chose que ce qu'on avait demandé,
+                          et rouvrir le dossier pour un chiffre n'a pas
+                          de sens. Figé à la confirmation. */}
+                      <td className="px-3 py-2.5">
+                        {chiffresEditables ? (
+                          <ChampNombre valeur={qtes[i] ?? l.quantiteDemandee}
+                            onChange={n => {
+                              setQtes(q => ({ ...q, [i]: n }));
+                              setChiffresSales(true);
+                            }}
+                            className="w-24 rounded-lg border border-gray-200 bg-gray-50 px-2 py-1 text-center text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:border-gray-700 dark:bg-gray-800" />
+                        ) : (
+                          <span className="text-gray-500">
+                            {l.quantiteDemandee.toLocaleString('fr-FR')}
+                          </span>
+                        )}
                       </td>
                       <td className="px-3 py-2.5">
                         <span className="inline-flex items-center gap-1.5">
@@ -878,8 +1001,22 @@ export default function FicheImportationPage() {
                         </span>
                       </td>
                       {montreArgent && <>
-                        <td className="px-3 py-2.5 text-gray-500">
-                          {formatMontant(l.valeurUnitaire)}
+                        {/* Le coût se corrige aussi : une facture arrive
+                            avec un autre chiffre que le devis, et c'est
+                            elle qui fait foi. */}
+                        <td className="px-3 py-2.5">
+                          {chiffresEditables ? (
+                            <ChampNombre valeur={couts[i] ?? l.valeurUnitaire}
+                              onChange={n => {
+                                setCouts(c => ({ ...c, [i]: n }));
+                                setChiffresSales(true);
+                              }}
+                              className="w-28 rounded-lg border border-gray-200 bg-gray-50 px-2 py-1 text-center text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:border-gray-700 dark:bg-gray-800" />
+                          ) : (
+                            <span className="text-gray-500">
+                              {formatMontant(l.valeurUnitaire)}
+                            </span>
+                          )}
                         </td>
                         {parts && <>
                           {/* La part se corrige à la main : la règle donne
@@ -905,6 +1042,32 @@ export default function FicheImportationPage() {
                             {formatMontant(Math.round(reel))}
                           </td>
                         </>}
+                        {/* Le coût moyen après cette entrée.
+                            Un produit acheté 900 quand le rayon en tient
+                            mille à 700 ne coûte pas 900 : il coûtera 714.
+                            C'est ce chiffre qui décide de la marge. */}
+                        <td className="px-3 py-2.5">
+                          {cumpApres[i] != null ? (
+                            <span className="inline-flex flex-col leading-tight">
+                              <span className="font-bold text-gray-900 dark:text-gray-100">
+                                {formatMontant(cumpApres[i]!)}
+                              </span>
+                              {rayon[i] && rayon[i]!.stock > 0 && (
+                                <span className="text-[10px] text-gray-400">
+                                  avant {formatMontant(
+                                    rayon[i]!.coutMoyen * rayon[i]!.contenance)}
+                                </span>
+                              )}
+                            </span>
+                          ) : <span className="text-gray-300">—</span>}
+                        </td>
+                        {/* Ce que le produit se vend déjà en rayon : le
+                            point de comparaison. Sans lui, on pose un
+                            prix sans savoir si le marché le suivra. */}
+                        <td className="px-3 py-2.5 text-gray-400">
+                          {(etablis[i] ?? 0) > 0
+                            ? formatMontant(etablis[i]!) : '—'}
+                        </td>
                         {/* Sous le coût réel, le champ passe en rouge :
                             c'est le seul moment où la perte se corrige
                             encore, la confirmation fige le prix. */}
@@ -956,7 +1119,7 @@ export default function FicheImportationPage() {
                       <tr>
                         {/* Le détail s'étend sur toute la ligne : les colonnes
                             d'argent et l'action ne sont pas toujours là. */}
-                        <td colSpan={4 + (montreArgent ? (parts ? 5 : 3) : 0)
+                        <td colSpan={4 + (montreArgent ? (parts ? 7 : 5) : 0)
                           + (saisieQuantites && peut ? 1 : 0)}
                           className="px-3 pb-3">
                           <div className="rounded-xl bg-gray-50 p-3 text-left dark:bg-gray-800/50">
@@ -1006,13 +1169,105 @@ export default function FicheImportationPage() {
 
           {/* Un prix saisi et non inscrit ne vaut rien : la confirmation
               lirait l'ancien. */}
-          {prixSales && (
+          {/* Poser les prix depuis ce qu'on veut gagner.
+              Produit par produit, on perd le total de vue : en annonçant
+              le bénéfice cherché sur le dossier, l'app propose des prix
+              qui y mènent — en gardant les écarts du marché. */}
+          {prixEditables && parts !== undefined && (() => {
+            const lignesPourCalcul = dossier.lignes.map((l, i) => ({
+              ...l,
+              valeurUnitaire: couts[i] ?? l.valeurUnitaire,
+              quantiteDemandee: qtes[i] ?? l.quantiteDemandee,
+              quantiteRecue: compte ? (recu[i] ?? 0) : null,
+              prixVente: prix[i] ?? l.prixVente ?? 0,
+            })) as LigneFlux[];
+            const cout = coutTotal(lignesPourCalcul, parts);
+            const actuel = beneficeActuel(lignesPourCalcul, parts);
+            const tauxActuel = tauxDeMarge(actuel, cout);
+            const tauxVise = tauxDeMarge(objectif, cout);
+
+            return (
+              <div className="mt-4 rounded-xl border border-gray-100 p-4 dark:border-gray-800">
+                <button type="button"
+                  onClick={() => {
+                    setBlocBenefice(b => !b);
+                    if (!blocBenefice && objectif <= 0) setObjectif(Math.max(0, actuel));
+                  }}
+                  className="flex w-full items-center justify-between gap-2 text-left">
+                  <span className="text-sm font-bold text-gray-900 dark:text-gray-100">
+                    Bénéfice recherché
+                  </span>
+                  <span className="flex items-center gap-2 text-xs text-gray-400">
+                    Aux prix actuels{' '}
+                    <span className={`font-bold ${actuel >= 0
+                      ? 'text-green-600' : 'text-red-500'}`}>
+                      {formatMontant(actuel)}
+                    </span>
+                    {tauxActuel != null && <span>({tauxActuel} %)</span>}
+                  </span>
+                </button>
+
+                {blocBenefice && (
+                  <div className="mt-3 flex flex-col gap-3">
+                    <p className="text-xs leading-snug text-gray-400">
+                      L’objectif se répartit au prorata de ce que chaque produit
+                      marge déjà en rayon : celui qui marge bien porte plus. Les
+                      prix proposés restent modifiables un à un.
+                    </p>
+                    <div className="flex flex-wrap items-end gap-3">
+                      <label className="flex flex-col gap-1">
+                        <span className="text-xs font-bold text-gray-500 dark:text-gray-400">
+                          Bénéfice voulu
+                        </span>
+                        <ChampNombre valeur={objectif} onChange={setObjectif}
+                          className="w-40 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-right text-sm text-gray-900 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100" />
+                      </label>
+                      <div className="flex flex-col gap-1">
+                        <span className="text-xs font-bold text-gray-500 dark:text-gray-400">
+                          Soit un taux de
+                        </span>
+                        <span className="rounded-xl bg-gray-50 px-3 py-2 text-sm font-bold text-gray-700 dark:bg-gray-800 dark:text-gray-200">
+                          {tauxVise != null ? `${tauxVise} %` : '—'}
+                        </span>
+                      </div>
+                      <button type="button" disabled={objectif <= 0}
+                        onClick={() => {
+                          const proposes = prixPourBenefice(
+                            lignesPourCalcul, parts, objectif,
+                            dossier.lignes.map((_, i) => etablis[i] ?? null));
+                          setPrix(Object.fromEntries(proposes.map((v, i) => [i, v])));
+                          setPrixSales(true);
+                        }}
+                        className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-bold text-white transition-colors hover:bg-indigo-700 disabled:opacity-40">
+                        Proposer les prix
+                      </button>
+                    </div>
+                    {/* Une ligne sans prix en rayon ne pèse rien dans le
+                        partage : on le dit, plutôt que de lui inventer
+                        un prix sur rien. */}
+                    {dossier.lignes.some((_, i) => !(etablis[i] > 0)) && (
+                      <p className="rounded-lg bg-amber-50 px-3 py-2 text-[11px] leading-snug text-amber-700 dark:bg-amber-900/20 dark:text-amber-400">
+                        Certains produits n’ont pas encore de prix en rayon : ils
+                        gardent le leur, l’objectif se répartit sur les autres.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
+          {(prixSales || chiffresSales) && (
             <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
               <button type="button" disabled={enCours}
                 onClick={() => {
                   setPrix(Object.fromEntries(
                     dossier.lignes.map((l, i) => [i, l.prixVente ?? 0])));
-                  setPrixSales(false);
+                  setCouts(Object.fromEntries(
+                    dossier.lignes.map((l, i) => [i, l.valeurUnitaire ?? 0])));
+                  setQtes(Object.fromEntries(
+                    dossier.lignes.map((l, i) => [i, l.quantiteDemandee ?? 0])));
+                  setPrixSales(false); setChiffresSales(false);
                 }}
                 className="rounded-xl border border-gray-200 px-3 py-2 text-xs font-bold text-gray-500 transition-colors hover:bg-gray-50 disabled:opacity-40 dark:border-gray-700 dark:hover:bg-gray-800">
                 Annuler
@@ -1020,7 +1275,7 @@ export default function FicheImportationPage() {
               <button type="button" onClick={enregistrerPrix} disabled={enCours}
                 className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-3 py-2 text-xs font-bold text-white transition-colors hover:bg-indigo-700 disabled:opacity-40">
                 {enCours ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
-                Inscrire les prix
+                Inscrire
               </button>
             </div>
           )}
