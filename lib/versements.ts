@@ -3,6 +3,7 @@ import {
 } from 'firebase/firestore';
 import { db } from './firebase';
 import { valeurRecue, valeurVente } from './flux-marchandise';
+import { estOuverture } from './ouverture';
 import { enregistrerVersement } from './versements-collection';
 import { ecrireEnCaisse } from './ecrire-caisse';
 
@@ -77,9 +78,15 @@ export async function couvertureTiers(
   const documents = dSnap.docs
     .map(d => {
       const x = d.data() as any;
-      const total = role === 'fournisseur'
-        ? valeurRecue(x.lignes ?? [])
-        : valeurVente(x.lignes ?? []);
+      /* Un solde d'ouverture n'a pas de lignes : sa valeur est portee en
+         propre. La mesurer sur des lignes absentes rendrait zero, le
+         dossier sortirait de la liste, et le versement n'aurait nulle part
+         ou s'imputer — l'argent entrerait sans que la dette baisse. */
+      const total = estOuverture(x)
+        ? (x.montantOuverture ?? 0)
+        : role === 'fournisseur'
+          ? valeurRecue(x.lignes ?? [])
+          : valeurVente(x.lignes ?? []);
       return {
         id: d.id,
         reference: x.reference ?? '—',
