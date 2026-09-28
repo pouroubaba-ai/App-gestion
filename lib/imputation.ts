@@ -4,6 +4,7 @@ import {
 import { db } from './firebase';
 import type { RoleTiers } from './soldes';
 import { valeurRecue, valeurVente } from './flux-marchandise';
+import { estOuverture } from './ouverture';
 import { totalFrais } from './frais';
 
 /**
@@ -53,6 +54,10 @@ interface Ouvert {
 function valeurLignes(
   lignes: any[], role: RoleTiers, dossier?: any,
 ): number {
+  /* Un solde d'ouverture n'a pas de lignes : sa valeur est portee en
+     propre. La mesurer sur des lignes absentes rendrait zero, le dossier
+     serait tenu pour solde, et rien ne pourrait s'imputer dessus. */
+  if (estOuverture(dossier)) return dossier?.montantOuverture ?? 0;
   /* Côté fournisseur, les frais d'approche font partie de la dette :
      ils lui sont dus au même titre que la marchandise. */
   return role === 'fournisseur'
@@ -81,7 +86,7 @@ export async function dossiersOuverts(
   return snap.docs
     .map(d => {
       const x = d.data() as any;
-      const total = valeurLignes(x.lignes ?? [], role);
+      const total = valeurLignes(x.lignes ?? [], role, x);
       const reste = Math.max(0, total - (x.avanceVersee ?? 0));
       const date = role === 'fournisseur'
         ? (x.dateConfirmation ?? x.dateReception ?? x.dateCommande ?? null)
