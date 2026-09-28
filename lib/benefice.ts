@@ -60,10 +60,9 @@ export function coutTotal(
  * Les prix qui mènent au bénéfice voulu.
  *
  * Chaque ligne porte l'objectif à hauteur de ce qu'elle marge déjà. Une
- * ligne sans prix établi ne pèse rien dans ce partage : on ne sait pas
- * ce qu'elle vaut au marché, et lui attribuer une part inventerait un
- * prix sur rien. Elle reçoit alors le taux moyen du dossier, faute de
- * mieux — c'est dit à l'écran, pour qu'on la regarde.
+ * ligne sans prix connu porte quand même : son coût réel sert de
+ * référence, comme partout ailleurs. L'écarter reviendrait à la vendre
+ * au prix coûtant sans que personne ne l'ait décidé.
  *
  * Le dernier franc va à la ligne la plus lourde : l'arrondi perdu ferait
  * que la somme des marges ne ferait pas l'objectif.
@@ -82,26 +81,32 @@ export function prixPourBenefice(
   const qtes = lignes.map(l => l.quantiteRecue ?? l.quantiteDemandee ?? 0);
   const reels = lignes.map((l, i) => coutReelUnitaire(l, parts?.[i] ?? 0));
 
-  /* Ce que chaque ligne marge aujourd'hui, au prix du rayon. C'est le
-     poids du partage : les écarts entre familles de produits sont une
-     information du marché, pas un hasard à corriger. */
+  /* Ce que chaque ligne pèse dans le partage.
+   *
+   * Quand un prix est déjà pratiqué, c'est la marge qu'il dégage : les
+   * écarts entre familles de produits sont une information du marché,
+   * pas un hasard à corriger.
+   *
+   * Sans prix connu, la ligne porte quand même — elle est dans le
+   * dossier, elle se vendra. Son coût réel sert alors de référence,
+   * faute de mieux : une marchandise qui a coûté cher porte davantage
+   * qu'une autre, ce qui est la règle par défaut partout ailleurs.
+   * L'écarter du partage reviendrait à la vendre au prix coûtant sans
+   * que personne ne l'ait décidé. */
   const poids = lignes.map((_, i) => {
+    if (qtes[i] <= 0) return 0;
     const etabli = prixEtablis[i];
-    if (etabli == null || etabli <= 0 || qtes[i] <= 0) return 0;
-    return Math.max(0, qtes[i] * (etabli - reels[i]));
+    if (etabli != null && etabli > 0) {
+      const marge = qtes[i] * (etabli - reels[i]);
+      /* Un prix sous le coût ne donne pas un poids négatif : la ligne
+         pèse alors ce qu'elle vaut, pas moins que rien. */
+      if (marge > 0) return marge;
+    }
+    return qtes[i] * reels[i];
   });
 
   const poidsTotal = poids.reduce((s, p) => s + p, 0);
-
-  /* Aucune ligne ne sait ce qu'elle vaut : on ne peut que répartir au
-     prorata du coût, et l'écran dira que la proposition est aveugle. */
-  if (poidsTotal <= 0) {
-    const base = lignes.map((_, i) => qtes[i] * reels[i]);
-    const baseTotale = base.reduce((s, b) => s + b, 0);
-    if (baseTotale <= 0) return prix;
-    return lignes.map((l, i) => qtes[i] <= 0 ? (l.prixVente ?? 0)
-      : Math.round(reels[i] + (objectif * base[i] / baseTotale) / qtes[i]));
-  }
+  if (poidsTotal <= 0) return prix;
 
   let pose = 0;
   let plusLourde = 0;
@@ -114,10 +119,7 @@ export function prixPourBenefice(
   marges[plusLourde] += objectif - pose;
 
   return lignes.map((l, i) => {
-    if (qtes[i] <= 0) return l.prixVente ?? 0;
-    /* Une ligne sans prix établi garde le sien : on ne lui impose pas un
-       prix déduit d'un poids nul. */
-    if (poids[i] <= 0) return l.prixVente ?? 0;
+    if (qtes[i] <= 0 || poids[i] <= 0) return l.prixVente ?? 0;
     return Math.round(reels[i] + marges[i] / qtes[i]);
   });
 }

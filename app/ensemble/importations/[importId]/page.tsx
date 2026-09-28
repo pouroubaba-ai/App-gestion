@@ -1238,7 +1238,13 @@ export default function FicheImportationPage() {
                         onClick={() => {
                           const proposes = prixPourBenefice(
                             lignesPourCalcul, parts, objectif,
-                            dossier.lignes.map((_, i) => etablis[i] ?? null));
+                            /* Le prix du rayon dit ce que le marché
+                               accepte. À défaut, celui qu'on vient de
+                               poser sur la ligne : c'est une décision,
+                               elle vaut mieux qu'un poids nul qui
+                               laisserait la ligne hors du partage. */
+                            dossier.lignes.map((l, i) =>
+                              etablis[i] || prix[i] || l.prixVente || null));
                           setPrix(Object.fromEntries(proposes.map((v, i) => [i, v])));
                           setPrixSales(true);
                         }}
@@ -1246,31 +1252,9 @@ export default function FicheImportationPage() {
                         Proposer les prix
                       </button>
                     </div>
-                    {/* Une ligne sans prix en rayon ne pèse rien dans le
-                        partage : elle n'a pas de marge connue, et lui en
-                        inventer une poserait un prix sur rien. On dit
-                        lesquelles — « certains produits » devant vingt
-                        lignes ne se vérifie pas. */}
-                    {(() => {
-                      const sansPrix = dossier.lignes
-                        .map((l, i) => ({ l, i }))
-                        .filter(({ i }) => !(etablis[i] > 0));
-                      if (sansPrix.length === 0) return null;
-                      const seule = sansPrix.length === dossier.lignes.length - 1;
-                      return (
-                        <p className="rounded-lg bg-amber-50 px-3 py-2 text-[11px] leading-snug text-amber-700 dark:bg-amber-900/20 dark:text-amber-400">
-                          {sansPrix.length === 1 ? 'Ce produit n’a' : 'Ces produits n’ont'}
-                          {' '}pas encore de prix en rayon :{' '}
-                          <span className="font-bold">
-                            {sansPrix.map(({ l }) => l.designation).join(', ')}
-                          </span>. {sansPrix.length === 1 ? 'Il garde' : 'Ils gardent'}
-                          {' '}le sien, et l’objectif se répartit sur
-                          {seule ? ' la seule ligne restante' : ' les autres'}.
-                          {' '}Pose{sansPrix.length === 1 ? '' : 'z'} un prix de vente pour
-                          {' '}{sansPrix.length === 1 ? 'qu’il entre' : 'qu’ils entrent'} dans le partage.
-                        </p>
-                      );
-                    })()}
+                    {/* Sans prix en rayon, la ligne porte quand même :
+                        son coût réel sert de référence. Rien à
+                        signaler — le partage est entier. */}
                   </div>
                 )}
               </div>
