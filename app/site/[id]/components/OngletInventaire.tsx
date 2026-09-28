@@ -873,10 +873,23 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
     if (vue === 'stock' && !filtreProduit(p, filtreStock)) return false;
     const q = recherche.trim().toLowerCase();
     if (!q) return true;
-    return p.designation.toLowerCase().includes(q)
-      || (p.categorie ?? '').toLowerCase().includes(q)
-      || (p.codeBarre ?? '').includes(q)
-      || (p.variantes ?? []).some(v => v.cle.toLowerCase().includes(q) || (v.codeBarre ?? '').includes(q));
+    /* On cherche sur le nom tel qu'il s'affiche, variante comprise :
+       « rallonge usb 4t 10w » ne se trouvait pas, parce que le nom et la
+       variante étaient testés séparément — et aucun des deux ne porte la
+       phrase entière.
+
+       Les mots se cherchent un à un et dans n'importe quel ordre : on
+       tape ce dont on se souvient, pas le libellé exact. */
+    const mots = q.split(/\s+/).filter(Boolean);
+    const contient = (texte: string) =>
+      mots.every(m => texte.includes(m));
+
+    const base = `${p.designation} ${p.categorie ?? ''}`.toLowerCase();
+    if (contient(base)) return true;
+    if ((p.codeBarre ?? '').includes(q)) return true;
+    return (p.variantes ?? []).some(v =>
+      contient(`${base} ${v.cle}`.toLowerCase())
+      || (v.codeBarre ?? '').includes(q));
   });
 
   /**
@@ -898,7 +911,19 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
         prixVente: p.prixVente,
       }];
     }
-    return vs.map(v => ({
+    /* La recherche retient le produit dès qu'une de ses variantes
+       correspond : ici on ne garde que celles qui répondent vraiment.
+       Chercher « 10W » ne doit pas ramener le 30W avec. */
+    const q = recherche.trim().toLowerCase();
+    const mots = q.split(/\s+/).filter(Boolean);
+    const gardees = mots.length === 0 ? vs : vs.filter(v => {
+      const nom = `${p.designation} ${p.categorie ?? ''} ${v.cle}`.toLowerCase();
+      return mots.every(m => nom.includes(m))
+        || (v.codeBarre ?? '').includes(q)
+        || (p.codeBarre ?? '').includes(q);
+    });
+
+    return (gardees.length > 0 ? gardees : vs).map(v => ({
       cle: `${p.id}:${v.cle}`, produit: p, varianteCle: v.cle,
       stock: v.stock ?? 0,
       coutMoyen: v.coutMoyen ?? p.coutMoyen,
