@@ -31,7 +31,7 @@ import {
 import {
   ETAPES_IMPORTATION, LIBELLES_IMPORTATION, AIDE_IMPORTATION,
   prochainEtat, peutAvancer, avancerImportation, annulerImportation,
-  majFraisImportation,
+  majFraisImportation, majPrixImportation,
   type Importation, type EtatImportation,
 } from '@/lib/importations';
 
@@ -93,6 +93,13 @@ export default function FicheImportationPage() {
      fournisseur ne passe pas par le tiroir du site. */
   const [origine, setOrigine] = useState<'caisse' | 'admin'>('caisse');
 
+  /* Le prix de vente, ligne par ligne. Il se décide tard : tant que le
+     fret et la douane ne sont pas répartis, on ignore ce que la
+     marchandise aura coûté, et un prix posé avant serait posé à
+     l'aveugle. */
+  const [prix, setPrix] = useState<Record<number, number>>({});
+  const [prixSales, setPrixSales] = useState(false);
+
   /* Le détail des réceptions d'une ligne, déplié à la demande : c'est
      là qu'une quantité posée par erreur s'annule. */
   const [detailLigne, setDetailLigne] = useState<number | null>(null);
@@ -118,6 +125,13 @@ export default function FicheImportationPage() {
       setSoldeReelCaisse(caisse.solde);
       setEngageCaisse(caisse.engage);
     }
+    setPrixSales(sale => {
+      if (!sale) {
+        setPrix(Object.fromEntries(
+          (d.lignes ?? []).map((l, i) => [i, l.prixVente ?? 0])));
+      }
+      return sale;
+    });
     setFraisSales(sale => {
       if (!sale) {
         setFrais(d.frais ?? []);
@@ -286,6 +300,25 @@ export default function FicheImportationPage() {
    * deux mouvements qui n'ont pas eu lieu. La dette s'éteint dans les
    * deux cas, et le versement dit lequel.
    */
+  /* Le prix se fige à la confirmation : après, le coût moyen et les
+     marges en portent la trace, et le changer réécrirait le passé. */
+  const prixEditables = dossier.etat !== 'confirme' && dossier.etat !== 'annule'
+    && montreArgent;
+
+  async function enregistrerPrix() {
+    if (!dossier) return;
+    setEnCours(true); setErreur('');
+    try {
+      await majPrixImportation({
+        id: importId,
+        lignes: dossier.lignes.map((l, i) => ({ ...l, prixVente: prix[i] || null })),
+      });
+      setPrixSales(false);
+      await charger();
+    } catch (e: any) { setErreur(e?.message ?? 'Échec.'); }
+    finally { setEnCours(false); }
+  }
+
   async function verser() {
     if (!user || !dossier || nouveauVersement <= 0 || depasseCaisse) return;
     setEnCours(true); setErreur('');
@@ -367,6 +400,9 @@ export default function FicheImportationPage() {
          comptée. */
       const lignes: LigneFlux[] = dossier!.lignes.map((l, i) => ({
         ...l, quantiteRecue: recu[i] ?? 0,
+        /* Le prix part avec la confirmation : c'est elle qui l'écrit sur
+           le produit, et un prix saisi sans partir se perdrait. */
+        prixVente: prix[i] || l.prixVente || null,
       }));
       /* Le même geste qu'un achat : le stock entre, les frais se
          répartissent dans le coût, la dette naît. Deux façons de le
@@ -549,6 +585,9 @@ export default function FicheImportationPage() {
                       <th className="px-3 py-2.5 font-medium">Part frais</th>
                       <th className="px-3 py-2.5 font-medium">Coût réel</th>
                     </>}
+                    {/* Le prix se pose ici, une fois le coût réel connu :
+                        avant les frais, on le poserait à l'aveugle. */}
+                    <th className="px-3 py-2.5 font-medium">Prix de vente</th>
                     <th className="px-3 py-2.5 font-medium">Total</th>
                   </>}
                   {saisieQuantites && peut && (
@@ -568,6 +607,13 @@ export default function FicheImportationPage() {
                   const manque = l.quantiteDemandee - recuLigne;
                   const part = parts?.[i] ?? 0;
                   const reel = qte > 0 ? l.valeurUnitaire + part / qte : l.valeurUnitaire;
+                  /* Vendre sous le coût réel, c'est vendre à perte — et le
+                     coût réel n'est pas le prix facturé : il porte le
+                     voyage. Un prix qui couvrait l'achat peut ne plus
+                     couvrir le fret. */
+                  const sousLeCout = (prix[i] ?? 0) > 0 && prix[i]! < Math.round(reel);
+                  const perteLigne = sousLeCout
+                    ? (Math.round(reel) - prix[i]!) * Math.max(qte, 1) : 0;
                   const ecart = compte && qte !== l.quantiteDemandee;
                   return (
                     <Fragment key={i}>
@@ -580,6 +626,14 @@ export default function FicheImportationPage() {
                         {l.designation}
                         {l.varianteLibelle && (
                           <span className="ml-1.5 text-gray-400">{l.varianteLibelle}</span>
+                        )}
+                        {/* La perte chiffrée, après le nom : « ce produit
+                            est à perte » se corrige, « 293 000 de perte »
+                            se corrige tout de suite. */}
+                        {perteLigne > 0 && (
+                          <span className="ml-1.5 rounded-full bg-red-100 px-1.5 py-0.5 text-[10px] font-bold text-red-700 dark:bg-red-900/30 dark:text-red-400">
+                            −{formatMontant(perteLigne)}
+                          </span>
                         )}
                       </td>
                       <td className="px-3 py-2.5 text-gray-500">
@@ -619,6 +673,28 @@ export default function FicheImportationPage() {
                             {formatMontant(Math.round(reel))}
                           </td>
                         </>}
+                        {/* Sous le coût réel, le champ passe en rouge :
+                            c'est le seul moment où la perte se corrige
+                            encore, la confirmation fige le prix. */}
+                        <td className="px-3 py-2.5">
+                          {prixEditables ? (
+                            <ChampNombre valeur={prix[i] ?? 0}
+                              onChange={n => {
+                                setPrix(p => ({ ...p, [i]: n }));
+                                setPrixSales(true);
+                              }}
+                              className={`w-28 rounded-lg border px-2 py-1 text-center text-xs focus:outline-none focus:ring-2 ${
+                                sousLeCout
+                                  ? 'border-red-300 bg-red-50 text-red-600 focus:ring-red-500 dark:border-red-800 dark:bg-red-900/20 dark:text-red-400'
+                                  : 'border-gray-200 bg-gray-50 focus:ring-indigo-500 dark:border-gray-700 dark:bg-gray-800'}`} />
+                          ) : (
+                            <span className={`font-medium ${sousLeCout
+                              ? 'text-red-600 dark:text-red-400'
+                              : 'text-gray-500'}`}>
+                              {(prix[i] ?? 0) > 0 ? formatMontant(prix[i]!) : '—'}
+                            </span>
+                          )}
+                        </td>
                         <td className="px-3 py-2.5 font-medium text-gray-900 dark:text-gray-100">
                           {formatMontant(qte * l.valeurUnitaire)}
                         </td>
@@ -648,7 +724,7 @@ export default function FicheImportationPage() {
                       <tr>
                         {/* Le détail s'étend sur toute la ligne : les colonnes
                             d'argent et l'action ne sont pas toujours là. */}
-                        <td colSpan={4 + (montreArgent ? (parts ? 4 : 2) : 0)
+                        <td colSpan={4 + (montreArgent ? (parts ? 5 : 3) : 0)
                           + (saisieQuantites && peut ? 1 : 0)}
                           className="px-3 pb-3">
                           <div className="rounded-xl bg-gray-50 p-3 text-left dark:bg-gray-800/50">
@@ -694,6 +770,27 @@ export default function FicheImportationPage() {
               </tbody>
             </table>
           </div>
+
+          {/* Un prix saisi et non inscrit ne vaut rien : la confirmation
+              lirait l'ancien. */}
+          {prixSales && (
+            <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
+              <button type="button" disabled={enCours}
+                onClick={() => {
+                  setPrix(Object.fromEntries(
+                    dossier.lignes.map((l, i) => [i, l.prixVente ?? 0])));
+                  setPrixSales(false);
+                }}
+                className="rounded-xl border border-gray-200 px-3 py-2 text-xs font-bold text-gray-500 transition-colors hover:bg-gray-50 disabled:opacity-40 dark:border-gray-700 dark:hover:bg-gray-800">
+                Annuler
+              </button>
+              <button type="button" onClick={enregistrerPrix} disabled={enCours}
+                className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-3 py-2 text-xs font-bold text-white transition-colors hover:bg-indigo-700 disabled:opacity-40">
+                {enCours ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
+                Inscrire les prix
+              </button>
+            </div>
+          )}
 
           {montreArgent && (
             <div className="mt-4 flex justify-end border-t border-gray-100 pt-3 dark:border-gray-800">

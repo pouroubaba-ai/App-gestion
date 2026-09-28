@@ -339,6 +339,24 @@ export async function annulerImportation(params: {
 }
 
 /** Poser ou reprendre les frais du voyage, tant que rien n'est clos. */
+/**
+ * Fixe le prix de vente d'une ligne.
+ *
+ * Il se décide tard : à la commande, on ignore ce que le voyage coûtera.
+ * Le fret, la douane et la manutention ne se connaissent qu'en chemin, et
+ * c'est seulement une fois répartis qu'on sait ce que la marchandise aura
+ * réellement coûté. Poser le prix avant, c'est le poser à l'aveugle — et
+ * découvrir la perte à la première vente.
+ *
+ * La confirmation l'écrit ensuite sur le produit, comme pour un achat.
+ */
+export async function majPrixImportation(params: {
+  id: string;
+  lignes: LigneFlux[];
+}): Promise<void> {
+  await updateDoc(doc(db, 'importations', params.id), { lignes: params.lignes });
+}
+
 export async function majFraisImportation(params: {
   id: string;
   frais: Frais[];
