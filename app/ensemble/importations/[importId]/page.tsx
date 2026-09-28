@@ -895,6 +895,10 @@ export default function FicheImportationPage() {
                 <tr className="bg-indigo-600 text-white">
                   <th className="rounded-l-lg px-3 py-2.5 text-left font-medium">Produit</th>
                   <th className="px-3 py-2.5 font-medium">Emballage</th>
+                  {/* Ce que le rayon détient déjà : mille pièces en stock
+                      disent peut-être qu'il ne fallait pas commander
+                      cette ligne, dix disent l'inverse. */}
+                  <th className="px-3 py-2.5 font-medium">En stock</th>
                   <th className="px-3 py-2.5 font-medium">Commandé</th>
                   <th className="px-3 py-2.5 font-medium">Reçu</th>
                   {montreArgent && <>
@@ -960,6 +964,30 @@ export default function FicheImportationPage() {
                       </td>
                       <td className="px-3 py-2.5 text-gray-500">
                         {l.emballage ?? l.unite ?? 'unité'}
+                      </td>
+                      {/* Le rayon compte à l'unité, la ligne en cartons :
+                          on montre les deux quand ils diffèrent, sinon
+                          on croirait le stock exprimé en cartons. */}
+                      <td className="px-3 py-2.5">
+                        {!rayon[i] ? <span className="text-gray-300">—</span>
+                          : rayon[i]!.stock > 0 ? (
+                          <span className="inline-flex flex-col leading-tight">
+                            <span className="font-medium text-gray-600 dark:text-gray-300">
+                              {rayon[i]!.stock.toLocaleString('fr-FR')}
+                            </span>
+                            {rayon[i]!.contenance > 1 && (
+                              <span className="text-[10px] text-gray-400">
+                                {Math.floor(rayon[i]!.stock / rayon[i]!.contenance)
+                                  .toLocaleString('fr-FR')}{' '}
+                                {(l.emballage ?? '').toLowerCase()}
+                              </span>
+                            )}
+                          </span>
+                        ) : (
+                          <span className="text-xs font-bold text-orange-500">
+                            rupture
+                          </span>
+                        )}
                       </td>
                       {/* Le commandé se corrige : le fournisseur annonce
                           parfois autre chose que ce qu'on avait demandé,
@@ -1123,7 +1151,7 @@ export default function FicheImportationPage() {
                       <tr>
                         {/* Le détail s'étend sur toute la ligne : les colonnes
                             d'argent et l'action ne sont pas toujours là. */}
-                        <td colSpan={4 + (montreArgent ? (parts ? 7 : 5) : 0)
+                        <td colSpan={5 + (montreArgent ? (parts ? 7 : 5) : 0)
                           + (saisieQuantites && peut ? 1 : 0)}
                           className="px-3 pb-3">
                           <div className="rounded-xl bg-gray-50 p-3 text-left dark:bg-gray-800/50">
