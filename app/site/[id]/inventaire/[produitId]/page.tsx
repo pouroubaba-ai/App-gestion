@@ -1107,7 +1107,10 @@ export default function FicheProduitPage() {
         {/* Modal édition produit */}
         {modalEdition && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
-            <div className="bg-white dark:bg-gray-900 rounded-2xl w-full max-w-sm shadow-xl p-5 flex flex-col max-h-[85vh] min-h-0">
+            {/* Trois montants côte à côte : au format étroit, « Prix
+                recommandé » passait sur deux lignes et décalait son
+                champ des autres. */}
+            <div className="bg-white dark:bg-gray-900 rounded-2xl w-full max-w-lg shadow-xl p-5 flex flex-col max-h-[85vh] min-h-0">
               <div className="flex items-center justify-between mb-4 shrink-0">
                 <h2 className="text-base font-bold text-gray-900 dark:text-gray-100">Modifier le produit</h2>
                 <button onClick={() => setModalEdition(false)} className="text-gray-400 hover:text-gray-600 p-1"><X size={18} /></button>
