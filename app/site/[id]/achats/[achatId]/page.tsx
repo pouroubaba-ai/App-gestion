@@ -364,7 +364,11 @@ export default function FicheAchatPage() {
   /* Rien n'est appliqué au stock avant la confirmation : tant qu'elle n'a pas
      eu lieu, une quantité mal comptée doit pouvoir être reprise. On compte
      pendant le traitement — c'est là qu'on vérifie ce qui est arrivé. */
-  const quantitesEditables = achat.etat === 'recu' || achat.etat === 'traitement';
+  /* On compte en traitement, pas avant.
+     « Reçu » dit que la marchandise est là ; « en traitement » qu'on
+     l'ouvre et qu'on la compte. Déclarer des quantités dès la réception
+     mêlait les deux gestes, et faisait constater sans avoir vérifié. */
+  const quantitesEditables = achat.etat === 'traitement';
   /* Les frais se modifient jusqu'à la confirmation. Après, le coût moyen
      en porte la trace : les changer réécrirait des marges déjà figées sur
      des ventes qui ont eu lieu. Un dossier annulé ne bouge plus non

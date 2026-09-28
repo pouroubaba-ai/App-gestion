@@ -316,10 +316,12 @@ export default function NouvelAchatPage() {
     try {
       const f = fournisseurs.find(x => x.id === fournisseurId);
       const dateFinale = immediat ? aujourdhui() : date;
-      /* un achat immédiat est reçu dans le même geste : le demandé vaut le reçu */
-      const lignesFinales = immediat
-        ? lignes.map(l => ({ ...l, quantiteRecue: l.quantiteDemandee }))
-        : lignes;
+      /* Un achat immédiat constate l'arrivée, pas le compte.
+         Y poser le reçu égal au commandé remplissait la colonne avant
+         que quiconque ait ouvert un carton : le dossier recopiait le bon
+         de commande, et le comptage ne servait plus à rien. Le reçu
+         reste donc vide — il se déduira des réceptions déclarées. */
+      const lignesFinales = lignes;
 
       /* Recopié une fois, réutilisé par chaque étape du dossier. */
 

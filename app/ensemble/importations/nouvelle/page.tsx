@@ -5,7 +5,9 @@ import { db } from '@/lib/firebase';
 import { useAuth } from '@/lib/auth-context';
 import { useRouter } from 'next/navigation';
 import { Loader2, Check, Ship } from 'lucide-react';
-import { produitsDuSite } from '@/lib/produits-site';
+import { produitsDuSite, sitesDeLActivite } from '@/lib/produits-site';
+import { creerProduitRapide, creerGammeRapide } from '@/lib/produit-rapide';
+import ModalGammeProduit from '@/app/site/[id]/components/ModalGammeProduit';
 import { auteurCourant } from '@/lib/auteur';
 import SelecteurProduits, { ProduitChoisissable } from '@/app/site/[id]/components/SelecteurProduits';
 import { SelectCherchable } from '@/components/Champs';
@@ -42,6 +44,12 @@ export default function NouvelleImportationPage() {
   const [origine, setOrigine] = useState('');
   const [lignes, setLignes] = useState<LigneFlux[]>([]);
   const [note, setNote] = useState('');
+  /* Les produits nés pendant cette saisie : une pastille les signale sur
+     leur ligne, le temps qu'on relise le bon. */
+  const [produitsNeufs, setProduitsNeufs] = useState<Set<string>>(new Set());
+  /* La gamme en cours de description : le fournisseur n'apporte pas « une
+     ampoule », il apporte les 15 W et les 25 W. */
+  const [gamme, setGamme] = useState<string | null>(null);
   const [enCours, setEnCours] = useState(false);
   const [erreur, setErreur] = useState('');
 
@@ -85,6 +93,117 @@ export default function NouvelleImportationPage() {
       setFournisseurId('');
     })().catch(() => {});
   }, [siteId]);
+
+  /**
+   * Créer la marchandise qu'on ne trouve pas, sans quitter le bon.
+   *
+   * Un import apporte des références que la maison n'a jamais tenues —
+   * c'est même souvent pour cela qu'on importe. Aller les créer ailleurs
+   * ferait perdre le dossier en cours.
+   */
+  async function creerEtAjouter(designation: string) {
+    if (!user || !siteId) return;
+    setErreur('');
+    try {
+      const siteIds = activite?.id
+        ? await sitesDeLActivite(activite.id)
+        : [siteId];
+      const neuf = await creerProduitRapide({
+        activiteId: activite?.id ?? null,
+        userId: user.uid,
+        designation,
+        unite: 'pièce',
+        siteIds: siteIds.length > 0 ? siteIds : [siteId],
+        siteOrigine: siteId,
+      });
+
+      /* Il rejoint la liste sans qu'on relise tout : la relecture
+         coûterait une attente pour un produit qu'on vient d'écrire. */
+      setProduits(p => [...p, {
+        id: neuf.id, siteId,
+        designation: neuf.designation, unite: neuf.unite,
+        codeBarre: null, categorie: null,
+        emballages: [], caracteristiques: [], variantes: [],
+        actif: true, stock: 0, coutMoyen: 0, prixVente: 0,
+        seuilAlerte: null,
+      } as unknown as ProduitChoisissable]);
+      setProduitsNeufs(n => new Set(n).add(neuf.id));
+
+      setLignes(l => [...l, {
+        produitId: neuf.id,
+        designation: neuf.designation,
+        unite: neuf.unite,
+        varianteCle: null, varianteLibelle: null, emballage: null,
+        quantiteDemandee: 1, quantiteRecue: null,
+        valeurUnitaire: 0, prixVente: 0,
+      } as any]);
+    } catch (e: any) {
+      setErreur(e?.message ?? 'Le produit n’a pas pu être créé.');
+    }
+  }
+
+  /** Créer une gamme entière, et l'ajouter au bon. */
+  async function creerGammeEtAjouter(saisie: {
+    designation: string; unite: string; categorie: string | null;
+    emballages: any[]; caracteristiques: any[];
+    declinaisons: { selection: Record<string, string> }[];
+    cout: number; prix: number;
+  }) {
+    if (!user || !siteId) return;
+    setErreur('');
+    try {
+      const siteIds = activite?.id
+        ? await sitesDeLActivite(activite.id)
+        : [siteId];
+      const neuf = await creerGammeRapide({
+        activiteId: activite?.id ?? null,
+        userId: user.uid,
+        designation: saisie.designation,
+        unite: saisie.unite,
+        categorie: saisie.categorie,
+        emballages: saisie.emballages,
+        caracteristiques: saisie.caracteristiques,
+        declinaisons: saisie.declinaisons,
+        coutProduit: saisie.cout,
+        prixProduit: saisie.prix,
+        siteIds: siteIds.length > 0 ? siteIds : [siteId],
+        siteOrigine: siteId,
+      });
+
+      setProduits(p => [...p, {
+        id: neuf.id, siteId,
+        designation: neuf.designation, unite: neuf.unite,
+        codeBarre: null, categorie: saisie.categorie,
+        emballages: saisie.emballages,
+        caracteristiques: saisie.caracteristiques,
+        variantes: neuf.variantes.map(v => ({
+          ...v, stock: 0, coutMoyen: 0, prixVente: v.prixVente ?? saisie.prix,
+        })),
+        actif: true, stock: 0, coutMoyen: 0, prixVente: saisie.prix,
+        seuilAlerte: null,
+      } as unknown as ProduitChoisissable]);
+      setProduitsNeufs(n => new Set(n).add(neuf.id));
+
+      /* Une ligne par déclinaison. Sans déclinaison, une seule ligne. */
+      const nouvelles = neuf.variantes.length > 0
+        ? neuf.variantes.map(v => ({
+            produitId: neuf.id, designation: neuf.designation, unite: neuf.unite,
+            varianteCle: v.cle, varianteLibelle: v.cle, emballage: null,
+            quantiteDemandee: 1, quantiteRecue: null,
+            valeurUnitaire: saisie.cout, prixVente: v.prixVente ?? saisie.prix,
+          }))
+        : [{
+            produitId: neuf.id, designation: neuf.designation, unite: neuf.unite,
+            varianteCle: null, varianteLibelle: null, emballage: null,
+            quantiteDemandee: 1, quantiteRecue: null,
+            valeurUnitaire: saisie.cout, prixVente: saisie.prix,
+          }];
+      setLignes(l => [...l, ...(nouvelles as any[])]);
+      setGamme(null);
+    } catch (e: any) {
+      setErreur(e?.message ?? 'La gamme n’a pas pu être créée.');
+    }
+  }
 
   /* Une ligne à zéro n'est pas ignorée mais bloquante : la laisser
      passer ferait disparaître un produit qu'on croit avoir commandé. */
@@ -201,6 +320,9 @@ export default function NouvelleImportationPage() {
             onChange={setLignes}
             coutEditable montrerStock={false} labelCout="Coût d'achat"
             futur
+            onCreerProduit={creerEtAjouter}
+            onCreerGamme={setGamme}
+            produitsNeufs={produitsNeufs}
           />
         ) : (
           <div className="rounded-2xl border border-gray-100 bg-white p-8 text-center shadow-sm dark:border-gray-800 dark:bg-gray-900">
@@ -209,6 +331,13 @@ export default function NouvelleImportationPage() {
               que cette importation garnira.
             </p>
           </div>
+        )}
+
+        {gamme !== null && (
+          <ModalGammeProduit
+            designationInitiale={gamme}
+            onAnnuler={() => setGamme(null)}
+            onCreer={creerGammeEtAjouter} />
         )}
 
         {erreur && <p className="mt-3 text-xs text-red-500">{erreur}</p>}

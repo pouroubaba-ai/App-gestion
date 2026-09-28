@@ -4,7 +4,7 @@ import { doc, getDoc, updateDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/lib/auth-context';
 import { useParams, useRouter } from 'next/navigation';
-import { Loader2, Check, Ship, ArrowRight, X } from 'lucide-react';
+import { Loader2, Check, Ship, ArrowRight, X, CheckCheck, Plus, Undo2 } from 'lucide-react';
 import { formatMontant } from '@/lib/format';
 import { auteurCourant, auteurEtape } from '@/lib/auteur';
 import { roleSurSite, type RoleSite } from '@/lib/roles';
@@ -17,6 +17,10 @@ import {
   valeurEnvoyee, valeurRecue, confirmerAchat, type LigneFlux,
 } from '@/lib/flux-marchandise';
 import { ChampNombre } from '@/components/Champs';
+import {
+  enregistrerReception, annulerReception, chargerReceptions, recuParLigne,
+  type Reception,
+} from '@/lib/receptions';
 import {
   ETAPES_IMPORTATION, LIBELLES_IMPORTATION, AIDE_IMPORTATION,
   prochainEtat, peutAvancer, avancerImportation, annulerImportation,
@@ -61,8 +65,14 @@ export default function FicheImportationPage() {
   const [fraisCle, setFraisCle] = useState<CleRepartition>(CLE_PAR_DEFAUT);
   const [fraisSales, setFraisSales] = useState(false);
 
-  /* Les quantités comptées à la réception. */
-  const [comptees, setComptees] = useState<Record<number, number>>({});
+  /* Ce qui est arrivé, réception par réception.
+     Le reçu ne se saisit pas : il se déduit de ces faits datés. Un
+     conteneur livré en deux fois laisse deux traces, pas un nombre
+     écrasé. */
+  const [receptions, setReceptions] = useState<Reception[]>([]);
+  /* La saisie d'une quantité partielle, quand elle est ouverte. */
+  const [ligneRecue, setLigneRecue] = useState<number | null>(null);
+  const [qteRecue, setQteRecue] = useState(0);
 
   async function charger() {
     const snap = await getDoc(doc(db, 'importations', importId));
@@ -81,6 +91,10 @@ export default function FicheImportationPage() {
   }
 
   useEffect(() => { charger().catch(() => setLoading(false)); }, [importId]);
+
+  useEffect(() => {
+    chargerReceptions(importId).then(setReceptions).catch(() => {});
+  }, [importId]);
 
   /* Le rôle se lit sur le site destinataire : c'est lui qui recevra la
      marchandise, et c'est son responsable des commandes qui comptera. */
@@ -128,10 +142,89 @@ export default function FicheImportationPage() {
   const parts = fraisTotal > 0
     ? repartirFrais(dossier.lignes, frais, fraisCorrection, fraisCle) : null;
 
+  /* Le reçu se déduit des réceptions, il ne se saisit pas. */
+  const recu = recuParLigne(receptions);
+
   const suivant = prochainEtat(dossier.etat, role, estAdmin);
   const peut = peutAvancer(dossier.etat, role, estAdmin);
   /* C'est à la réception qu'on compte : avant, il n'y a rien à confronter. */
   const saisieQuantites = dossier.etat === 'traitement';
+
+  /**
+   * Déclarer ce qui est arrivé : une ligne, ou tout ce qui manque.
+   *
+   * Rien n'est prérempli. Un reçu posé d'avance à la quantité commandée
+   * ferait que personne ne compte — et le système ne servirait plus qu'à
+   * recopier le bon de commande.
+   */
+  async function completer(ligneIndex: number | null) {
+    if (!dossier || !user || enCours) return;
+    const aEcrire: { i: number; quantite: number }[] = [];
+    dossier.lignes.forEach((l, i) => {
+      if (ligneIndex != null && i !== ligneIndex) return;
+      const manque = l.quantiteDemandee - (recu[i] ?? 0);
+      if (manque > 0) aEcrire.push({ i, quantite: manque });
+    });
+    if (aEcrire.length === 0) return;
+
+    setEnCours(true); setErreur('');
+    try {
+      const auteur = await auteurCourant(dossier.siteId, user.uid);
+      const date = aujourdhui();
+      await Promise.all(aEcrire.map(({ i, quantite }) => enregistrerReception({
+        siteId: dossier.siteId,
+        documentId: importId,
+        ligneIndex: i,
+        produitId: dossier.lignes[i].produitId ?? null,
+        designation: dossier.lignes[i].designation,
+        quantite, date,
+        utilisateur: user.uid,
+        utilisateurNom: auteur.utilisateurNom,
+        utilisateurFonction: auteur.utilisateurFonction,
+        note: null,
+      })));
+      setReceptions(await chargerReceptions(importId));
+    } catch (e: any) { setErreur(e?.message ?? 'Échec.'); }
+    finally { setEnCours(false); }
+  }
+
+  /** Une quantité partielle : le conteneur n'arrive pas toujours entier. */
+  async function ajouterReception() {
+    if (ligneRecue == null || qteRecue <= 0 || !dossier || !user) return;
+    setEnCours(true); setErreur('');
+    try {
+      const l = dossier.lignes[ligneRecue];
+      const auteur = await auteurCourant(dossier.siteId, user.uid);
+      await enregistrerReception({
+        siteId: dossier.siteId,
+        documentId: importId,
+        ligneIndex: ligneRecue,
+        produitId: l.produitId ?? null,
+        designation: l.designation,
+        quantite: qteRecue,
+        date: aujourdhui(),
+        utilisateur: user.uid,
+        utilisateurNom: auteur.utilisateurNom,
+        utilisateurFonction: auteur.utilisateurFonction,
+        note: null,
+      });
+      setReceptions(await chargerReceptions(importId));
+      setLigneRecue(null); setQteRecue(0);
+    } catch (e: any) { setErreur(e?.message ?? 'Échec.'); }
+    finally { setEnCours(false); }
+  }
+
+  /* On n'ajuste pas une réception : on l'annule et on en saisit une
+     autre. Corriger en place effacerait la trace de l'erreur. */
+  async function defaire(id: string) {
+    if (!user) return;
+    setEnCours(true); setErreur('');
+    try {
+      await annulerReception({ receptionId: id, par: user.uid });
+      setReceptions(await chargerReceptions(importId));
+    } catch (e: any) { setErreur(e?.message ?? 'Échec.'); }
+    finally { setEnCours(false); }
+  }
 
   async function avancer() {
     if (!suivant || !user) return;
@@ -146,10 +239,13 @@ export default function FicheImportationPage() {
         auteurFonction: auteur.fonction,
         /* Les quantités comptées partent avec l'étape qui les a
            produites : les écrire séparément les ferait diverger. */
+        /* Les quantités comptées partent avec l'étape qui les a
+           produites. Elles viennent des réceptions enregistrées, jamais
+           d'une saisie : c'est l'étape qui arrête le compte, puisque
+           après elle plus rien ne s'ajoute. */
         lignes: saisieQuantites
           ? dossier!.lignes.map((l, i) => ({
-              ...l,
-              quantiteRecue: comptees[i] ?? l.quantiteRecue ?? l.quantiteDemandee,
+              ...l, quantiteRecue: recu[i] ?? 0,
             }))
           : null,
       });
@@ -163,9 +259,11 @@ export default function FicheImportationPage() {
     if (!user) return;
     setEnCours(true); setErreur('');
     try {
+      /* Ce qui est réellement arrivé, somme des réceptions. Prendre le
+         commandé ferait entrer au stock une marchandise que personne n'a
+         comptée. */
       const lignes: LigneFlux[] = dossier!.lignes.map((l, i) => ({
-        ...l,
-        quantiteRecue: comptees[i] ?? l.quantiteRecue ?? l.quantiteDemandee,
+        ...l, quantiteRecue: recu[i] ?? 0,
       }));
       /* Le même geste qu'un achat : le stock entre, les frais se
          répartissent dans le coût, la dette naît. Deux façons de le
@@ -314,7 +412,23 @@ export default function FicheImportationPage() {
 
         {/* La marchandise. */}
         <div className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-gray-900">
-          <p className="mb-3 text-sm font-bold text-gray-900 dark:text-gray-100">Marchandise</p>
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm font-bold text-gray-900 dark:text-gray-100">Marchandise</p>
+            {/* Tout recevoir d'un geste, quand le conteneur est conforme.
+                Il n'apparaît que s'il reste quelque chose à déclarer. */}
+            {saisieQuantites && peut && (() => {
+              const reste = dossier.lignes.reduce(
+                (n, l, i) => n + Math.max(0, l.quantiteDemandee - (recu[i] ?? 0)), 0);
+              if (reste <= 0) return null;
+              return (
+                <button onClick={() => completer(null)} disabled={enCours}
+                  className="flex items-center gap-1.5 rounded-xl border border-indigo-200 px-3 py-1.5 text-xs font-bold text-indigo-600 transition-colors hover:bg-indigo-50 disabled:opacity-40 dark:border-indigo-800/40 dark:hover:bg-indigo-900/20">
+                  {enCours ? <Loader2 size={12} className="animate-spin" /> : <CheckCheck size={12} />}
+                  Tout recevoir
+                </button>
+              );
+            })()}
+          </div>
           <div className="overflow-x-auto">
             <table className="w-full whitespace-nowrap text-center text-sm">
               <thead>
@@ -329,15 +443,21 @@ export default function FicheImportationPage() {
                       <th className="px-3 py-2.5 font-medium">Part frais</th>
                       <th className="px-3 py-2.5 font-medium">Coût réel</th>
                     </>}
-                    <th className="rounded-r-lg px-3 py-2.5 font-medium">Total</th>
+                    <th className="px-3 py-2.5 font-medium">Total</th>
                   </>}
+                  {saisieQuantites && peut && (
+                    <th className="rounded-r-lg px-3 py-2.5 font-medium" />
+                  )}
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50 dark:divide-gray-800">
                 {dossier.lignes.map((l, i) => {
-                  const qte = compte
-                    ? (comptees[i] ?? l.quantiteRecue ?? l.quantiteDemandee)
-                    : l.quantiteDemandee;
+                  /* Ce qui est arrivé : la somme des réceptions, jamais
+                     le commandé. Un reçu posé d'avance ferait que
+                     personne ne compte. */
+                  const recuLigne = recu[i] ?? (l.quantiteRecue ?? 0);
+                  const qte = compte ? recuLigne : l.quantiteDemandee;
+                  const manque = l.quantiteDemandee - recuLigne;
                   const part = parts?.[i] ?? 0;
                   const reel = qte > 0 ? l.valeurUnitaire + part / qte : l.valeurUnitaire;
                   const ecart = compte && qte !== l.quantiteDemandee;
@@ -360,21 +480,32 @@ export default function FicheImportationPage() {
                         {l.quantiteDemandee.toLocaleString('fr-FR')}
                       </td>
                       <td className="px-3 py-2.5">
-                        {saisieQuantites && peut ? (
-                          <div className="mx-auto w-24">
-                            <ChampNombre
-                              valeur={comptees[i] ?? l.quantiteRecue ?? l.quantiteDemandee}
-                              onChange={n => setComptees(c => ({ ...c, [i]: n }))}
-                              className="w-full rounded-lg border border-gray-200 bg-gray-50 px-2 py-1 text-center text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:border-gray-700 dark:bg-gray-800" />
-                          </div>
-                        ) : (
-                          <span className={`font-medium ${!ecart
-                            ? 'text-gray-600 dark:text-gray-300'
-                            : qte > l.quantiteDemandee ? 'text-blue-500' : 'text-orange-500'}`}>
-                            {compte ? qte.toLocaleString('fr-FR') : '—'}
-                          </span>
-                        )}
+                        <span className={`font-medium ${!ecart
+                          ? 'text-gray-600 dark:text-gray-300'
+                          : qte > l.quantiteDemandee ? 'text-blue-500' : 'text-orange-500'}`}>
+                          {recuLigne > 0 ? recuLigne.toLocaleString('fr-FR') : '—'}
+                        </span>
                       </td>
+                      {/* Déclarer ce qui est arrivé : la ligne entière, ou
+                          une quantité partielle. Rien n'est prérempli. */}
+                      {saisieQuantites && peut && (
+                        <td className="px-3 py-2.5">
+                          <div className="flex items-center justify-center gap-1.5">
+                            {manque > 0 && (
+                              <button onClick={() => completer(i)} disabled={enCours}
+                                title="Tout recevoir sur cette ligne"
+                                className="flex items-center gap-1 rounded-lg bg-indigo-600 px-2.5 py-1.5 text-xs font-bold text-white transition-colors hover:bg-indigo-700 disabled:opacity-40">
+                                <CheckCheck size={12} /> {manque}
+                              </button>
+                            )}
+                            <button onClick={() => { setLigneRecue(i); setQteRecue(0); }}
+                              title="Saisir une quantité"
+                              className="rounded-lg border border-gray-300 px-2.5 py-1.5 text-xs font-bold text-gray-600 transition-colors hover:border-indigo-400 dark:border-gray-600 dark:text-gray-300">
+                              <Plus size={12} />
+                            </button>
+                          </div>
+                        </td>
+                      )}
                       {montreArgent && <>
                         <td className="px-3 py-2.5 text-gray-500">
                           {formatMontant(l.valeurUnitaire)}
@@ -473,6 +604,40 @@ export default function FicheImportationPage() {
           </div>
         )}
       </div>
+
+      {/* Une quantité partielle : le conteneur n'arrive pas toujours
+          entier, et ce qui manque arrivera plus tard. */}
+      {ligneRecue != null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-xl dark:bg-gray-900">
+            <p className="text-sm font-bold text-gray-900 dark:text-gray-100">
+              {dossier.lignes[ligneRecue].designation}
+            </p>
+            <p className="mt-1 text-xs text-gray-400">
+              Commandé {dossier.lignes[ligneRecue].quantiteDemandee.toLocaleString('fr-FR')}
+              {' · '}déjà reçu {(recu[ligneRecue] ?? 0).toLocaleString('fr-FR')}
+            </p>
+            <div className="mt-3">
+              <label className="mb-1.5 block text-xs font-bold text-gray-500 dark:text-gray-400">
+                Quantité arrivée
+              </label>
+              <ChampNombre valeur={qteRecue} onChange={setQteRecue}
+                className="w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-center text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:border-gray-700 dark:bg-gray-800" />
+            </div>
+            <div className="mt-4 flex gap-2">
+              <button onClick={() => { setLigneRecue(null); setQteRecue(0); }}
+                className="flex-1 rounded-xl border border-gray-200 px-3 py-2 text-xs font-bold text-gray-500 dark:border-gray-700">
+                Annuler
+              </button>
+              <button onClick={ajouterReception} disabled={enCours || qteRecue <= 0}
+                className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-indigo-600 px-3 py-2 text-xs font-bold text-white hover:bg-indigo-700 disabled:opacity-40">
+                {enCours ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
+                Déclarer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Confirmer fait entrer le stock : on dit ce qui va se passer. */}
       {modalConfirmation && (
