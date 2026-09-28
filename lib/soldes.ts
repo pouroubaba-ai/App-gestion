@@ -238,12 +238,23 @@ export async function soldeTiers(
   siteId: string, partenaireId: string, role: RoleTiers,
 ): Promise<SoldeTiers> {
   const champ = role === 'fournisseur' ? 'fournisseurId' : 'clientId';
-  const snap = await getDocs(query(
-    collection(db, role === 'fournisseur' ? 'achats' : 'ventes'),
-    where('siteId', '==', siteId),
-    where(champ, '==', partenaireId)));
-
-  const parRetour = await retoursParDossier(siteId);
+  /* Une importation est un achat : même marchandise, même dette, même
+     fournisseur — seulement rangée ailleurs parce que son voyage a ses
+     étapes. La liste des soldes la lit déjà ; l'omettre ici faisait dire
+     à la fiche d'un tiers tout autre chose qu'à la liste qui y mène. */
+  const [snap, impSnap, parRetour] = await Promise.all([
+    getDocs(query(
+      collection(db, role === 'fournisseur' ? 'achats' : 'ventes'),
+      where('siteId', '==', siteId),
+      where(champ, '==', partenaireId))),
+    role === 'fournisseur'
+      ? getDocs(query(
+          collection(db, 'importations'),
+          where('siteId', '==', siteId),
+          where('fournisseurId', '==', partenaireId))).catch(() => null)
+      : Promise.resolve(null),
+    retoursParDossier(siteId),
+  ]);
 
   const cible = new Map<string, SoldeTiers>();
   for (const d of snap.docs) {
@@ -262,6 +273,19 @@ export async function soldeTiers(
         : (x.dateLivraison ?? x.dateCommande ?? null),
       parRet);
   }
+
+  /* Même règle que sur la liste : seule une importation confirmée pèse
+     sur la dette — avant, la marchandise n'est pas encore due. */
+  for (const d of impSnap?.docs ?? []) {
+    const i = d.data() as any;
+    if (i.etat !== 'confirme') continue;
+    cumuler(cible, partenaireId,
+      totalImportation(i),
+      i.avanceVersee ?? 0,
+      i.dates?.confirme ?? i.dates?.recu ?? i.dates?.en_attente ?? null,
+      parRetour.get(d.id) ?? 0);
+  }
+
   return cible.get(partenaireId) ?? vide(partenaireId);
 }
 
