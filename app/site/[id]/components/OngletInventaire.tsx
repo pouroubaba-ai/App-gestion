@@ -73,7 +73,7 @@ interface Props extends PropsPortee {
 
 
 /** Colonne chiffrée sur laquelle trier ; null = ordre de chargement. */
-type TriStock = 'cout' | 'prix' | 'stock' | 'benefice' | 'valeur' | null;
+type TriStock = 'cout' | 'prix' | 'marche' | 'stock' | 'benefice' | 'valeur' | null;
 type TriRenta = 'entrees' | 'sorties' | 'difference' | 'enStock' | 'derniereEntree' | 'derniereSortie' | null;
 
 type OngletForm = 'general' | 'tarifs' | 'emballages' | 'caracteristiques' | 'variantes';
@@ -379,6 +379,10 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
   const [modeCategorie, setModeCategorie] = useState<'existant' | 'nouveau'>('existant');
   const [unite, setUnite] = useState('');
   const [modeUnite, setModeUnite] = useState<'existant' | 'nouveau'>('existant');
+  /* Les prix pratiqués site par site : c'est le marché, un fait qui ne
+     dépend pas de nous et qui diffère d'un endroit à l'autre. */
+  const [prixMarche, setPrixMarche] =
+    useState<Record<string, { siteId: string; prix: number }[]>>({});
   const [prixVente, setPrixVente] = useState('');
   const [coutAchat, setCoutAchat] = useState('');
   /* stock saisi, et l'emballage dans lequel il est exprimé ('' = unité de base) */
@@ -467,6 +471,24 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
     for (const d of dets) {
       parProduit.set(d.produitId, [...(parProduit.get(d.produitId) ?? []), d]);
     }
+
+    /* Ce que chaque site pratique, déclinaison par déclinaison. Le prix
+       du marché ne se calcule pas : il se constate là où l'on vend, et
+       deux boutiques ne vendent pas au même prix. On garde donc la liste
+       plutôt qu'une moyenne — un prix moyen n'est pratiqué nulle part. */
+    const marche: Record<string, { siteId: string; prix: number }[]> = {};
+    for (const d of dets) {
+      const noter = (cle: string, prix: number) => {
+        if (!(prix > 0)) return;
+        (marche[cle] ??= []).push({ siteId: d.siteId, prix });
+      };
+      noter(d.produitId, d.prixVente ?? 0);
+      for (const v of (d.variantes ?? [])) {
+        noter(`${d.produitId}:${v.cle}`, v.prixVente ?? 0);
+      }
+    }
+    for (const k of Object.keys(marche)) marche[k].sort((a, b) => a.prix - b.prix);
+    setPrixMarche(marche);
 
     const liste = snapProd.docs
       /* Un produit sans détention dans la portée n'y est pas détenu : le
@@ -902,11 +924,19 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
   /* Comparer des montants à l'œil dans cent vingt-sept lignes est ce qui
      prend le plus de temps : le tri porte sur les colonnes chiffrées,
      comme sur la liste des produits. */
+  /* Les prix pratiqués sur cette déclinaison, du plus bas au plus haut.
+     Sans variante, c'est la détention du produit qui les porte. */
+  const marcheDe = (x: { produit: { id: string }; varianteCle: string | null }) =>
+    prixMarche[x.varianteCle ? `${x.produit.id}:${x.varianteCle}` : x.produit.id] ?? [];
+
   const lignesVariantes = triStock === null ? lignesFiltrees
     : [...lignesFiltrees].sort((a, b) => {
       const v = (x: typeof lignesFiltrees[number]) =>
         triStock === 'cout' ? x.coutMoyen
         : triStock === 'prix' ? x.prixVente
+        /* On trie sur le haut de l'éventail : c'est le meilleur prix
+           qu'on puisse espérer, donc le plus parlant pour comparer. */
+        : triStock === 'marche' ? (marcheDe(x)[marcheDe(x).length - 1]?.prix ?? 0)
         : triStock === 'stock' ? x.stock
         : triStock === 'benefice' ? x.stock * (x.prixVente - x.coutMoyen)
         : x.stock * x.coutMoyen;
@@ -1276,6 +1306,7 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
                         {([
                           { cle: 'cout' as const,     label: 'Coût' },
                           { cle: 'prix' as const,     label: 'Prix' },
+                          { cle: 'marche' as const,   label: 'Prix du marché' },
                           { cle: 'stock' as const,    label: 'Stock' },
                           { cle: 'benefice' as const, label: 'Bénéfice' },
                           { cle: 'valeur' as const,   label: 'Valeur' },
@@ -1317,6 +1348,37 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
                           </td>
                           <td className="px-3 py-2.5 text-center font-medium text-gray-900 dark:text-gray-100">
                             {formatMontant(l.prixVente)}
+                          </td>
+                          {/* Le marché est un fait, et il diffère d'un
+                              endroit à l'autre : on montre l'éventail,
+                              pas une moyenne que personne ne pratique.
+                              Un seul prix pratiqué, un seul chiffre. */}
+                          <td className="px-3 py-2.5 text-center">
+                            {(() => {
+                              const liste = marcheDe(l);
+                              if (liste.length === 0) {
+                                return <span className="text-gray-300 dark:text-gray-600">—</span>;
+                              }
+                              const bas = liste[0].prix;
+                              const haut = liste[liste.length - 1].prix;
+                              if (bas === haut) {
+                                return (
+                                  <span className="text-gray-600 dark:text-gray-300">
+                                    {formatMontant(bas)}
+                                  </span>
+                                );
+                              }
+                              return (
+                                <span className="inline-flex flex-col leading-tight">
+                                  <span className="font-medium text-gray-900 dark:text-gray-100">
+                                    {formatMontant(bas)} – {formatMontant(haut)}
+                                  </span>
+                                  <span className="text-[10px] text-gray-400">
+                                    {liste.length} sites
+                                  </span>
+                                </span>
+                              );
+                            })()}
                           </td>
                           <td className="px-3 py-2.5 text-center">
                             <span className={l.stock > 0
@@ -1477,9 +1539,13 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
                       <th className="text-center px-3 py-2.5 font-medium">Produit</th>
                       {ctx.ensemble && <th className="text-center px-3 py-2.5 font-medium">Site</th>}
                       <th className="text-center px-3 py-2.5 font-medium">Catégorie</th>
+                      {/* Ni coût ni prix ici : un produit à déclinaisons
+                          n'en a pas un seul. Une gamme dont une variante
+                          coûte 800 et l'autre 25 000 afficherait une
+                          moyenne que rien ne pratique. Ces deux chiffres
+                          appartiennent à la déclinaison, et se lisent
+                          dans sa vue. */}
                       {([
-                        { cle: 'cout' as const,     label: 'Coût' },
-                        { cle: 'prix' as const,     label: 'Prix' },
                         { cle: 'stock' as const,    label: 'Stock' },
                         { cle: 'benefice' as const, label: 'Bénéfice' },
                         { cle: 'valeur' as const,   label: 'Valeur' },
@@ -1508,8 +1574,6 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
                           <td className="px-3 py-2.5 font-medium text-gray-900 dark:text-gray-100 text-center">{p.designation}</td>
                           {ctx.ensemble && <CelluleSite nom={ctx.nomDe(p.siteId)} />}
                           <td className="px-3 py-2.5 text-gray-500 text-center">{p.categorie || '—'}</td>
-                          <td className="px-3 py-2.5 text-gray-600 dark:text-gray-400 text-center">{p.coutMoyen > 0 ? formatMontant(p.coutMoyen) : '—'}</td>
-                          <td className="px-3 py-2.5 text-gray-900 dark:text-gray-100 font-medium text-center">{p.prixVente > 0 ? formatMontant(p.prixVente) : '—'}</td>
                           <td className="px-3 py-2.5 text-gray-600 dark:text-gray-400 text-center">
                             {stock.toLocaleString('fr-FR')} <span className="text-xs text-gray-400">{p.unite.toLowerCase()}{stock > 1 ? 's' : ''}</span>
                           </td>
