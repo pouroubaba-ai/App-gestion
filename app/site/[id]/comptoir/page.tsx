@@ -925,7 +925,10 @@ export default function ComptoirPage() {
                            l'emballage, comme le coût. */
                         const par = l.emballage
                           ? ` / ${l.emballage.toLowerCase()}` : ` / ${uniteNom}`;
-                        const reco = (l.prixRecommande ?? 0) * l.contenance;
+                        /* Les lignes posées avant que les deux prix
+                           voyagent n'ont que celui qu'elles portent : on
+                           s'y replie plutôt que de cacher la ligne. */
+                        const reco = (l.prixRecommande ?? l.prixUnitaire ?? 0) * l.contenance;
                         const marche = (l.prixMarche ?? 0) * l.contenance;
                         const retenu = Math.max(reco, marche);
                         return (
@@ -937,16 +940,14 @@ export default function ComptoirPage() {
                                 {formatMontant(coutLigne)}
                               </span>
                             </div>
-                            {reco > 0 && (
-                              <div className="flex items-center justify-between">
-                                <span className="text-xs text-gray-400">Prix recommandé</span>
-                                <span className={`text-xs font-bold ${retenu === reco
-                                  ? 'text-indigo-600 dark:text-indigo-400'
-                                  : 'text-gray-500'}`}>
-                                  {formatMontant(reco)}
-                                </span>
-                              </div>
-                            )}
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs text-gray-400">Prix recommandé</span>
+                              <span className={`text-xs font-bold ${reco > 0 && retenu === reco
+                                ? 'text-indigo-600 dark:text-indigo-400'
+                                : 'text-gray-500'}`}>
+                                {reco > 0 ? formatMontant(reco) : '—'}
+                              </span>
+                            </div>
                             <div className="flex items-center justify-between">
                               <span className="text-xs text-gray-400">Prix du marché</span>
                               <span className={`text-xs font-bold ${marche > 0 && retenu === marche
