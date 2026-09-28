@@ -1300,8 +1300,11 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
                   <table className="w-full whitespace-nowrap text-sm">
                     <thead>
                       <tr className="bg-indigo-600 text-white">
+                        {/* La variante se lit dans le nom : une colonne
+                            à part répétait ce que la ligne dit déjà, et
+                            affichait un tiret partout où le produit n'en
+                            a aucune. */}
                         <th className="px-3 py-2.5 text-center font-medium">Produit</th>
-                        <th className="px-3 py-2.5 text-center font-medium">Déclinaison</th>
                         <th className="px-3 py-2.5 text-center font-medium">Catégorie</th>
                         {([
                           { cle: 'cout' as const,     label: 'Coût' },
@@ -1330,14 +1333,10 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
                           className="cursor-pointer transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/50">
                           <td className="px-3 py-2.5 text-center font-medium text-gray-900 dark:text-gray-100">
                             {l.produit.designation}
-                          </td>
-                          <td className="px-3 py-2.5 text-center">
-                            {l.varianteCle ? (
-                              <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-bold text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-400">
+                            {l.varianteCle && (
+                              <span className="ml-1.5 rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-bold text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-400">
                                 {l.varianteCle}
                               </span>
-                            ) : (
-                              <span className="text-xs text-gray-300 dark:text-gray-600">—</span>
                             )}
                           </td>
                           <td className="px-3 py-2.5 text-center text-gray-500">
