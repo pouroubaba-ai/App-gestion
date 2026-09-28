@@ -2,6 +2,7 @@ import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from './firebase';
 import { valeurRecue, valeurVente, totalAchat } from './flux-marchandise';
 import { lireParSite, type Portee } from '@/lib/portee';
+import { totalImportation } from './importations';
 
 /**
  * Ce que chaque tiers doit, déduit et non stocké.
@@ -114,8 +115,13 @@ function cumuler(
 
 /** Les soldes de tous les tiers d'un site, des deux côtés. */
 export async function soldesDuSite(siteId: Portee): Promise<SoldesParRole> {
-  const [achDocs, venDocs, parRetour] = await Promise.all([
+  /* Une importation est un achat : elle fait entrer la même marchandise
+     et crée la même dette chez le même fournisseur. Elle vit seulement
+     dans une autre collection, parce que son voyage a ses étapes. Ne pas
+     la lire ici laissait un conteneur confirmé peser zéro. */
+  const [achDocs, impDocs, venDocs, parRetour] = await Promise.all([
     lireParSite('achats', siteId),
+    lireParSite('importations', siteId).catch(() => []),
     lireParSite('ventes', siteId),
     retoursParDossier(siteId),
   ]);
@@ -135,6 +141,17 @@ export async function soldesDuSite(siteId: Portee): Promise<SoldesParRole> {
       totalAchat(a),
       a.avanceVersee ?? 0,
       a.dateConfirmation ?? a.dateReception ?? a.dateCommande ?? null,
+      parRet);
+  }
+
+  for (const d of impDocs) {
+    const i = d.data() as any;
+    if (!i.fournisseurId || i.etat !== 'confirme') continue;
+    const parRet = parRetour.get(d.id) ?? 0;
+    cumuler(fournisseur, i.fournisseurId,
+      totalImportation(i),
+      i.avanceVersee ?? 0,
+      i.dates?.confirme ?? i.dates?.recu ?? i.dates?.en_attente ?? null,
       parRet);
   }
 

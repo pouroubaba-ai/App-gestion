@@ -105,6 +105,29 @@ export interface Versement {
    * annonce encaissé.
    */
   sansTotal?: boolean;
+  /**
+   * D'où l'argent est sorti.
+   *
+   * Un fournisseur d'importation se règle souvent par virement, ou de la
+   * main de l'admin : l'argent ne passe alors jamais par le tiroir du
+   * site, et l'y faire transiter inventerait deux mouvements qui n'ont
+   * pas eu lieu. Le versement existe quand même — la dette s'éteint —
+   * mais le registre du site ne compte rien.
+   *
+   * Absent sur les anciens versements : ils sont tous passés par la
+   * caisse, c'est ce que `caisse` veut dire.
+   */
+  origine?: 'caisse' | 'admin';
+  /**
+   * Le dossier réglé est une importation.
+   *
+   * `achatId` porte son identifiant, mais le dossier vit dans une autre
+   * collection : rien, sur la ligne, ne disait de quel genre d'achat il
+   * s'agissait. Le tableau de bord en a besoin pour grouper la dépense —
+   * un conteneur ne se lit pas comme un réassort de boutique, et les
+   * deux chemins de l'argent doivent se retrouver sous le même titre.
+   */
+  importation?: boolean;
 }
 
 export type SaisieVersement = Omit<Versement, 'id' | 'heure'>
@@ -151,7 +174,12 @@ export async function enregistrerVersement(saisie: SaisieVersement): Promise<Ver
     motif: saisie.motif === 'remboursement'
       ? (saisie.role === 'client' ? 'retour' : 'remboursement')
       : (saisie.role === 'client' ? 'client' : 'fournisseur'),
-    sousMotif: LIBELLES_MOTIF_VERSEMENT[saisie.motif],
+    /* Une importation se règle au même fournisseur, mais ce n'est pas le
+       même genre de dépense : le sous-motif le dit au registre, pour que
+       le conteneur ne se lise pas comme un réassort de boutique. */
+    sousMotif: saisie.importation
+      ? `Importation · ${LIBELLES_MOTIF_VERSEMENT[saisie.motif]}`
+      : LIBELLES_MOTIF_VERSEMENT[saisie.motif],
     detail: saisie.partenaireNom ?? null,
     montant: saisie.montant,
     date: saisie.date,
@@ -218,6 +246,8 @@ export async function enregistrerVersement(saisie: SaisieVersement): Promise<Ver
     role: saisie.role,
     achatId: saisie.achatId ?? null,
     venteId: saisie.venteId ?? null,
+    origine: saisie.origine ?? 'caisse',
+    importation: saisie.importation ?? false,
     echeanceId: saisie.echeanceId ?? null,
     mouvementCaisseId,
     reference: saisie.reference ?? null,

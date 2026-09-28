@@ -93,6 +93,14 @@ export default function OngletDashboard({ siteId, userId, onNaviguer, sites, tit
   const [depenses, setDepenses] = useState<Depense[]>([]);
   const [encaissements, setEncaissements] = useState<{ date: string; montant: number }[]>([]);
   const [mouvementsCaisse, setMouvementsCaisse] = useState<MouvementCaisse[]>([]);
+  /* Ce qui a été payé sans passer par le tiroir : un virement au
+     fournisseur d'une importation, ou de l'argent de la main de l'admin.
+     Le registre du site ne le voit pas — et c'est juste, il n'y a pas eu
+     de mouvement. Mais c'est bien une dépense de l'activité, et seul cet
+     écran-ci peut la montrer. */
+  const [horsCaisse, setHorsCaisse] =
+    useState<{ date: string; montant: number; siteId: string | null }[]>([]);
+
   /* Créance et dette de chaque site, pour la vue par site. Vide tant que la
      portée n'en couvre qu'un : il n'y a rien à répartir. */
   const [soldesParSite, setSoldesParSite] =
@@ -212,6 +220,7 @@ export default function OngletDashboard({ siteId, userId, onNaviguer, sites, tit
          leur origine : imbriqués dans les dossiers ou rattachés à une
          échéance, ils échappaient à toute lecture d'ensemble. */
       const enc: { date: string; montant: number; siteId?: string | null }[] = [];
+      const hc: { date: string; montant: number; siteId: string | null }[] = [];
       for (const v of await chargerVersementsDuSite(ctx.portee)) {
         /* Un retour éteint une dette sans qu'un franc ne circule : le
            compter ici gonflait l'encaissement des ventes et la dépense
@@ -220,7 +229,16 @@ export default function OngletDashboard({ siteId, userId, onNaviguer, sites, tit
           || v.motif === 'retour_marchandise') continue;
         if (v.role === 'client') enc.push({ date: v.date, montant: v.montant, siteId: v.siteId ?? null });
         /* l'argent versé au fournisseur : c'est lui, la dépense d'achat */
-        else d.push({ date: v.date, motif: 'Achats', montant: v.montant, siteId: v.siteId ?? null });
+        else {
+          d.push({ date: v.date, motif: 'Achats', montant: v.montant, siteId: v.siteId ?? null });
+          /* Par la caisse, la sortie est au registre sous « Fournisseur ·
+             Importation » : le regroupement s'y fait. Hors caisse, rien
+             n'a été écrit — c'est ici, et seulement ici, que la dépense
+             existe. */
+          if ((v as any).importation && (v as any).origine === 'admin') {
+            hc.push({ date: v.date, montant: v.montant, siteId: v.siteId ?? null });
+          }
+        }
       }
 
       /* Ce que le site doit à ses employés. Un salaire acquis et non versé
@@ -267,6 +285,7 @@ export default function OngletDashboard({ siteId, userId, onNaviguer, sites, tit
       setMouvementsCaisse(await chargerCaisseDuSite(ctx.portee));
       setVentes(v);
       setDepenses(d);
+      setHorsCaisse(hc);
       setEncaissements(enc);
       setCreance(cr);
       setDette(de);
@@ -397,14 +416,23 @@ export default function OngletDashboard({ siteId, userId, onNaviguer, sites, tit
      sorti. Les recalculer ailleurs donnait un second chiffre. */
   const sortiesCaisse = mouvementsCaisse.filter(
     m => m.sens === 'sortie' && dansPeriode(m.date) && !m.annuleParId && !m.annuleId);
-  const totalDepenses = sortiesCaisse.reduce((s, m) => s + m.montant, 0);
-
+  /* Ce qui est sorti sans passer par le tiroir : une importation réglée
+     par virement est une dépense de l'activité, même si le registre du
+     site n'en porte aucune trace. L'omettre ferait un tableau de bord
+     qui annonce moins de dépenses qu'il n'y en a eu. */
+  const horsCaisseP = horsCaisse.filter(h => dansPeriode(h.date));
+  const totalHorsCaisse = horsCaisseP.reduce((s, h) => s + h.montant, 0);
   const partsDepenses = Object.entries(
     sortiesCaisse.reduce<Record<string, number>>((acc, m) => {
-      const cle = LIBELLES_MOTIF_CAISSE[m.motif];
+      /* Une importation réglée par le tiroir se range avec celles réglées
+         par virement : c'est la même dépense, et le chemin de l'argent ne
+         devrait pas la couper en deux parts. */
+      const cle = m.sousMotif?.startsWith('Importation')
+        ? 'Importations'
+        : LIBELLES_MOTIF_CAISSE[m.motif];
       acc[cle] = (acc[cle] ?? 0) + m.montant;
       return acc;
-    }, {})
+    }, totalHorsCaisse > 0 ? { 'Importations': totalHorsCaisse } : {})
   ).map(([label, valeur]) => ({ label, valeur }));
 
   /* Ce que vaut un site sur la période : les sept chiffres de la carte

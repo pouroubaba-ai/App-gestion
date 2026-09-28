@@ -4,7 +4,8 @@ import { doc, getDoc, updateDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/lib/auth-context';
 import { useParams, useRouter } from 'next/navigation';
-import { Loader2, Check, Ship, ArrowRight, X, CheckCheck, Plus, Undo2, Info } from 'lucide-react';
+import { Loader2, Check, Ship, ArrowRight, X, CheckCheck, Plus, Undo2, Info,
+  Wallet } from 'lucide-react';
 import { formatMontant, formatDate } from '@/lib/format';
 import { auteurCourant, auteurEtape } from '@/lib/auteur';
 import { roleSurSite, type RoleSite } from '@/lib/roles';
@@ -17,6 +18,12 @@ import {
   valeurEnvoyee, confirmerAchat, type LigneFlux,
 } from '@/lib/flux-marchandise';
 import { ChampNombre } from '@/components/Champs';
+import { chargerDisponible } from '@/lib/attente-caisse';
+import DisponibleCaisse from '@/app/site/[id]/components/DisponibleCaisse';
+import { ecrireEnCaisse } from '@/lib/ecrire-caisse';
+import {
+  enregistrerVersement, versementsDuDossier, type Versement,
+} from '@/lib/versements-collection';
 import {
   enregistrerReception, annulerReception, chargerReceptions, recuParLigne,
   type Reception,
@@ -45,7 +52,7 @@ function aujourdhui() { return new Date().toISOString().split('T')[0]; }
  * deux façons de faire entrer du stock finiraient par diverger.
  */
 export default function FicheImportationPage() {
-  const { user } = useAuth();
+  const { user, activite } = useAuth();
   const router = useRouter();
   const params = useParams();
   const importId = params.importId as string;
@@ -71,6 +78,21 @@ export default function FicheImportationPage() {
      écrasé. */
   const [receptions, setReceptions] = useState<Reception[]>([]);
   /* La saisie d'une quantité partielle, quand elle est ouverte. */
+  /* Payer le fournisseur. L'argent sort de la caisse du site, ou de la
+     main de l'admin — virement, retrait déjà fait. Dans ce second cas la
+     dette s'éteint sans que le tiroir bouge : le versement porte son
+     origine, pour qu'on sache toujours d'où l'argent est parti. */
+  const [versements, setVersements] = useState<Versement[]>([]);
+  const [modalVersement, setModalVersement] = useState(false);
+  const [nouveauVersement, setNouveauVersement] = useState(0);
+  const [dateVersement, setDateVersement] = useState(aujourdhui());
+  const [soldeCaisseSite, setSoldeCaisseSite] = useState<number | null>(null);
+  const [soldeReelCaisse, setSoldeReelCaisse] = useState<number | null>(null);
+  const [engageCaisse, setEngageCaisse] = useState(0);
+  /* Deux sources, et non une caisse qu'on renfloue : un virement au
+     fournisseur ne passe pas par le tiroir du site. */
+  const [origine, setOrigine] = useState<'caisse' | 'admin'>('caisse');
+
   /* Le détail des réceptions d'une ligne, déplié à la demande : c'est
      là qu'une quantité posée par erreur s'annule. */
   const [detailLigne, setDetailLigne] = useState<number | null>(null);
@@ -82,6 +104,20 @@ export default function FicheImportationPage() {
     if (!snap.exists()) { setDossier(null); setLoading(false); return; }
     const d = { id: snap.id, ...(snap.data() as any) } as Importation;
     setDossier(d);
+
+    /* Les versements du seul dossier, et ce que la caisse peut encore
+       laisser sortir. Les deux lectures partent ensemble : aucune ne
+       dépend de l'autre. */
+    const [vers, caisse] = await Promise.all([
+      versementsDuDossier(importId, 'achat').catch(() => []),
+      chargerDisponible(d.siteId).catch(() => null),
+    ]);
+    setVersements(vers);
+    if (caisse) {
+      setSoldeCaisseSite(caisse.disponible);
+      setSoldeReelCaisse(caisse.solde);
+      setEngageCaisse(caisse.engage);
+    }
     setFraisSales(sale => {
       if (!sale) {
         setFrais(d.frais ?? []);
@@ -232,6 +268,63 @@ export default function FicheImportationPage() {
       await annulerReception({
         receptionId: id, par: user.uid, parNom: auteur.utilisateurNom });
       setReceptions(await chargerReceptions(importId));
+    } catch (e: any) { setErreur(e?.message ?? 'Échec.'); }
+    finally { setEnCours(false); }
+  }
+
+  /* La caisse ne laisse sortir que ce qu'elle a. La poche de l'admin ne
+     connaît pas cette borne : l'app ne tient pas ses comptes à lui. */
+  const depasseCaisse = origine === 'caisse'
+    && soldeCaisseSite != null && nouveauVersement > soldeCaisseSite;
+
+  /**
+   * Règle une part du dossier.
+   *
+   * Par la caisse, l'argent sort du tiroir du site et le registre le
+   * voit. Par l'admin — virement, espèces déjà retirées — il ne passe
+   * nulle part chez nous : inventer un aller-retour en caisse ferait
+   * deux mouvements qui n'ont pas eu lieu. La dette s'éteint dans les
+   * deux cas, et le versement dit lequel.
+   */
+  async function verser() {
+    if (!user || !dossier || nouveauVersement <= 0 || depasseCaisse) return;
+    setEnCours(true); setErreur('');
+    try {
+      const auteur = await auteurCourant(dossier.siteId, user.uid, user.displayName);
+      await enregistrerVersement({
+        adminUid: activite?.adminUid ?? null,
+        siteId: dossier.siteId, userId: user.uid,
+        date: dateVersement,
+        montant: nouveauVersement,
+        /* payer un fournisseur sort de l'argent */
+        sens: 'sortie',
+        /* figé à la saisie : avant la confirmation c'est une avance,
+           après un règlement. */
+        motif: dossier.etat === 'confirme' ? 'reglement' : 'avance',
+        partenaireId: dossier.fournisseurId ?? '',
+        partenaireNom: dossier.fournisseurNom ?? null,
+        role: 'fournisseur',
+        achatId: importId,
+        reference: dossier.reference ?? null,
+        par: user.uid,
+        origine,
+        /* Le dossier vit dans `importations` : la ligne doit le dire,
+           sinon la dépense se rangerait avec les achats de boutique. */
+        importation: true,
+        /* Hors caisse, le tiroir ne bouge pas. Et le total vit dans
+           `importations`, pas dans `achats` : on l'écrit nous-mêmes. */
+        sansCaisse: origine === 'admin',
+        sansTotal: true,
+        ...auteur,
+      });
+      await updateDoc(doc(db, 'importations', importId), {
+        avanceVersee: (dossier.avanceVersee ?? 0) + nouveauVersement,
+      });
+      setNouveauVersement(0);
+      setOrigine('caisse');
+      setDateVersement(aujourdhui());
+      setModalVersement(false);
+      await charger();
     } catch (e: any) { setErreur(e?.message ?? 'Échec.'); }
     finally { setEnCours(false); }
   }
@@ -629,6 +722,46 @@ export default function FicheImportationPage() {
                     {formatMontant(reste)}
                   </span>
                 </div>
+                {/* Régler : seul l'admin paie un fournisseur d'importation,
+                    et seulement tant que le dossier n'est pas abandonné. */}
+                {estAdmin && reste > 0 && dossier.etat !== 'annule' && (
+                  <button onClick={() => {
+                      setNouveauVersement(0); setOrigine('caisse');
+                      setDateVersement(aujourdhui()); setModalVersement(true);
+                    }}
+                    className="mt-2 flex items-center justify-center gap-1.5 rounded-xl bg-indigo-600 px-3 py-2 text-xs font-bold text-white transition-colors hover:bg-indigo-700">
+                    <Wallet size={13} /> Verser
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Ce qui a déjà été payé, et par où l'argent est passé. */}
+          {montreArgent && versements.length > 0 && (
+            <div className="mt-4 border-t border-gray-100 pt-3 dark:border-gray-800">
+              <p className="mb-2 text-xs font-bold uppercase text-gray-400">Versements</p>
+              <div className="flex flex-col gap-1.5">
+                {versements.map(v => (
+                  <div key={v.id}
+                    className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-gray-50 px-3 py-2 text-xs dark:bg-gray-800/50">
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span className="font-bold text-gray-900 dark:text-gray-100">
+                        {formatMontant(v.montant)}
+                      </span>
+                      <span className="text-gray-500">{formatDate(v.date)}</span>
+                      <span className="truncate text-gray-400">{v.utilisateurNom}</span>
+                    </span>
+                    {/* D'où l'argent est sorti : un virement ne se lit pas
+                        dans le registre du site, il faut le dire ici. */}
+                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-bold ${
+                      v.origine === 'admin'
+                        ? 'bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400'
+                        : 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400'}`}>
+                      {v.origine === 'admin' ? 'Hors caisse' : 'Caisse'}
+                    </span>
+                  </div>
+                ))}
               </div>
             </div>
           )}
@@ -708,6 +841,112 @@ export default function FicheImportationPage() {
                 className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-indigo-600 px-3 py-2 text-xs font-bold text-white hover:bg-indigo-700 disabled:opacity-40">
                 {enCours ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
                 Déclarer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Régler le fournisseur. Deux sources, parce qu'un versement
+          d'importation part souvent par la banque ou de la main de
+          l'admin : le faire transiter par la caisse du site inventerait
+          un mouvement qui n'a pas eu lieu. */}
+      {modalVersement && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-sm rounded-2xl bg-white shadow-xl dark:bg-gray-900">
+            <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4 dark:border-gray-800">
+              <p className="text-sm font-bold text-gray-900 dark:text-gray-100">
+                {dossier.etat === 'confirme' ? 'Ajouter un règlement' : 'Ajouter une avance'}
+              </p>
+              <button onClick={() => setModalVersement(false)}
+                className="text-gray-400 hover:text-gray-600">
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="flex flex-col gap-3 p-5">
+              <div>
+                <label className="mb-1.5 block text-xs font-bold text-gray-500 dark:text-gray-400">Date</label>
+                <input type="date" value={dateVersement} max={aujourdhui()}
+                  onChange={e => setDateVersement(e.target.value)}
+                  className="w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-900 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100" />
+              </div>
+
+              {/* L'origine se choisit avant le montant : c'est elle qui
+                  dit si la caisse borne la saisie. */}
+              <div>
+                <label className="mb-1.5 block text-xs font-bold text-gray-500 dark:text-gray-400">
+                  D’où sort l’argent
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  {([
+                    { v: 'caisse' as const, titre: 'Caisse du site',
+                      aide: 'Le tiroir de la boutique' },
+                    { v: 'admin' as const, titre: 'Hors caisse',
+                      aide: 'Banque, ou de la main de l’admin' },
+                  ]).map(o => (
+                    <button key={o.v} type="button" onClick={() => setOrigine(o.v)}
+                      className={`rounded-xl border px-3 py-2.5 text-left transition-colors ${
+                        origine === o.v
+                          ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/20'
+                          : 'border-gray-200 hover:border-gray-300 dark:border-gray-700'}`}>
+                      <span className={`block text-xs font-bold ${
+                        origine === o.v
+                          ? 'text-indigo-700 dark:text-indigo-300'
+                          : 'text-gray-700 dark:text-gray-300'}`}>
+                        {o.titre}
+                      </span>
+                      <span className="mt-0.5 block text-[11px] leading-snug text-gray-400">
+                        {o.aide}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="mb-1.5 block text-xs font-bold text-gray-500 dark:text-gray-400">Montant</label>
+                <ChampNombre valeur={nouveauVersement}
+                  onChange={setNouveauVersement} max={reste}
+                  className="w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-right text-sm text-gray-900 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100" />
+                <p className="mt-1.5 text-xs text-gray-400">
+                  Reste à payer{' '}
+                  <span className="font-bold text-gray-600 dark:text-gray-300">
+                    {formatMontant(reste)}
+                  </span>
+                </p>
+                {/* Le tiroir ne se montre que s'il est concerné. */}
+                {origine === 'caisse' && soldeCaisseSite != null && (
+                  <DisponibleCaisse className="mt-2"
+                    solde={soldeReelCaisse ?? soldeCaisseSite}
+                    engage={engageCaisse} disponible={soldeCaisseSite} />
+                )}
+                {origine === 'caisse' && depasseCaisse && (
+                  <p className="mt-1.5 text-xs font-bold text-red-500">
+                    La caisse n’a que {formatMontant(soldeCaisseSite ?? 0)}.
+                  </p>
+                )}
+                {origine === 'admin' && (
+                  <p className="mt-2 rounded-xl bg-amber-50 px-3 py-2 text-[11px] leading-snug text-amber-700 dark:bg-amber-900/20 dark:text-amber-400">
+                    La caisse du site ne bougera pas. La dette s’éteint, et
+                    la dépense se lit dans le tableau de bord d’ensemble.
+                  </p>
+                )}
+              </div>
+
+              {erreur && <p className="text-xs text-red-500">{erreur}</p>}
+            </div>
+
+            <div className="flex gap-2 border-t border-gray-100 px-5 py-4 dark:border-gray-800">
+              <button onClick={() => setModalVersement(false)}
+                className="flex-1 rounded-xl px-4 py-2 text-sm font-bold text-gray-500 transition-colors hover:bg-gray-50 dark:hover:bg-gray-800">
+                Annuler
+              </button>
+              <button onClick={verser}
+                disabled={enCours || nouveauVersement <= 0 || depasseCaisse}
+                className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-indigo-700 disabled:opacity-40">
+                {enCours ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+                Ajouter
               </button>
             </div>
           </div>
