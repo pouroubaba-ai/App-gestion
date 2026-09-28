@@ -1159,6 +1159,13 @@ export async function confirmerAchat(params: {
   utilisateurFonction?: string | null;
   /** Le rôle de qui agit ; `null` désigne le propriétaire. */
   roleSite?: string | null;
+  /**
+   * Où vit le dossier. Une importation est un achat par le stock qu'elle
+   * fait entrer, mais elle a sa propre collection et sa propre suite
+   * d'états : c'est elle qui pose `confirme`. Le marquer ici écrirait
+   * dans `achats` un identifiant qui n'y est pas.
+   */
+  marquerDossier?: boolean;
 }): Promise<{ retourCaisse: number }> {
   const { achat } = params;
   /* Un bouton caché n'est pas une permission : la garde tient ici, pas
@@ -1258,16 +1265,18 @@ export async function confirmerAchat(params: {
      sa fiche créait un nombre qui survivait à la suppression de l'achat,
      sans que rien ne signale qu'il ne correspondait plus à rien. */
 
-  batch.update(doc(db, 'achats', achat.id), {
-    etat: 'confirme',
-    dateConfirmation: date,
-    parConfirmation: params.par,
-    auteurConfirmation: {
-      nom: params.utilisateurNom ?? null,
-      fonction: params.utilisateurFonction ?? null,
-    },
-    retourCaisse,
-  });
+  if (params.marquerDossier !== false) {
+    batch.update(doc(db, 'achats', achat.id), {
+      etat: 'confirme',
+      dateConfirmation: date,
+      parConfirmation: params.par,
+      auteurConfirmation: {
+        nom: params.utilisateurNom ?? null,
+        fonction: params.utilisateurFonction ?? null,
+      },
+      retourCaisse,
+    });
+  }
 
   /* Le document d'entrée : l'en-tête de ce qui vient de rentrer. Sans lui,
      une réception n'existait que dans ses lignes de mouvement, et rien ne

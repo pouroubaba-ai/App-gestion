@@ -14,7 +14,7 @@ import {
   CLE_PAR_DEFAUT, type Frais, type CleRepartition,
 } from '@/lib/frais';
 import {
-  valeurEnvoyee, valeurRecue, confirmerAchat, type LigneFlux,
+  valeurEnvoyee, confirmerAchat, type LigneFlux,
 } from '@/lib/flux-marchandise';
 import { ChampNombre } from '@/components/Champs';
 import {
@@ -126,11 +126,19 @@ export default function FicheImportationPage() {
   const estAdmin = role === null;
   const montreArgent = role !== 'commandes';
 
+  /* Le reçu se déduit des réceptions, il ne se saisit pas. */
+  const recu = recuParLigne(receptions);
+
   /* Le dossier vaut ce qui est arrivé une fois compté ; avant, ce qui
      était annoncé. */
   const compte = ETAPES_IMPORTATION.indexOf(dossier.etat)
     >= ETAPES_IMPORTATION.indexOf('recu') || dossier.etat === 'attente_confirmation';
-  const marchandise = compte ? valeurRecue(dossier.lignes) : valeurEnvoyee(dossier.lignes);
+  /* Compté, la marchandise vaut les réceptions posées, pas le champ
+     figé de la ligne : c'est le registre qui dit ce qui est arrivé. */
+  const marchandise = compte
+    ? dossier.lignes.reduce(
+        (n, l, i) => n + (recu[i] ?? l.quantiteRecue ?? 0) * l.valeurUnitaire, 0)
+    : valeurEnvoyee(dossier.lignes);
   const fraisTotal = totalFrais(frais);
   const total = marchandise + fraisTotal;
   const verse = dossier.avanceVersee ?? 0;
@@ -141,9 +149,6 @@ export default function FicheImportationPage() {
   const fraisModifiables = dossier.etat !== 'confirme' && dossier.etat !== 'annule';
   const parts = fraisTotal > 0
     ? repartirFrais(dossier.lignes, frais, fraisCorrection, fraisCle) : null;
-
-  /* Le reçu se déduit des réceptions, il ne se saisit pas. */
-  const recu = recuParLigne(receptions);
 
   const suivant = prochainEtat(dossier.etat, role, estAdmin);
   const peut = peutAvancer(dossier.etat, role, estAdmin);
@@ -270,6 +275,9 @@ export default function FicheImportationPage() {
          faire finiraient par diverger. */
       await confirmerAchat({
         roleSite: role,
+        /* Le dossier vit dans `importations` : c'est `avancerImportation`
+           qui l'arrête, pas une écriture dans `achats`. */
+        marquerDossier: false,
         achat: {
           ...(dossier as any),
           lignes,
@@ -486,6 +494,20 @@ export default function FicheImportationPage() {
                           {recuLigne > 0 ? recuLigne.toLocaleString('fr-FR') : '—'}
                         </span>
                       </td>
+                      {montreArgent && <>
+                        <td className="px-3 py-2.5 text-gray-500">
+                          {formatMontant(l.valeurUnitaire)}
+                        </td>
+                        {parts && <>
+                          <td className="px-3 py-2.5 text-gray-500">{formatMontant(part)}</td>
+                          <td className="px-3 py-2.5 font-bold text-gray-900 dark:text-gray-100">
+                            {formatMontant(Math.round(reel))}
+                          </td>
+                        </>}
+                        <td className="px-3 py-2.5 font-medium text-gray-900 dark:text-gray-100">
+                          {formatMontant(qte * l.valeurUnitaire)}
+                        </td>
+                      </>}
                       {/* Déclarer ce qui est arrivé : la ligne entière, ou
                           une quantité partielle. Rien n'est prérempli. */}
                       {saisieQuantites && peut && (
@@ -506,20 +528,6 @@ export default function FicheImportationPage() {
                           </div>
                         </td>
                       )}
-                      {montreArgent && <>
-                        <td className="px-3 py-2.5 text-gray-500">
-                          {formatMontant(l.valeurUnitaire)}
-                        </td>
-                        {parts && <>
-                          <td className="px-3 py-2.5 text-gray-500">{formatMontant(part)}</td>
-                          <td className="px-3 py-2.5 font-bold text-gray-900 dark:text-gray-100">
-                            {formatMontant(Math.round(reel))}
-                          </td>
-                        </>}
-                        <td className="px-3 py-2.5 font-medium text-gray-900 dark:text-gray-100">
-                          {formatMontant(qte * l.valeurUnitaire)}
-                        </td>
-                      </>}
                     </tr>
                   );
                 })}
