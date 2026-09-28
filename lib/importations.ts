@@ -169,6 +169,26 @@ export function ageEnJours(i: Importation): number | null {
   return Math.max(0, Math.round(ms / 86400000));
 }
 
+/**
+ * Le temps qu'a mis la marchandise, du feu vert à l'arrivée.
+ *
+ * On compte de « validé » à « reçu » plutôt que depuis l'ouverture : ce
+ * qui précède la validation est une négociation, et elle n'engage pas
+ * le fournisseur. Ce qu'on lui impute commence au moment où il a dit
+ * oui.
+ *
+ * `null` quand l'une des deux dates manque : un dossier qui n'a pas
+ * franchi ces étapes n'apprend rien sur les délais.
+ */
+export function delaiLivraison(i: Importation): number | null {
+  const debut = i.dates?.valide;
+  const fin = i.dates?.recu;
+  if (!debut || !fin) return null;
+  const ms = Date.parse(fin) - Date.parse(debut);
+  if (Number.isNaN(ms)) return null;
+  return Math.max(0, Math.round(ms / 86400000));
+}
+
 /** Un dossier est-il encore en route ? */
 export function enCours(etat: EtatImportation): boolean {
   return etat !== 'confirme' && etat !== 'annule';

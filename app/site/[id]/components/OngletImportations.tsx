@@ -9,7 +9,7 @@ import { totalFrais } from '@/lib/frais';
 import { valeurEnvoyee, valeurRecue } from '@/lib/flux-marchandise';
 import {
   importationsDe, ETAPES_IMPORTATION, LIBELLES_IMPORTATION,
-  dateOuverture, ageEnJours,
+  dateOuverture, ageEnJours, delaiLivraison,
   type Importation, type EtatImportation,
 } from '@/lib/importations';
 import { ChampRecherche } from '@/components/Champs';
@@ -76,6 +76,10 @@ export default function OngletImportations({
   /* La carte ouverte transite par l'URL : sans ça, revenir d'une fiche
      retombait sur la carte par défaut. */
   const [modeVue, setModeVue] = useState<'encours' | 'statut'>('encours');
+  /* Deux façons de juger. Par document : où en est ce dossier-là. Par
+     fournisseur : ce que vaut ce partenaire sur la durée — un retard
+     isolé est un incident, répété c'est un comportement. */
+  const [axe, setAxe] = useState<'document' | 'fournisseur'>('document');
   const [vue, setVueBrut] = useState<EtatImportation>(() => {
     const c = searchParams.get('carte') as EtatImportation | null;
     return c && CARTES_ETATS.includes(c) ? c : 'en_attente';
@@ -172,6 +176,70 @@ export default function OngletImportations({
     || d.reference.toLowerCase().includes(q)
     || d.fournisseurNom.toLowerCase().includes(q)
     || (d.origine ?? '').toLowerCase().includes(q));
+
+  /* Vue par fournisseur : on ne juge plus un dossier mais un partenaire.
+     Le délai moyen ne se calcule que sur les dossiers arrivés — un
+     import encore en mer n'apprend rien sur les délais tenus. */
+  type LigneFournisseur = {
+    id: string | null; nom: string; documents: number;
+    valeur: number; verse: number; delais: number[];
+  };
+  const parFournisseur: LigneFournisseur[] = [...affiches.reduce((acc, d) => {
+    const cle = d.fournisseurId ?? d.fournisseurNom;
+    const prev = acc.get(cle) ?? {
+      id: d.fournisseurId ?? null, nom: d.fournisseurNom,
+      documents: 0, valeur: 0, verse: 0, delais: [] as number[],
+    };
+    const delai = d.etat === 'confirme' ? delaiLivraison(d) : null;
+    acc.set(cle, {
+      ...prev,
+      documents: prev.documents + 1,
+      valeur: prev.valeur + valeurDe(d, compté(d.etat)),
+      verse: prev.verse + (d.avanceVersee ?? 0),
+      delais: delai == null ? prev.delais : [...prev.delais, delai],
+    });
+    return acc;
+  }, new Map<string, LigneFournisseur>())]
+    .map(([, v]) => v)
+    /* Le plus gros d'abord : c'est celui qui engage le plus d'argent. */
+    .sort((a, b) => b.valeur - a.valeur);
+
+  const colonnesFournisseur: Colonne<LigneFournisseur>[] = [
+    { cle: 'nom', label: 'Fournisseur', rang: 'titre', rendu: f => f.nom },
+    { cle: 'documents', label: 'Importations', rang: 'corps',
+      rendu: f => String(f.documents) },
+    ...(montreArgent ? ([
+      { cle: 'valeur', label: 'Valeur', rang: 'corps',
+        rendu: (f: LigneFournisseur) => formatMontant(f.valeur) },
+      { cle: 'verse', label: 'Versé', rang: 'corps',
+        rendu: (f: LigneFournisseur) => formatMontant(f.verse) },
+      { cle: 'reste', label: 'Reste', rang: 'corps',
+        rendu: (f: LigneFournisseur) => {
+          const r = Math.max(0, f.valeur - f.verse);
+          return (
+            <span className={r > 0 ? 'font-bold text-orange-500' : undefined}>
+              {formatMontant(r)}
+            </span>
+          );
+        } },
+    ] as Colonne<LigneFournisseur>[]) : []),
+    /* Ce qu'il met à livrer, du feu vert à l'arrivée. C'est le vrai
+       jugement sur un fournisseur d'import : pas seulement ce qu'il
+       coûte, mais en combien de temps il sert. */
+    { cle: 'delai', label: 'Délai moyen', rang: 'pied',
+      rendu: f => {
+        if (f.delais.length === 0) return '—';
+        const moy = Math.round(f.delais.reduce((n, x) => n + x, 0) / f.delais.length);
+        return (
+          <span className={moy >= 60 ? 'font-bold text-orange-500' : undefined}>
+            {moy} j
+            <span className="ml-1 text-[11px] text-gray-400">
+              sur {f.delais.length}
+            </span>
+          </span>
+        );
+      } },
+  ];
 
   const colonnes: Colonne<Importation>[] = [
     { cle: 'reference', label: 'Référence', rang: 'titre', rendu: d => d.reference },
@@ -421,18 +489,44 @@ export default function OngletImportations({
             {modeVue === 'encours' && vue !== 'confirme'
               ? 'En route' : LIBELLES_IMPORTATION[vue]}
           </p>
-          {dossiers.length > 0 && (
-            <ChampRecherche valeur={recherche} onChange={setRecherche}
-              placeholder="Référence, fournisseur, origine…" className="w-full sm:w-64" />
-          )}
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Deux façons de juger. Par document : où en est ce
+                dossier-là. Par fournisseur : ce que vaut ce partenaire
+                sur la durée — et en combien de temps il livre. */}
+            <div className="flex shrink-0 items-center gap-0.5 rounded-xl bg-gray-100 p-1 dark:bg-gray-800">
+              {([
+                { cle: 'document' as const, label: 'Par document' },
+                { cle: 'fournisseur' as const, label: 'Par fournisseur' },
+              ]).map(o => (
+                <button key={o.cle} type="button" onClick={() => setAxe(o.cle)}
+                  className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-all ${axe === o.cle
+                    ? 'bg-white text-indigo-600 shadow-sm dark:bg-gray-700 dark:text-indigo-400'
+                    : 'text-gray-400 hover:text-gray-600 dark:text-gray-500'}`}>
+                  {o.label}
+                </button>
+              ))}
+            </div>
+            {dossiers.length > 0 && (
+              <ChampRecherche valeur={recherche} onChange={setRecherche}
+                placeholder="Référence, fournisseur, origine…" className="w-full sm:w-64" />
+            )}
+          </div>
         </div>
 
-        <ListeDossiers
-          dossiers={affiches}
-          colonnes={colonnes}
-          cleDe={d => d.id}
-          onOuvrir={d => router.push(`/ensemble/importations/${d.id}`)}
-          compte={`${affiches.length} dossier${affiches.length > 1 ? 's' : ''}`} />
+        {axe === 'fournisseur' ? (
+          <ListeDossiers
+            dossiers={parFournisseur}
+            colonnes={colonnesFournisseur}
+            cleDe={f => f.id ?? f.nom}
+            compte={`${parFournisseur.length} fournisseur${parFournisseur.length > 1 ? 's' : ''}`} />
+        ) : (
+          <ListeDossiers
+            dossiers={affiches}
+            colonnes={colonnes}
+            cleDe={d => d.id}
+            onOuvrir={d => router.push(`/ensemble/importations/${d.id}`)}
+            compte={`${affiches.length} dossier${affiches.length > 1 ? 's' : ''}`} />
+        )}
       </div>
       </>
       )}
