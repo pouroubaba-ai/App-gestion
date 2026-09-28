@@ -17,9 +17,12 @@ export interface ProduitChoisissable {
   unite?: string;
   coutMoyen: number;
   prixVente?: number;
+  /* Ce qui se pratique autour : un fait, pas une décision. */
+  prixMarche?: number | null;
   stock?: number;
   emballages?: { nom: string; quantite: number }[];
-  variantes?: { cle: string; selection: Record<string, string>; stock?: number; coutMoyen: number; prixVente?: number }[];
+  variantes?: { cle: string; selection: Record<string, string>; stock?: number;
+    coutMoyen: number; prixVente?: number; prixMarche?: number | null }[];
 }
 
 interface Props {

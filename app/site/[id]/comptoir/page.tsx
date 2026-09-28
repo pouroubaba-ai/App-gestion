@@ -97,6 +97,8 @@ interface Article {
   stock: number;
   coutMoyen: number;
   prixVente: number;
+  /* Ce qui se pratique autour : un fait, pas une décision. */
+  prixMarche?: number | null;
 }
 
 /** Une ligne du panier, avec de quoi la retrouver dans le catalogue. */
@@ -110,6 +112,14 @@ interface LignePanier extends LigneFlux {
   prixUnitaire: number;
   /** le coût à l'unité : même rôle, du côté de ce que la marchandise a coûté */
   coutUnitaire: number;
+  /**
+   * Les deux prix d'origine, à l'unité.
+   *
+   * Le prix pratiqué est le plus élevé des deux ; les garder permet de
+   * dire d'où il vient quand on déplie la ligne, et de le discuter.
+   */
+  prixRecommande?: number;
+  prixMarche?: number | null;
 }
 
 /**
@@ -290,6 +300,7 @@ export default function ComptoirPage() {
             stock: v.stock ?? 0,
             coutMoyen: v.coutMoyen ?? p.coutMoyen ?? 0,
             prixVente: v.prixVente ?? p.prixVente ?? 0,
+            prixMarche: v.prixMarche ?? p.prixMarche ?? null,
           });
         }
       } else {
@@ -302,6 +313,7 @@ export default function ComptoirPage() {
           stock: p.stock ?? 0,
           coutMoyen: p.coutMoyen ?? 0,
           prixVente: p.prixVente ?? 0,
+          prixMarche: p.prixMarche ?? null,
         });
       }
     }
@@ -424,10 +436,17 @@ export default function ComptoirPage() {
         contenance: 1,
         quantiteDemandee: 1,
         valeurUnitaire: a.coutMoyen,
-        prixVente: a.prixVente,
-        prixUnitaire: a.prixVente,
+        /* Le même prix que la carte annonçait : le plus élevé des deux.
+           En poser un autre ferait mentir l'écran qu'on vient de
+           toucher. */
+        prixVente: Math.max(a.prixVente, a.prixMarche ?? 0),
+        prixUnitaire: Math.max(a.prixVente, a.prixMarche ?? 0),
         coutUnitaire: a.coutMoyen,
         stockUnites: a.stock,
+        /* Les deux prix voyagent avec la ligne : le panier les montre
+           quand on le déplie, pour qu'on sache d'où vient celui-là. */
+        prixRecommande: a.prixVente,
+        prixMarche: a.prixMarche ?? null,
       }];
     });
   }
@@ -809,8 +828,12 @@ export default function ComptoirPage() {
                     ? 'border-gray-100 dark:border-gray-800 opacity-40 cursor-not-allowed'
                     : 'border-gray-200 dark:border-gray-700 hover:border-indigo-400 hover:bg-indigo-50/50 dark:hover:bg-indigo-900/10'}`}>
                   <p className="text-xs font-bold leading-tight line-clamp-2">{a.designation}</p>
+                  {/* Le plus élevé des deux : si le marché paie mieux que
+                      ce qu'on recommande, le refuser serait laisser de
+                      l'argent sur la table. Le vendeur reste libre de
+                      changer le prix au panier. */}
                   <p className="text-xs text-indigo-600 dark:text-indigo-400 font-bold mt-1">
-                    {formatMontant(a.prixVente)}
+                    {formatMontant(Math.max(a.prixVente, a.prixMarche ?? 0))}
                     {/* Le stock se dit en cartons, le prix à l'unité : sans
                         cette mention, on lit l'un pour l'autre. */}
                     <span className="font-medium text-gray-400">
@@ -895,17 +918,46 @@ export default function ComptoirPage() {
                         </button>
                       </div>
 
-                      {detail === l.cle && (
-                        <div data-detail-cout
-                          className="mt-1.5 px-2 py-1.5 rounded-lg bg-gray-50 dark:bg-gray-800 flex items-center justify-between">
-                          <span className="text-xs text-gray-400">
-                            Prix d'achat{l.emballage ? ` / ${l.emballage.toLowerCase()}` : ` / ${uniteNom}`}
-                          </span>
-                          <span className="text-xs font-bold text-gray-900 dark:text-gray-100">
-                            {formatMontant(coutLigne)}
-                          </span>
-                        </div>
-                      )}
+                      {detail === l.cle && (() => {
+                        /* Le prix affiché est le plus élevé des deux : on
+                           dit lesquels, pour qu'on sache d'où il vient et
+                           qu'on puisse le discuter. Les deux suivent
+                           l'emballage, comme le coût. */
+                        const par = l.emballage
+                          ? ` / ${l.emballage.toLowerCase()}` : ` / ${uniteNom}`;
+                        const reco = (l.prixRecommande ?? 0) * l.contenance;
+                        const marche = (l.prixMarche ?? 0) * l.contenance;
+                        const retenu = Math.max(reco, marche);
+                        return (
+                          <div data-detail-cout
+                            className="mt-1.5 flex flex-col gap-1 rounded-lg bg-gray-50 px-2 py-1.5 dark:bg-gray-800">
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs text-gray-400">Prix d&apos;achat{par}</span>
+                              <span className="text-xs font-bold text-gray-900 dark:text-gray-100">
+                                {formatMontant(coutLigne)}
+                              </span>
+                            </div>
+                            {reco > 0 && (
+                              <div className="flex items-center justify-between">
+                                <span className="text-xs text-gray-400">Prix recommandé</span>
+                                <span className={`text-xs font-bold ${retenu === reco
+                                  ? 'text-indigo-600 dark:text-indigo-400'
+                                  : 'text-gray-500'}`}>
+                                  {formatMontant(reco)}
+                                </span>
+                              </div>
+                            )}
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs text-gray-400">Prix du marché</span>
+                              <span className={`text-xs font-bold ${marche > 0 && retenu === marche
+                                ? 'text-indigo-600 dark:text-indigo-400'
+                                : 'text-gray-500'}`}>
+                                {marche > 0 ? formatMontant(marche) : '—'}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })()}
 
                       {/* L'emballage qu'on vend. Le plus petit par défaut ;
                           en changer refait le prix et ramène la quantité. */}

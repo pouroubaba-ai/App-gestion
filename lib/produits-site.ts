@@ -378,6 +378,9 @@ export async function produitsDuSite(siteId: string): Promise<any[]> {
            porte pas. */
         coutMoyen: coutDuProduit(det, data.variantes ?? []),
         prixVente: det?.prixVente ?? 0,
+        /* Ce qui se pratique autour : un fait, pas une décision. Les
+           écrans qui posent un prix en ont besoin pour le comparer. */
+        prixMarche: det?.prixMarche ?? null,
         seuilAlerte: det?.seuilAlerte ?? null,
         /* Les déclinaisons viennent du produit, leurs stocks de la
            détention : une variante inconnue du site vaut zéro. */
@@ -388,6 +391,7 @@ export async function produitsDuSite(siteId: string): Promise<any[]> {
             stock: vs?.stock ?? 0,
             coutMoyen: vs?.coutMoyen ?? 0,
             prixVente: vs?.prixVente ?? v.prixVente ?? 0,
+            prixMarche: vs?.prixMarche ?? det?.prixMarche ?? null,
           };
         }),
       };
