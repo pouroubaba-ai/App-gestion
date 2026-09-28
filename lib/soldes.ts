@@ -219,6 +219,11 @@ export async function restesDesVentes(
     .map(d => {
       const v = d.data() as any;
       if (!conclu(v, 'client')) return null;
+      /* Une ouverture reporte un compte né ailleurs : ce n'est pas une
+         vente de la periode, et son reste n'est pas a encaisser au titre
+         des ventes. La compter ici gonflerait « a encaisser » d'un montant
+         qu'aucune vente n'a produit. */
+      if (estOuverture(v)) return null;
       const total = valeurVente(v.lignes ?? []);
       return {
         date: v.dateLivraison ?? v.dateCommande ?? null,
