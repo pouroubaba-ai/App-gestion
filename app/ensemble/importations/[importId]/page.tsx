@@ -1,11 +1,11 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { doc, getDoc, updateDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/lib/auth-context';
 import { useParams, useRouter } from 'next/navigation';
-import { Loader2, Check, Ship, ArrowRight, X, CheckCheck, Plus, Undo2 } from 'lucide-react';
-import { formatMontant } from '@/lib/format';
+import { Loader2, Check, Ship, ArrowRight, X, CheckCheck, Plus, Undo2, Info } from 'lucide-react';
+import { formatMontant, formatDate } from '@/lib/format';
 import { auteurCourant, auteurEtape } from '@/lib/auteur';
 import { roleSurSite, type RoleSite } from '@/lib/roles';
 import PanneauFrais from '@/app/site/[id]/components/PanneauFrais';
@@ -71,6 +71,9 @@ export default function FicheImportationPage() {
      écrasé. */
   const [receptions, setReceptions] = useState<Reception[]>([]);
   /* La saisie d'une quantité partielle, quand elle est ouverte. */
+  /* Le détail des réceptions d'une ligne, déplié à la demande : c'est
+     là qu'une quantité posée par erreur s'annule. */
+  const [detailLigne, setDetailLigne] = useState<number | null>(null);
   const [ligneRecue, setLigneRecue] = useState<number | null>(null);
   const [qteRecue, setQteRecue] = useState(0);
 
@@ -225,7 +228,9 @@ export default function FicheImportationPage() {
     if (!user) return;
     setEnCours(true); setErreur('');
     try {
-      await annulerReception({ receptionId: id, par: user.uid });
+      const auteur = await auteurCourant(dossier!.siteId, user.uid, user.displayName);
+      await annulerReception({
+        receptionId: id, par: user.uid, parNom: auteur.utilisateurNom });
       setReceptions(await chargerReceptions(importId));
     } catch (e: any) { setErreur(e?.message ?? 'Échec.'); }
     finally { setEnCours(false); }
@@ -464,13 +469,16 @@ export default function FicheImportationPage() {
                      le commandé. Un reçu posé d'avance ferait que
                      personne ne compte. */
                   const recuLigne = recu[i] ?? (l.quantiteRecue ?? 0);
+                  const lignesRecep = receptions.filter(r => r.ligneIndex === i);
+                  const nbRecep = lignesRecep.filter(r => !r.annulee).length;
                   const qte = compte ? recuLigne : l.quantiteDemandee;
                   const manque = l.quantiteDemandee - recuLigne;
                   const part = parts?.[i] ?? 0;
                   const reel = qte > 0 ? l.valeurUnitaire + part / qte : l.valeurUnitaire;
                   const ecart = compte && qte !== l.quantiteDemandee;
                   return (
-                    <tr key={i} className={ecart
+                    <Fragment key={i}>
+                    <tr className={ecart
                       ? (qte > l.quantiteDemandee
                         ? 'bg-blue-50/50 dark:bg-blue-900/10'
                         : 'bg-amber-50/50 dark:bg-amber-900/10')
@@ -488,10 +496,24 @@ export default function FicheImportationPage() {
                         {l.quantiteDemandee.toLocaleString('fr-FR')}
                       </td>
                       <td className="px-3 py-2.5">
-                        <span className={`font-medium ${!ecart
-                          ? 'text-gray-600 dark:text-gray-300'
-                          : qte > l.quantiteDemandee ? 'text-blue-500' : 'text-orange-500'}`}>
-                          {recuLigne > 0 ? recuLigne.toLocaleString('fr-FR') : '—'}
+                        <span className="inline-flex items-center gap-1.5">
+                          <span className={`font-medium ${!ecart
+                            ? 'text-gray-600 dark:text-gray-300'
+                            : qte > l.quantiteDemandee ? 'text-blue-500' : 'text-orange-500'}`}>
+                            {recuLigne > 0 ? recuLigne.toLocaleString('fr-FR') : '—'}
+                          </span>
+                          {/* Le détail des livraisons : quand, combien, par qui —
+                              et c'est de là qu'une réception s'annule. */}
+                          {nbRecep > 0 && (
+                            <button onClick={() => setDetailLigne(detailLigne === i ? null : i)}
+                              title="Voir les réceptions"
+                              className={`shrink-0 rounded p-0.5 transition-colors ${
+                                detailLigne === i
+                                  ? 'bg-indigo-50 text-indigo-600 dark:bg-indigo-900/30'
+                                  : 'text-gray-400 hover:bg-indigo-50 hover:text-indigo-600'}`}>
+                              <Info size={13} />
+                            </button>
+                          )}
                         </span>
                       </td>
                       {montreArgent && <>
@@ -529,6 +551,51 @@ export default function FicheImportationPage() {
                         </td>
                       )}
                     </tr>
+                    {detailLigne === i && (
+                      <tr>
+                        {/* Le détail s'étend sur toute la ligne : les colonnes
+                            d'argent et l'action ne sont pas toujours là. */}
+                        <td colSpan={4 + (montreArgent ? (parts ? 4 : 2) : 0)
+                          + (saisieQuantites && peut ? 1 : 0)}
+                          className="px-3 pb-3">
+                          <div className="rounded-xl bg-gray-50 p-3 text-left dark:bg-gray-800/50">
+                            <p className="mb-2 text-xs font-bold uppercase text-gray-400">Réceptions</p>
+                            <div className="flex flex-col gap-1.5">
+                              {lignesRecep.map(r => (
+                                <div key={r.id}
+                                  className={`flex items-center justify-between gap-2 rounded-lg bg-white px-3 py-1.5 text-xs dark:bg-gray-900 ${
+                                    r.annulee ? 'opacity-50' : ''}`}>
+                                  <span className="flex min-w-0 items-center gap-2">
+                                    <span className={`font-bold ${r.annulee
+                                      ? 'text-gray-400 line-through'
+                                      : 'text-gray-900 dark:text-gray-100'}`}>
+                                      {r.quantite.toLocaleString('fr-FR')}
+                                    </span>
+                                    <span className="text-gray-500">{formatDate(r.date)}</span>
+                                    <span className="text-gray-400">{r.heure}</span>
+                                    <span className="truncate text-gray-500">
+                                      {r.utilisateurNom}
+                                      {r.utilisateurFonction && r.utilisateurFonction !== r.utilisateurNom
+                                        && <span className="ml-1 text-gray-400">· {r.utilisateurFonction}</span>}
+                                    </span>
+                                    {r.note && <span className="truncate text-gray-400">— {r.note}</span>}
+                                  </span>
+                                  {r.annulee ? (
+                                    <span className="shrink-0 text-gray-400">Annulée</span>
+                                  ) : saisieQuantites && peut ? (
+                                    <button onClick={() => defaire(r.id)} disabled={enCours}
+                                      className="shrink-0 text-red-500 transition-colors hover:text-red-600 disabled:opacity-40">
+                                      Annuler
+                                    </button>
+                                  ) : null}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                    </Fragment>
                   );
                 })}
               </tbody>
