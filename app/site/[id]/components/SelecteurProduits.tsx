@@ -61,6 +61,13 @@ interface Props {
    * ce qu'on n'a pas aujourd'hui, on l'aura acheté d'ici la livraison.
    */
   futur?: boolean;
+  /**
+   * Ne dessiner que la recherche.
+   *
+   * L'appelant affiche les lignes lui-même : il veut les mêmes colonnes
+   * que le reste de son écran, pas la liste de ce composant.
+   */
+  listeMasquee?: boolean;
 }
 
 function libelleVariante(sel: Record<string, string>): string {
@@ -97,7 +104,7 @@ export default function SelecteurProduits({
   chezDestinataire, nomDestinataire, onCreerProduit,
   vente = false, futur = false,
   produitsNeufs, onCreerGamme,
-  partsFrais, totalFrais: totalDesFrais, partsImposees, onCorrigerPart,
+  partsFrais, totalFrais: totalDesFrais, partsImposees, onCorrigerPart, listeMasquee,
   fraisCle, onChangerCleFrais, coutVideParDefaut, coutInconnuPossible,
   coutInconnuParDefaut,
 }: Props & {
@@ -469,7 +476,10 @@ export default function SelecteurProduits({
       )}
       </div>
 
-      {lignes.length === 0 ? (
+      {/* Un écran peut tenir sa propre liste — un tableau avec ses
+          colonnes — et ne demander ici que la recherche. La dessiner
+          deux fois montrerait les mêmes lignes sous deux formes. */}
+      {listeMasquee ? null : lignes.length === 0 ? (
         <div className="py-12 text-center">
           <Package size={22} className="mx-auto text-gray-300 dark:text-gray-700" />
           <p className="text-xs text-gray-400 mt-2">

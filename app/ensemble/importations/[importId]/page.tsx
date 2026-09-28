@@ -5,7 +5,7 @@ import { db } from '@/lib/firebase';
 import { useAuth } from '@/lib/auth-context';
 import { useParams, useRouter } from 'next/navigation';
 import { Loader2, Check, Ship, ArrowRight, X, CheckCheck, Plus, Undo2, Info,
-  Wallet, BarChart3, ArrowUpDown } from 'lucide-react';
+  Wallet, BarChart3, ArrowUpDown, Trash2 } from 'lucide-react';
 import { formatMontant, formatDate } from '@/lib/format';
 import { auteurCourant, auteurEtape } from '@/lib/auteur';
 import { roleSurSite, type RoleSite } from '@/lib/roles';
@@ -537,6 +537,15 @@ export default function FicheImportationPage() {
      dit que le fournisseur a accepté cette commande-là. */
   const lignesModifiables = dossier.etat === 'en_attente' && estAdmin;
 
+  /**
+   * Les lignes que le tableau montre.
+   *
+   * En attente, la liste se complète sans être encore inscrite : c'est
+   * `lignes` qui fait foi, sinon un produit ajouté n'apparaîtrait qu'après
+   * l'enregistrement. Ailleurs, le dossier seul.
+   */
+  const lignesVues = lignesModifiables && lignesSales ? lignes : dossier.lignes;
+
   async function enregistrerLignes() {
     if (!dossier) return;
     if (lignes.length === 0 || lignes.some(l => !l.produitId || l.quantiteDemandee <= 0)) {
@@ -951,33 +960,21 @@ export default function FicheImportationPage() {
               l'ajoute sans rouvrir un dossier. Après « Validé », la
               commande est partie — l'allonger ici la ferait diverger de
               ce que le fournisseur a accepté. */}
-          {lignesModifiables ? (
-            <>
-              <SelecteurProduits
-                produits={produits} lignes={lignes}
-                onChange={l => { setLignes(l); setLignesSales(true); }}
-                coutEditable montrerStock={false} labelCout="Coût d'achat"
-                futur
-                onCreerProduit={creerEtAjouter}
-                onCreerGamme={setGamme}
-                produitsNeufs={produitsNeufs}
-              />
-              {lignesSales && (
-                <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
-                  <button type="button" disabled={enCours}
-                    onClick={() => { setLignes(dossier.lignes ?? []); setLignesSales(false); }}
-                    className="rounded-xl border border-gray-200 px-3 py-2 text-xs font-bold text-gray-500 transition-colors hover:bg-gray-50 disabled:opacity-40 dark:border-gray-700 dark:hover:bg-gray-800">
-                    Annuler
-                  </button>
-                  <button type="button" onClick={enregistrerLignes} disabled={enCours}
-                    className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-3 py-2 text-xs font-bold text-white transition-colors hover:bg-indigo-700 disabled:opacity-40">
-                    {enCours ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
-                    Inscrire la marchandise
-                  </button>
-                </div>
-              )}
-            </>
-          ) : (
+          {/* En attente, la recherche s'ajoute au tableau : on complète la
+              liste sans quitter le dossier, et les lignes gardent les
+              mêmes colonnes qu'aux autres états. */}
+          {lignesModifiables && (
+            <SelecteurProduits
+              produits={produits} lignes={lignes}
+              onChange={l => { setLignes(l); setLignesSales(true); }}
+              coutEditable montrerStock={false} labelCout="Coût d'achat"
+              futur listeMasquee
+              onCreerProduit={creerEtAjouter}
+              onCreerGamme={setGamme}
+              produitsNeufs={produitsNeufs}
+            />
+          )}
+
           <div className="overflow-x-auto">
             <table className="w-full whitespace-nowrap text-center text-sm">
               <thead>
@@ -1021,16 +1018,20 @@ export default function FicheImportationPage() {
                         </button>
                       ) : 'Prix du marché'}
                     </th>
-                    <th className="px-3 py-2.5 font-medium">Prix recommandé</th>
+                    {/* Le prix se pose quand le fournisseur a confirmé :
+                        avant, on ignore même si la commande passera. */}
+                    {!lignesModifiables && (
+                      <th className="px-3 py-2.5 font-medium">Prix recommandé</th>
+                    )}
                     <th className="px-3 py-2.5 font-medium">Total</th>
                   </>}
-                  {saisieQuantites && peut && (
+                  {(saisieQuantites && peut) || lignesModifiables ? (
                     <th className="rounded-r-lg px-3 py-2.5 font-medium" />
-                  )}
+                  ) : null}
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50 dark:divide-gray-800">
-                {dossier.lignes.map((l, i) => {
+                {lignesVues.map((l, i) => {
                   /* Ce qui est arrivé : la somme des réceptions, jamais
                      le commandé. Un reçu posé d'avance ferait que
                      personne ne compte. */
@@ -1233,6 +1234,7 @@ export default function FicheImportationPage() {
                         {/* Sous le coût réel, le champ passe en rouge :
                             c'est le seul moment où la perte se corrige
                             encore, la confirmation fige le prix. */}
+                        {!lignesModifiables && (
                         <td className="px-3 py-2.5">
                           {prixEditables ? (
                             <ChampNombre valeur={prixAffiche}
@@ -1252,6 +1254,7 @@ export default function FicheImportationPage() {
                             </span>
                           )}
                         </td>
+                        )}
                         <td className="px-3 py-2.5 font-medium text-gray-900 dark:text-gray-100">
                           {formatMontant(qte * l.valeurUnitaire)}
                         </td>
@@ -1276,13 +1279,29 @@ export default function FicheImportationPage() {
                           </div>
                         </td>
                       )}
+                      {/* Retirer une ligne : tant que le fournisseur n'a
+                          rien confirmé, la commande se corrige. */}
+                      {lignesModifiables && (
+                        <td className="px-3 py-2.5">
+                          <button type="button"
+                            onClick={() => {
+                              setLignes(l => l.filter((_, j) => j !== i));
+                              setLignesSales(true);
+                            }}
+                            title="Retirer cette ligne"
+                            className="rounded-lg p-1.5 text-gray-300 transition-colors hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-900/20">
+                            <Trash2 size={14} />
+                          </button>
+                        </td>
+                      )}
                     </tr>
                     {detailLigne === i && (
                       <tr>
                         {/* Le détail s'étend sur toute la ligne : les colonnes
                             d'argent et l'action ne sont pas toujours là. */}
-                        <td colSpan={5 + (montreArgent ? (parts ? 7 : 5) : 0)
-                          + (saisieQuantites && peut ? 1 : 0)}
+                        <td colSpan={5 + (montreArgent
+                            ? (parts ? 7 : 5) - (lignesModifiables ? 1 : 0) : 0)
+                          + ((saisieQuantites && peut) || lignesModifiables ? 1 : 0)}
                           className="px-3 pb-3">
                           <div className="rounded-xl bg-gray-50 p-3 text-left dark:bg-gray-800/50">
                             <p className="mb-2 text-xs font-bold uppercase text-gray-400">Réceptions</p>
@@ -1327,6 +1346,21 @@ export default function FicheImportationPage() {
               </tbody>
             </table>
           </div>
+
+          {/* La liste a changé : on l'inscrit, ou on revient au dossier. */}
+          {lignesSales && (
+            <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
+              <button type="button" disabled={enCours}
+                onClick={() => { setLignes(dossier.lignes ?? []); setLignesSales(false); }}
+                className="rounded-xl border border-gray-200 px-3 py-2 text-xs font-bold text-gray-500 transition-colors hover:bg-gray-50 disabled:opacity-40 dark:border-gray-700 dark:hover:bg-gray-800">
+                Annuler
+              </button>
+              <button type="button" onClick={enregistrerLignes} disabled={enCours}
+                className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-3 py-2 text-xs font-bold text-white transition-colors hover:bg-indigo-700 disabled:opacity-40">
+                {enCours ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
+                Inscrire la marchandise
+              </button>
+            </div>
           )}
 
           {/* Un prix saisi et non inscrit ne vaut rien : la confirmation
@@ -1335,7 +1369,7 @@ export default function FicheImportationPage() {
               Produit par produit, on perd le total de vue : en annonçant
               le bénéfice cherché sur le dossier, l'app propose des prix
               qui y mènent — en gardant les écarts du marché. */}
-          {prixEditables && parts !== undefined && (() => {
+          {prixEditables && !lignesModifiables && parts !== undefined && (() => {
             const lignesPourCalcul = dossier.lignes.map((l, i) => ({
               ...l,
               valeurUnitaire: couts[i] ?? l.valeurUnitaire,
@@ -1424,7 +1458,7 @@ export default function FicheImportationPage() {
               Question distincte du prix recommandé : un produit dont le
               coût moyen monte à cause du fret peut passer sous son prix
               de marché sans que rien ne le signale. */}
-          {montreArgent && (() => {
+          {montreArgent && !lignesModifiables && (() => {
             const auMarche = dossier.lignes.map((l, i) => {
               const qte = compte ? (recu[i] ?? 0)
                 : (qtes[i] ?? l.quantiteDemandee ?? 0);
