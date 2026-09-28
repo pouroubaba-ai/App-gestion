@@ -13,7 +13,7 @@ import {
 } from '@/lib/importations';
 import { ChampRecherche } from '@/components/Champs';
 import {
-  useSites, FiltreSite, ToggleVue, type PropsPortee,
+  useSites, FiltreSite, ToggleVue, CartesParSite, type PropsPortee,
 } from './ContexteSites';
 import ListeDossiers, { type Colonne } from './ListeDossiers';
 import RangeeEtapes from './RangeeEtapes';
@@ -129,6 +129,25 @@ export default function OngletImportations({
     };
   });
 
+  /* Ce qu'un site attend : combien de dossiers viennent vers lui, ce
+     qu'ils pèsent, et où ils en sont. La vue d'ensemble additionne tout ;
+     celle-ci répond site par site. */
+  function chiffresDuSite(id: string) {
+    const siens = dossiers.filter(d => d.siteId === id && d.etat !== 'annule');
+    return {
+      total: siens.length,
+      valeur: siens.reduce((n, d) => n + valeurDe(d, compté(d.etat)), 0),
+      etapes: CARTES_ETATS.map(e => {
+        const l = siens.filter(d => d.etat === e);
+        return {
+          label: LIBELLES_IMPORTATION[e],
+          n: l.length,
+          valeur: l.reduce((n, d) => n + valeurDe(d, compté(e)), 0),
+        };
+      }),
+    };
+  }
+
   /* Les deux cartes de tête : ce qui voyage, ce qui est arrivé. */
   const enRoute = dossiers.filter(d => d.etat !== 'confirme' && d.etat !== 'annule');
   const RESUME = ([
@@ -219,7 +238,32 @@ export default function OngletImportations({
         </div>
       </div>
 
-      {/* Les deux lectures du même dossier, comme aux achats. */}
+      {ctx.parSite ? (
+        /* Une carte par site : ce qui vient vers lui, étape par étape. */
+        <CartesParSite sites={ctx.sitesVus} contenu={id => {
+          const c = chiffresDuSite(id);
+          return {
+            titre: montreArgent ? 'Importations' : 'Dossiers',
+            valeur: montreArgent ? formatMontant(c.valeur) : String(c.total),
+            dort: c.total === 0,
+            badge: c.total > 0
+              ? {
+                  texte: `${c.total} dossier${c.total > 1 ? 's' : ''}`,
+                  ton: 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400',
+                }
+              : null,
+            lignes: c.etapes.map(e => ({
+              label: `${e.label} · ${e.n}`,
+              valeur: montreArgent ? formatMontant(e.valeur) : String(e.n),
+              vide: e.n === 0,
+            })),
+          };
+        }} />
+      ) : (
+      <>
+      {/* Les deux lectures du même dossier, comme aux achats. Elles ne
+          valent qu'en vue d'ensemble : par site, chaque carte porte déjà
+          son détail étape par étape. */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-0.5 rounded-xl bg-neutral-100 p-1 dark:bg-neutral-800">
           {([
@@ -370,6 +414,8 @@ export default function OngletImportations({
           onOuvrir={d => router.push(`/ensemble/importations/${d.id}`)}
           compte={`${affiches.length} dossier${affiches.length > 1 ? 's' : ''}`} />
       </div>
+      </>
+      )}
     </div>
   );
 }
