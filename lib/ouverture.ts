@@ -26,7 +26,9 @@ import {
   collection, addDoc, getDocs, query, where, serverTimestamp,
 } from 'firebase/firestore';
 import { db } from './firebase';
-import { referenceFlux } from './flux-marchandise';
+import {
+  referenceFlux, totalAchat, valeurVente,
+} from './flux-marchandise';
 
 export type RoleOuverture = 'fournisseur' | 'client';
 
@@ -135,6 +137,29 @@ export async function ouvertureDe(
  */
 export function estOuverture(dossier: any): boolean {
   return dossier?.ouverture === true;
+}
+
+/**
+ * Ce qu'un dossier vaut, ouverture comprise.
+ *
+ * Un achat vaut ses lignes et ses frais, une vente ses lignes, une
+ * ouverture son montant — elle n'a pas de marchandise à mesurer.
+ *
+ * Cette règle vivait à six endroits, chacun la redécouvrant à ses
+ * dépens : les soldes, l'imputation, la couverture d'un versement, les
+ * restes à encaisser, les documents de la fiche recouvrement. Chaque
+ * oubli donnait le même symptôme — un dossier valant zéro, donc tenu
+ * pour soldé, sur lequel plus rien ne pouvait s'imputer : l'argent
+ * entrait et la dette ne bougeait pas. Une valeur se calcule à un seul
+ * endroit, sans quoi les copies finissent par diverger.
+ */
+export function valeurDossier(
+  dossier: any, role: RoleOuverture,
+): number {
+  if (estOuverture(dossier)) return dossier?.montantOuverture ?? 0;
+  return role === 'fournisseur'
+    ? totalAchat(dossier ?? {})
+    : valeurVente(dossier?.lignes ?? []);
 }
 
 /**

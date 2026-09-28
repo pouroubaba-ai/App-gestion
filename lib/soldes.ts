@@ -1,9 +1,9 @@
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from './firebase';
-import { valeurRecue, valeurVente, totalAchat } from './flux-marchandise';
+import { valeurVente } from './flux-marchandise';
 import { lireParSite, type Portee } from '@/lib/portee';
 import { totalImportation } from './importations';
-import { estOuverture } from './ouverture';
+import { estOuverture, valeurDossier } from './ouverture';
 
 /**
  * Ce que chaque tiers doit, déduit et non stocké.
@@ -139,9 +139,7 @@ export async function soldesDuSite(siteId: Portee): Promise<SoldesParRole> {
     /* Frais compris : le transport est dû au même fournisseur, et
        l'omettre soldait un dossier qu'il restait à payer. */
     cumuler(fournisseur, a.fournisseurId,
-      /* Un dossier d'ouverture n'a pas de lignes : sa valeur est le
-         montant reporté, pas une somme de marchandise. */
-      estOuverture(a) ? (a.montantOuverture ?? 0) : totalAchat(a),
+      valeurDossier(a, 'fournisseur'),
       a.avanceVersee ?? 0,
       a.dateConfirmation ?? a.dateReception ?? a.dateCommande ?? null,
       parRet);
@@ -163,7 +161,7 @@ export async function soldesDuSite(siteId: Portee): Promise<SoldesParRole> {
     if (!v.clientId || !conclu(v, 'client')) continue;
     const parRet = parRetour.get(d.id) ?? 0;
     cumuler(client, v.clientId,
-      estOuverture(v) ? (v.montantOuverture ?? 0) : valeurVente(v.lignes ?? []),
+      valeurDossier(v, 'client'),
       v.avanceVersee ?? 0,
       v.dateLivraison ?? v.dateCommande ?? null,
       parRet);
@@ -255,10 +253,9 @@ export async function soldeTiers(
        marchandise rendue de l'autre. */
     const parRet = parRetour.get(d.id) ?? 0;
     cumuler(cible, partenaireId,
-      /* Une ouverture n'a pas de lignes : sa valeur est le montant
-         reporté. La déduire de la marchandise donnerait zéro. */
-      estOuverture(x) ? (x.montantOuverture ?? 0)
-        : role === 'fournisseur' ? valeurRecue(x.lignes ?? []) : valeurVente(x.lignes ?? []),
+      /* Les frais entrent dans la dette ici aussi : la fiche du tiers
+         et la liste des soldes comptaient le même achat différemment. */
+      valeurDossier(x, role),
       x.avanceVersee ?? 0,
       role === 'fournisseur'
         ? (x.dateConfirmation ?? x.dateReception ?? x.dateCommande ?? null)

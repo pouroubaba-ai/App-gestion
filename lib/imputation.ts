@@ -3,9 +3,7 @@ import {
 } from 'firebase/firestore';
 import { db } from './firebase';
 import type { RoleTiers } from './soldes';
-import { valeurRecue, valeurVente } from './flux-marchandise';
-import { estOuverture } from './ouverture';
-import { totalFrais } from './frais';
+import { valeurDossier } from './ouverture';
 
 /**
  * Répartir un versement sur les factures, de la plus ancienne à la plus
@@ -54,15 +52,7 @@ interface Ouvert {
 function valeurLignes(
   lignes: any[], role: RoleTiers, dossier?: any,
 ): number {
-  /* Un solde d'ouverture n'a pas de lignes : sa valeur est portee en
-     propre. La mesurer sur des lignes absentes rendrait zero, le dossier
-     serait tenu pour solde, et rien ne pourrait s'imputer dessus. */
-  if (estOuverture(dossier)) return dossier?.montantOuverture ?? 0;
-  /* Côté fournisseur, les frais d'approche font partie de la dette :
-     ils lui sont dus au même titre que la marchandise. */
-  return role === 'fournisseur'
-    ? valeurRecue(lignes ?? []) + totalFrais(dossier?.frais)
-    : valeurVente(lignes ?? []);
+  return valeurDossier(dossier ?? { lignes }, role);
 }
 
 /**

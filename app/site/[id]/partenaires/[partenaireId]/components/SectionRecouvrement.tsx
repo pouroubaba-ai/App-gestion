@@ -15,8 +15,7 @@ import { formatMontant, abregeMontant, dansNJours, ecartJours } from '@/lib/form
 import { hankenGrotesk } from '../../../components/finance/font';
 import { Settings, BookOpen, Loader2, Check, X, Plus, Calendar } from 'lucide-react';
 import { ChampNombre } from '@/components/Champs';
-import { valeurRecue, valeurVente } from '@/lib/flux-marchandise';
-import { estOuverture } from '@/lib/ouverture';
+import { valeurDossier } from '@/lib/ouverture';
 import FiltreDeroulant from '@/components/FiltreDeroulant';
 
 type RoleRecouvrement = 'fournisseur' | 'client';
@@ -146,7 +145,7 @@ export default function SectionRecouvrement({
         const a = d.data() as any;
         docs.push({
           id: d.id, reference: a.reference ?? '—', role: 'fournisseur',
-          total: estOuverture(a) ? (a.montantOuverture ?? 0) : valeurRecue(a.lignes ?? []),
+          total: valeurDossier(a, 'fournisseur'),
           verse: a.avanceVersee ?? 0,
           date: a.dateConfirmation ?? a.dateReception ?? a.dateCommande ?? '',
         });
@@ -155,7 +154,7 @@ export default function SectionRecouvrement({
         const v = d.data() as any;
         docs.push({
           id: d.id, reference: v.reference ?? '—', role: 'client',
-          total: estOuverture(v) ? (v.montantOuverture ?? 0) : valeurVente(v.lignes ?? []),
+          total: valeurDossier(v, 'client'),
           verse: v.avanceVersee ?? 0,
           date: v.dateLivraison ?? v.dateCommande ?? '',
         });
