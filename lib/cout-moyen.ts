@@ -42,6 +42,13 @@ export interface MouvementCout {
 export interface EtatStock {
   stock: number;
   coutMoyen: number;
+  /**
+   * Le rayon n'a encore reçu aucune entrée qui sache ce qu'elle a coûté.
+   *
+   * `coutMoyen` vaut alors zéro faute de mieux : l'afficher comme une
+   * valeur ferait d'une vente un bénéfice égal à son prix.
+   */
+  coutInconnu?: boolean;
 }
 
 /** La clé d'un rayon : un produit, ou l'une de ses déclinaisons. */
@@ -83,7 +90,7 @@ export function etatsDepuisMouvements(
     if (q <= 0) continue;
 
     const k = cle(m);
-    const e = etats.get(k) ?? { stock: 0, coutMoyen: 0 };
+    const e = etats.get(k) ?? { stock: 0, coutMoyen: 0, coutInconnu: false };
 
     if (m.sens === 'entree') {
       /* La valeur de la ligne divisée par ses unités : c'est le coût réel
@@ -91,7 +98,22 @@ export function etatsDepuisMouvements(
          écrite. */
       const valeur = m.valeurTotale ?? (m.valeurUnitaire ?? 0) * q;
       const coutUnite = valeur / q;
-      e.coutMoyen = coutMoyenApresEntree(e.stock, e.coutMoyen, q, coutUnite);
+      /* La même règle qu'à l'écriture : une entrée qui ne sait pas ce
+         qu'elle a coûté ne pondère rien, et un rayon qui l'ignore encore
+         se laisse poser le coût entier par la première entrée réelle.
+
+         Sans cette lecture, le rayon affichait un coût que le registre
+         n'avait jamais écrit : la détention portait 7 000, l'écran
+         recalculait 2 333 en moyennant avec les unités sans valeur. */
+      const entreeSansCout = !!(m as any).coutInconnu;
+      if (entreeSansCout) {
+        /* Elle apporte de la quantité, pas de la valeur. */
+        if (e.stock <= 0 && e.coutMoyen <= 0) e.coutInconnu = true;
+      } else {
+        e.coutMoyen = coutMoyenApresEntree(
+          e.stock, e.coutMoyen, q, coutUnite, e.coutInconnu);
+        e.coutInconnu = false;
+      }
       e.stock += q;
     } else {
       /* Une sortie ne repondère rien : elle retire, c'est tout. */
