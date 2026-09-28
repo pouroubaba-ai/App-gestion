@@ -111,6 +111,12 @@ function Ensemble() {
 
   useEffect(() => {
     if (!user) return;
+    /* L'activité arrive après le profil. Partir sans elle ferait lire les
+       sites du compte — vide pour un administrateur, qui les tient par son
+       activité — et l'écran annonçait « aucun site » le temps qu'elle
+       arrive. On attend de savoir avant de conclure. */
+    if (authLoading) return;
+    if (profile?.role === 'admin' && !activite) return;
     (async () => {
       if (activite) {
         const snap = await getDocs(query(
@@ -123,7 +129,7 @@ function Ensemble() {
       setSites(docs.filter(d => d.exists())
         .map(d => ({ id: d.id, nom: (d.data() as any).nom })));
     })().catch(() => setSites([]));
-  }, [user, activite]);
+  }, [user, activite, authLoading, profile?.role]);
 
   if (authLoading || sites === null) return (
     <AppLayout>
