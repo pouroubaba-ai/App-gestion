@@ -320,6 +320,23 @@ export default function FicheImportationPage() {
     return Math.round(apres * r.contenance);
   });
 
+  /**
+   * Le prix de chaque ligne, tel qu'il sera enregistré.
+   *
+   * Sans prix saisi ni prix en rayon, on retient le coût réel : c'est le
+   * plancher, celui sous lequel la ligne perd. Zéro ne veut rien dire —
+   * il annonçait une perte entière et poussait à saisir au hasard.
+   */
+  const prixRetenu = (i: number): number => {
+    const l = dossier.lignes[i];
+    const pose = prix[i] ?? l?.prixVente ?? 0;
+    if (pose > 0) return pose;
+    const qte = compte ? (recu[i] ?? 0)
+      : (qtes[i] ?? l?.quantiteDemandee ?? 0);
+    const base = couts[i] ?? l?.valeurUnitaire ?? 0;
+    return Math.round(qte > 0 ? base + (parts?.[i] ?? 0) / qte : base);
+  };
+
   /* Les frais se posent entièrement, ou le dossier n'avance pas. */
   const controle = controlerRepartition(dossier.lignes, frais, fraisCorrection, fraisCle);
 
@@ -582,7 +599,7 @@ export default function FicheImportationPage() {
         id: importId,
         lignes: dossier.lignes.map((l, i) => ({
           ...l,
-          prixVente: prix[i] || null,
+          prixVente: prixRetenu(i) || null,
           valeurUnitaire: couts[i] ?? l.valeurUnitaire,
           quantiteDemandee: qtes[i] ?? l.quantiteDemandee,
         })),
@@ -685,7 +702,7 @@ export default function FicheImportationPage() {
         ...l, quantiteRecue: recu[i] ?? 0,
         /* Le prix part avec la confirmation : c'est elle qui l'écrit sur
            le produit, et un prix saisi sans partir se perdrait. */
-        prixVente: prix[i] || l.prixVente || null,
+        prixVente: prixRetenu(i) || null,
       }));
       /* Le même geste qu'un achat : le stock entre, les frais se
          répartissent dans le coût, la dette naît. Deux façons de le
@@ -937,9 +954,16 @@ export default function FicheImportationPage() {
                      coût réel n'est pas le prix facturé : il porte le
                      voyage. Un prix qui couvrait l'achat peut ne plus
                      couvrir le fret. */
-                  const sousLeCout = (prix[i] ?? 0) > 0 && prix[i]! < Math.round(reel);
+                  /* Un produit neuf n'a pas de prix : le champ partait à
+                     zéro, ce qui annonçait une perte entière et poussait
+                     à saisir n'importe quoi. Le coût réel est le seul
+                     plancher qui ait un sens — en dessous on perd, à ce
+                     niveau on ne gagne rien, et c'est à celui qui pose le
+                     prix de décider de la marge. */
+                  const prixAffiche = prixRetenu(i);
+                  const sousLeCout = prixAffiche > 0 && prixAffiche < Math.round(reel);
                   const perteLigne = sousLeCout
-                    ? (Math.round(reel) - prix[i]!) * Math.max(qte, 1) : 0;
+                    ? (Math.round(reel) - prixAffiche) * Math.max(qte, 1) : 0;
                   const ecart = compte && qte !== l.quantiteDemandee;
                   return (
                     <Fragment key={i}>
@@ -1105,7 +1129,7 @@ export default function FicheImportationPage() {
                             encore, la confirmation fige le prix. */}
                         <td className="px-3 py-2.5">
                           {prixEditables ? (
-                            <ChampNombre valeur={prix[i] ?? 0}
+                            <ChampNombre valeur={prixAffiche}
                               onChange={n => {
                                 setPrix(p => ({ ...p, [i]: n }));
                                 setPrixSales(true);
@@ -1118,7 +1142,7 @@ export default function FicheImportationPage() {
                             <span className={`font-medium ${sousLeCout
                               ? 'text-red-600 dark:text-red-400'
                               : 'text-gray-500'}`}>
-                              {(prix[i] ?? 0) > 0 ? formatMontant(prix[i]!) : '—'}
+                              {prixAffiche > 0 ? formatMontant(prixAffiche) : '—'}
                             </span>
                           )}
                         </td>
@@ -1211,7 +1235,7 @@ export default function FicheImportationPage() {
               valeurUnitaire: couts[i] ?? l.valeurUnitaire,
               quantiteDemandee: qtes[i] ?? l.quantiteDemandee,
               quantiteRecue: compte ? (recu[i] ?? 0) : null,
-              prixVente: prix[i] ?? l.prixVente ?? 0,
+              prixVente: prixRetenu(i),
             })) as LigneFlux[];
             const cout = coutTotal(lignesPourCalcul, parts);
             const actuel = beneficeActuel(lignesPourCalcul, parts);
