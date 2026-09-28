@@ -142,6 +142,33 @@ export function totalImportation(i: {
   return marchandise + totalFrais(i.frais);
 }
 
+/** Le jour où le dossier s'est ouvert. */
+export function dateOuverture(i: Importation): string | null {
+  return i.dates?.en_attente ?? null;
+}
+
+/**
+ * Depuis combien de jours le dossier existe.
+ *
+ * Il ne se remet pas à zéro d'une étape à l'autre : ce qu'on veut
+ * savoir, c'est depuis quand on attend cette marchandise. Un dossier de
+ * quarante jours encore « expédié » se voit au premier regard, là où
+ * son état seul dirait la même chose qu'hier.
+ *
+ * Un dossier clos garde l'âge qu'il avait à sa clôture : il a cessé de
+ * vieillir le jour où la marchandise est entrée.
+ */
+export function ageEnJours(i: Importation): number | null {
+  const debut = dateOuverture(i);
+  if (!debut) return null;
+  const fin = i.etat === 'confirme' || i.etat === 'annule'
+    ? (i.dates?.[i.etat] ?? new Date().toISOString().slice(0, 10))
+    : new Date().toISOString().slice(0, 10);
+  const ms = Date.parse(fin) - Date.parse(debut);
+  if (Number.isNaN(ms)) return null;
+  return Math.max(0, Math.round(ms / 86400000));
+}
+
 /** Un dossier est-il encore en route ? */
 export function enCours(etat: EtatImportation): boolean {
   return etat !== 'confirme' && etat !== 'annule';

@@ -9,6 +9,7 @@ import { totalFrais } from '@/lib/frais';
 import { valeurEnvoyee, valeurRecue } from '@/lib/flux-marchandise';
 import {
   importationsDe, ETAPES_IMPORTATION, LIBELLES_IMPORTATION,
+  dateOuverture, ageEnJours,
   type Importation, type EtatImportation,
 } from '@/lib/importations';
 import { ChampRecherche } from '@/components/Champs';
@@ -182,6 +183,25 @@ export default function OngletImportations({
       rendu: d => d.origine || '—' },
     { cle: 'destination', label: 'Destination', rang: 'corps',
       rendu: d => d.siteNom || '—' },
+    { cle: 'date', label: 'Date', rang: 'corps',
+      rendu: d => {
+        const j = dateOuverture(d);
+        return j ? j.split('-').reverse().join('/') : '—';
+      } },
+    /* Depuis combien de temps on attend. Un dossier de quarante jours
+       encore « expédié » se voit ici d'un coup d'œil : son état seul
+       dirait la même chose qu'hier. */
+    { cle: 'age', label: 'Jours', rang: 'corps',
+      rendu: d => {
+        const n = ageEnJours(d);
+        if (n == null) return '—';
+        const vieux = d.etat !== 'confirme' && d.etat !== 'annule' && n >= 30;
+        return (
+          <span className={vieux ? 'font-bold text-orange-500' : undefined}>
+            {n} j
+          </span>
+        );
+      } },
     ...(montreArgent ? ([
       { cle: 'frais', label: 'Frais', rang: 'corps',
         rendu: (d: Importation) => totalFrais(d.frais) > 0
