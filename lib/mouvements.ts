@@ -306,11 +306,17 @@ export async function ecrireLignesEnLot(
         ? (inconnuAvant || rayonVierge) && entreeSansCout
         : inconnuAvant;
 
+      /* Le coût se saisit dans l'emballage, le stock se tient à l'unité :
+         les mêler écrirait le prix du carton sur chaque pièce. */
+      const coutUnite = saisie.quantite > 0
+        ? (saisie.valeurUnitaire * saisie.quantite) / qteUnites
+        : saisie.valeurUnitaire;
+
       const nouveauCout = saisie.sens === 'entree'
         ? (entreeSansCout
             ? coutAvant
             : coutMoyenApresEntree(
-                stockAvant, coutAvant, qteUnites, saisie.valeurUnitaire,
+                stockAvant, coutAvant, qteUnites, coutUnite,
                 inconnuAvant))
         : coutAvant;
       const nouveauStock = stockAvant + (saisie.sens === 'entree' ? 1 : -1) * qteUnites;
@@ -439,11 +445,16 @@ export async function enregistrerMouvement(saisie: SaisieMouvement): Promise<Mou
     ? (inconnuAvant || rayonVierge) && entreeSansCout
     : inconnuAvant;
 
+  /* Même règle qu'en lot : le coût saisi est celui de l'emballage. */
+  const coutUnite = saisie.quantite > 0
+    ? (saisie.valeurUnitaire * saisie.quantite) / qteUnites
+    : saisie.valeurUnitaire;
+
   const nouveauCout = saisie.sens === 'entree'
     ? (entreeSansCout
         ? coutAvant
         : coutMoyenApresEntree(
-            stockAvant, coutAvant, qteUnites, saisie.valeurUnitaire,
+            stockAvant, coutAvant, qteUnites, coutUnite,
             inconnuAvant))
     : coutAvant;
   const nouveauStock = stockAvant + signe * qteUnites;

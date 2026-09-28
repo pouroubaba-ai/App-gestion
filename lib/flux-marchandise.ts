@@ -877,9 +877,18 @@ async function appliquerLigne(
      à attribuer aux unités d'origine. */
   const inconnuApres = params.sens === 'entree' ? false : inconnuAvant;
 
+  /* Le coût se saisit dans l'emballage retenu, le stock se tient à
+     l'unité : un carton de 25 ampoules à 19 825 vaut 793 la pièce. Les
+     mêler écrivait le prix du carton sur des pièces — la fiche produit
+     annonçait 32 115 là où l'inventaire, qui reconstruit depuis les
+     mouvements, lisait 16 296. Deux chiffres pour un seul coût. */
+  const coutUnite = params.quantite > 0
+    ? (params.valeurUnitaire * params.quantite) / qteUnites
+    : params.valeurUnitaire;
+
   const nouveauCout = params.sens === 'entree'
     ? coutMoyenApresEntree(
-        stockAvant, coutAvant, qteUnites, params.valeurUnitaire, inconnuAvant)
+        stockAvant, coutAvant, qteUnites, coutUnite, inconnuAvant)
     : coutAvant;
   const nouveauStock = stockAvant + (params.sens === 'entree' ? 1 : -1) * qteUnites;
 
@@ -960,7 +969,14 @@ async function appliquerLigne(
      reconduit tel quel. C'est précisément le risque : un coût moyen qui
      monte peut passer au-dessus de ce prix reconduit, et la marchandise
      repartirait à perte. L'alerte à la confirmation est là pour ça. */
-  const nouveauPrix = params.sens === 'entree' ? (params.prixVente ?? null) : null;
+  /* Le prix suit la même règle que le coût : saisi par carton, il se
+     stocke à la pièce. Sans cela, un carton de 25 vendu 625 000 inscrivait
+     625 000 sur chaque ampoule. */
+  const nouveauPrix = params.sens === 'entree'
+    ? (params.prixVente != null && params.quantite > 0
+        ? Math.round((params.prixVente * params.quantite) / qteUnites)
+        : (params.prixVente ?? null))
+    : null;
 
   /* Le stock s'inscrit chez le site qui détient la marchandise, jamais
      sur le produit : celui-ci appartient à toute l'activité. */
