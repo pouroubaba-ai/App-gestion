@@ -236,7 +236,7 @@ export default function OngletRetours({
                  dans le site alors qu'on venait de l'ensemble. */
               onClick={() => router.push(
                 `/site/${ctx.siteEcriture}/retours/nouveau?type=${type}`
-                + marqueOrigine(ctx.ensemble, false))}
+                + marqueOrigine(ctx.depuisEnsemble, false))}
               className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-3 py-2 text-xs font-bold text-white transition-colors hover:bg-indigo-700">
               <Plus size={14} /> Nouveau retour
             </button>

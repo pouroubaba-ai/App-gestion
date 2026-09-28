@@ -625,7 +625,7 @@ export default function OngletCycleVente({ siteId, userId, role, sites, titre }:
                 /* L'origine suit : sans elle, quitter le comptoir ouvert
                    depuis l'ensemble renvoyait dans le site. */
                 onClick={() => router.push(
-                  `/site/${ctx.siteEcriture}/comptoir${marqueOrigine(ctx.ensemble)}`)}
+                  `/site/${ctx.siteEcriture}/comptoir${marqueOrigine(ctx.depuisEnsemble)}`)}
                 className="flex items-center gap-1.5 px-3 py-2 border border-indigo-200 dark:border-indigo-800 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 text-xs font-bold rounded-xl transition-colors">
                 <ShoppingCart size={14} /> Comptoir
               </button>
@@ -638,7 +638,7 @@ export default function OngletCycleVente({ siteId, userId, role, sites, titre }:
                   /* L'origine suit la creation : sans elle, un dossier
                      ouvert depuis l'ensemble s'y refermerait dans le site. */
                   `/site/${ctx.siteEcriture}/ventes/nouveau${vue === 'devis' ? '?type=devis' : ''}`
-                  + marqueOrigine(ctx.ensemble, vue !== 'devis'))}
+                  + marqueOrigine(ctx.depuisEnsemble, vue !== 'devis'))}
                 className="flex items-center gap-1.5 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition-colors">
                 {vue === 'devis' ? <FileText size={14} /> : <Plus size={14} />}
                 {vue === 'devis' ? 'Nouveau devis' : 'Nouvelle commande'}

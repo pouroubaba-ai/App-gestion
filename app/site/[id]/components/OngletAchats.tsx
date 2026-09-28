@@ -576,7 +576,7 @@ export default function OngletAchats({ siteId, userId, role, sites, titre }: Pro
             <button onClick={() => router.push(
               /* Creer depuis l'ensemble passe par un site : l'origine doit
                  suivre, sinon le dossier cree se refermera dans ce site. */
-              `/site/${ctx.siteEcriture}/achats/nouveau${marqueOrigine(ctx.ensemble)}`)}
+              `/site/${ctx.siteEcriture}/achats/nouveau${marqueOrigine(ctx.depuisEnsemble)}`)}
               className="flex shrink-0 items-center gap-1.5 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition-colors">
               <Plus size={14} /> Nouvel achat
             </button>

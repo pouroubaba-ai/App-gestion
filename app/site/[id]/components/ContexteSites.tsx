@@ -8,6 +8,7 @@
  * versement dans une vue qui n'en désigne aucun.
  */
 import { useMemo, useState } from 'react';
+import { usePathname } from 'next/navigation';
 import { sitesDe, siteUnique, type Portee } from '@/lib/portee';
 import FiltreDeroulant from '@/components/FiltreDeroulant';
 
@@ -43,6 +44,21 @@ export function useSites(siteId: Portee, sites?: SiteConnu[]) {
   );
   const ensemble = ids.length > 1;
 
+  /**
+   * D'où l'on regarde, et non combien de sites on regarde.
+   *
+   * `ensemble` dit « plusieurs sites » : il commande la colonne Site et
+   * son filtre, qui n'ont pas d'objet sur une seule boutique. Mais une
+   * maison d'un seul site a quand même sa vue d'ensemble, et l'on y
+   * ouvre le comptoir comme ailleurs. S'en servir pour marquer l'origine
+   * renvoyait alors dans le site : le lien ne portait aucune marque,
+   * puisqu'il n'y avait qu'un site.
+   *
+   * L'adresse, elle, ne ment pas sur la porte par laquelle on est
+   * entré. */
+  const chemin = usePathname();
+  const depuisEnsemble = chemin?.startsWith('/ensemble') ?? false;
+
   const noms = useMemo(() => {
     const m: Record<string, string> = {};
     (sites ?? []).forEach(s => { m[s.id] = s.nom; });
@@ -69,6 +85,9 @@ export function useSites(siteId: Portee, sites?: SiteConnu[]) {
 
   return {
     ensemble,
+    /** Vrai quand on regarde depuis `/ensemble`, quel que soit le nombre
+        de sites : c'est ce qui décide du retour. */
+    depuisEnsemble,
     /** Le site où écrire, ou `null` : la vue d'ensemble n'écrit pas. */
     siteEcriture: siteUnique(portee),
     nomDe: (id?: string | null) => (id ? noms[id] ?? '—' : '—'),

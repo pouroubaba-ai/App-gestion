@@ -501,7 +501,7 @@ export default function OngletTransferts({ siteId, userId, sites, role, titre }:
           {(ctx.ensemble ? true : sens === 'transfert') && peutInitierTransfert(ROLE_COURANT)
             && ctx.siteEcriture && (
             <button onClick={() => router.push(
-              `/site/${ctx.siteEcriture}/transferts/nouveau${marqueOrigine(ctx.ensemble)}`)}
+              `/site/${ctx.siteEcriture}/transferts/nouveau${marqueOrigine(ctx.depuisEnsemble)}`)}
               className="flex shrink-0 items-center gap-1.5 rounded-xl bg-indigo-600 px-3 py-2 text-xs font-bold text-white transition-colors hover:bg-indigo-700">
               <Plus size={14} /> Initier un transfert
             </button>

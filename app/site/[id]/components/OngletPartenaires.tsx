@@ -710,7 +710,7 @@ export default function OngletPartenaires({ siteId, userId, sites, titre, defaul
             onOuvrir={ctx.siteEcriture ? () => router.push(
               `/site/${ctx.siteEcriture}/transactions`
               + `?role=${estFourn ? 'fournisseur' : 'client'}`
-              + marqueOrigine(ctx.ensemble, false)) : undefined}
+              + marqueOrigine(ctx.depuisEnsemble, false)) : undefined}
           />
         );
       })()}
