@@ -273,7 +273,7 @@ export default function FicheImportationPage() {
       ? (p.variantes ?? []).find((x: any) => x.cle === l.varianteCle)
       : null;
     const contenance = l.emballage
-      ? (emballagesDe(p as any, l.varianteCle)
+      ? (emballagesDe(p?.emballages, l.varianteCle)
           .find(e => e.nom === l.emballage)?.quantite ?? 1)
       : 1;
     return {
@@ -310,7 +310,7 @@ export default function FicheImportationPage() {
     const reel = (couts[i] ?? l.valeurUnitaire ?? 0) + part / qte;
     const p = produits.find(x => x.id === l.produitId);
     const unites = p
-      ? enUnitesBase(qte, l.emballage, emballagesDe(p as any, l.varianteCle))
+      ? enUnitesBase(qte, l.emballage, emballagesDe(p?.emballages, l.varianteCle))
       : qte;
     if (unites <= 0) return null;
     /* Le rayon compte à l'unité ; on y revient pour moyenner, puis on
