@@ -17,6 +17,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
+import { marqueOrigine, estEnsemble, racineRetour } from '@/lib/retour';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/lib/auth-context';
@@ -84,6 +85,9 @@ export default function NouveauRetourPage() {
   const params = useParams();
   const search = useSearchParams();
   const siteId = params.id as string;
+  /* Quitter sans créer doit ramener là d'où l'on vient, et `back()` ne
+     le garantit pas : on peut être arrivé par un lien direct. */
+  const fermer = `${racineRetour(estEnsemble(search), siteId)}?onglet=retours`;
   const type = (search.get('type') as TypeRetour) ?? 'client';
 
   const [role, setRole] = useState<RoleSite | null>(null);
@@ -351,7 +355,10 @@ export default function NouveauRetourPage() {
         parUid: user.uid,
         parNom: a.utilisateurNom,
       });
-      router.push(`/site/${siteId}/retours/${id}`);
+      /* L'origine voyage jusqu'à la fiche : c'est la porte par laquelle
+         on est entré qui décide du retour, pas le dossier. */
+      router.push(`/site/${siteId}/retours/${id}`
+        + marqueOrigine(estEnsemble(search)));
     } catch (e: any) {
       setErreur(e?.message ?? 'L’ouverture a échoué.');
       setEnCours(false);
@@ -382,7 +389,7 @@ export default function NouveauRetourPage() {
 
   return (
     <div className="mx-auto max-w-4xl p-4 sm:p-6">
-      <button type="button" onClick={() => router.back()}
+      <button type="button" onClick={() => router.push(fermer)}
         className="mb-3 flex items-center gap-1.5 text-xs font-bold text-gray-400 transition-colors hover:text-gray-600">
         <ArrowLeft size={14} /> Retour
       </button>

@@ -19,6 +19,7 @@ import {
   Loader2, Plus, Undo2, PackageCheck, Truck, SlidersHorizontal,
 } from 'lucide-react';
 import { formatMontant } from '@/lib/format';
+import { marqueOrigine } from '@/lib/retour';
 import { hankenGrotesk } from './finance/font';
 import { type RoleSite } from '@/lib/roles';
 import {
@@ -231,8 +232,11 @@ export default function OngletRetours({
               lui confie, il ne décide pas de ce qui repart. */}
           {peutOuvrirRetour(role) && ctx.siteEcriture && (
             <button type="button"
+              /* L'origine suit : sans elle, refermer le retour ramène
+                 dans le site alors qu'on venait de l'ensemble. */
               onClick={() => router.push(
-                `/site/${ctx.siteEcriture}/retours/nouveau?type=${type}`)}
+                `/site/${ctx.siteEcriture}/retours/nouveau?type=${type}`
+                + marqueOrigine(ctx.ensemble, false))}
               className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-3 py-2 text-xs font-bold text-white transition-colors hover:bg-indigo-700">
               <Plus size={14} /> Nouveau retour
             </button>
