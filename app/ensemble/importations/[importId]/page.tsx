@@ -1,11 +1,11 @@
 'use client';
 import { Fragment, useEffect, useState } from 'react';
-import { doc, getDoc, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/lib/auth-context';
 import { useParams, useRouter } from 'next/navigation';
 import { Loader2, Check, Ship, ArrowRight, X, CheckCheck, Plus, Undo2, Info,
-  Wallet, BarChart3 } from 'lucide-react';
+  Wallet, BarChart3, ArrowUpDown } from 'lucide-react';
 import { formatMontant, formatDate } from '@/lib/format';
 import { auteurCourant, auteurEtape } from '@/lib/auteur';
 import { roleSurSite, type RoleSite } from '@/lib/roles';
@@ -26,7 +26,7 @@ import SelecteurProduits, { type ProduitChoisissable }
 import ModalGammeProduit from '@/app/site/[id]/components/ModalGammeProduit';
 import ModalMargeRecu, { type LigneMarge }
   from '@/app/site/[id]/components/ModalMargeRecu';
-import { produitsDuSite, sitesDeLActivite } from '@/lib/produits-site';
+import { produitsDuSite, sitesDeLActivite, detentionsDe } from '@/lib/produits-site';
 import { creerProduitRapide, creerGammeRapide } from '@/lib/produit-rapide';
 import { coutMoyenApresEntree, enUnitesBase, emballagesDe } from '@/lib/mouvements';
 import { chargerDisponible } from '@/lib/attente-caisse';
@@ -129,6 +129,17 @@ export default function FicheImportationPage() {
      rapportent, lesquels perdent. */
   const [rapportMarche, setRapportMarche] = useState(false);
 
+  /* Le prix du marché est un fait, et il diffère d'un site à l'autre :
+     le même produit ne se vend pas au même prix partout. On ne réduit
+     pas cette dispersion à une moyenne — un prix que personne ne
+     pratique —, on montre l'éventail et on laisse choisir le bout qu'on
+     regarde. */
+  const [bornePrix, setBornePrix] = useState<'bas' | 'haut'>('bas');
+  const [prixParSite, setPrixParSite] =
+    useState<Record<string, { siteId: string; prix: number; stock: number }[]>>({});
+  const [detailMarche, setDetailMarche] = useState<number | null>(null);
+  const [nomsSites, setNomsSites] = useState<Record<string, string>>({});
+
   /* Le prix de vente, ligne par ligne. Il se décide tard : tant que le
      fret et la douane ne sont pas répartis, on ignore ce que la
      marchandise aura coûté, et un prix posé avant serait posé à
@@ -208,6 +219,36 @@ export default function FicheImportationPage() {
       .then(p => setProduits(p as ProduitChoisissable[]))
       .catch(() => {});
   }, [dossier?.siteId]);
+
+  /* Ce que chaque site pratique sur ces produits. Le prix du marché ne
+     se déduit pas : il se constate, site par site. */
+  useEffect(() => {
+    if (!activite?.id) return;
+    (async () => {
+      const sitesSnap = await getDocs(query(
+        collection(db, 'sites'), where('activiteId', '==', activite.id)));
+      const noms: Record<string, string> = {};
+      sitesSnap.docs.forEach(d => { noms[d.id] = (d.data() as any).nom ?? '—'; });
+      setNomsSites(noms);
+
+      const dets = await detentionsDe(Object.keys(noms));
+      const parProduit: Record<string,
+        { siteId: string; prix: number; stock: number }[]> = {};
+      for (const d of dets) {
+        /* Une variante a son propre prix ; sans variante, c'est la
+           détention qui le porte. */
+        const ajoute = (cle: string, prix: number, stock: number) => {
+          if (!(prix > 0)) return;
+          (parProduit[cle] ??= []).push({ siteId: d.siteId, prix, stock });
+        };
+        ajoute(d.produitId, d.prixVente ?? 0, d.stock ?? 0);
+        for (const v of (d.variantes ?? [])) {
+          ajoute(`${d.produitId}:${v.cle}`, v.prixVente ?? 0, v.stock ?? 0);
+        }
+      }
+      setPrixParSite(parProduit);
+    })().catch(() => {});
+  }, [activite?.id]);
 
   /* Le rôle se lit sur le site destinataire : c'est lui qui recevra la
      marchandise, et c'est son responsable des commandes qui comptera. */
@@ -291,9 +332,31 @@ export default function FicheImportationPage() {
     };
   });
 
-  /* Le prix déjà pratiqué, ramené à l'emballage du dossier. */
+  /**
+   * Les prix pratiqués sur chaque ligne, site par site.
+   *
+   * Ramenés à l'emballage du dossier : le rayon compte à l'unité, la
+   * ligne se commande en cartons.
+   */
+  const marcheDe = (i: number) => {
+    const l = dossier.lignes[i];
+    const cle = l.varianteCle ? `${l.produitId}:${l.varianteCle}` : l.produitId;
+    const contenance = rayon[i]?.contenance ?? 1;
+    return (prixParSite[cle] ?? [])
+      .map(x => ({ ...x, prix: x.prix * contenance }))
+      .sort((a, b) => a.prix - b.prix);
+  };
+
+  /* Le prix retenu comme référence : le plus bas ou le plus haut de ce
+     qui se pratique. Aucun des deux n'est « le » prix du marché — c'est
+     bien pour cela qu'on montre les deux bouts. */
   const etablis: Record<number, number> = {};
-  rayon.forEach((r, i) => { if (r && r.prixVente > 0) etablis[i] = r.prixVente; });
+  dossier.lignes.forEach((_, i) => {
+    const liste = marcheDe(i);
+    if (liste.length === 0) return;
+    etablis[i] = bornePrix === 'bas'
+      ? liste[0].prix : liste[liste.length - 1].prix;
+  });
 
   /**
    * Où le coût moyen se posera, une fois cette entrée passée.
@@ -936,7 +999,24 @@ export default function FicheImportationPage() {
                     <th className="px-3 py-2.5 font-medium">CUMP après</th>
                     {/* Ce que le marché pratique déjà, puis ce qu'on
                         recommande : on voit de combien on s'en écarte. */}
-                    <th className="px-3 py-2.5 font-medium">Prix du marché</th>
+                    {/* Un produit n'a pas un prix de marché mais
+                        plusieurs, selon l'endroit. Le bouton dit quel
+                        bout de l'éventail on regarde — et tout le
+                        calcul suit, jusqu'au bénéfice. */}
+                    <th className="px-3 py-2.5 font-medium">
+                      {dossier.lignes.some((_, i) => marcheDe(i).length > 1) ? (
+                        <button type="button"
+                          onClick={() => setBornePrix(b => b === 'bas' ? 'haut' : 'bas')}
+                          title="Basculer entre le prix le plus bas et le plus haut"
+                          className="inline-flex items-center gap-1 rounded-lg px-1.5 py-0.5 transition-colors hover:bg-white/15">
+                          Prix du marché
+                          <span className="text-[10px] font-bold opacity-80">
+                            {bornePrix === 'bas' ? 'le plus bas' : 'le plus haut'}
+                          </span>
+                          <ArrowUpDown size={11} />
+                        </button>
+                      ) : 'Prix du marché'}
+                    </th>
                     <th className="px-3 py-2.5 font-medium">Prix recommandé</th>
                     <th className="px-3 py-2.5 font-medium">Total</th>
                   </>}
@@ -1124,12 +1204,24 @@ export default function FicheImportationPage() {
                             point de comparaison. Sans lui, on pose un
                             prix sans savoir si le marché le suivra. */}
                         <td className="px-3 py-2.5 text-gray-400">
-                          {(etablis[i] ?? 0) > 0
-                            ? formatMontant(etablis[i]!)
-                            : (
-                              <span title="Ce produit ne se vend pas encore : le marché n’a pas fixé son prix."
-                                className="text-amber-600 dark:text-amber-500">—</span>
-                            )}
+                          {(etablis[i] ?? 0) > 0 ? (
+                            <span className="inline-flex items-center gap-1.5">
+                              {formatMontant(etablis[i]!)}
+                              {/* Le détail par site : le chiffre affiché
+                                  n'est qu'un bout de l'éventail. */}
+                              {marcheDe(i).length > 1 && (
+                                <button type="button"
+                                  onClick={() => setDetailMarche(i)}
+                                  title="Voir le prix dans chaque site"
+                                  className="shrink-0 rounded p-0.5 text-gray-400 transition-colors hover:bg-indigo-50 hover:text-indigo-600">
+                                  <Info size={13} />
+                                </button>
+                              )}
+                            </span>
+                          ) : (
+                            <span title="Ce produit ne se vend nulle part : aucun marché n’a fixé son prix."
+                              className="text-amber-600 dark:text-amber-500">—</span>
+                          )}
                         </td>
                         {/* Sous le coût réel, le champ passe en rouge :
                             c'est le seul moment où la perte se corrige
@@ -1679,6 +1771,84 @@ export default function FicheImportationPage() {
           </div>
         </div>
       )}
+
+      {/* Le prix d'un produit dans chaque site. Le stock à côté : savoir
+          qu'une boutique vend plus cher est utile, savoir qu'elle en a
+          déjà huit cents en rayon l'est davantage. */}
+      {detailMarche != null && (() => {
+        const l = dossier.lignes[detailMarche];
+        const liste = marcheDe(detailMarche);
+        const reelLigne = (() => {
+          const qte = compte ? (recu[detailMarche] ?? 0)
+            : (qtes[detailMarche] ?? l.quantiteDemandee ?? 0);
+          const base = couts[detailMarche] ?? l.valeurUnitaire ?? 0;
+          return Math.round(qte > 0
+            ? base + (parts?.[detailMarche] ?? 0) / qte : base);
+        })();
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
+            <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-xl dark:bg-gray-900">
+              <div className="mb-1 flex items-start justify-between gap-3">
+                <p className="text-sm font-bold text-gray-900 dark:text-gray-100">
+                  {l.designation}
+                  {l.varianteLibelle && (
+                    <span className="ml-1.5 font-normal text-gray-400">
+                      {l.varianteLibelle}
+                    </span>
+                  )}
+                </p>
+                <button onClick={() => setDetailMarche(null)}
+                  className="shrink-0 rounded-lg p-1 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800">
+                  <X size={16} />
+                </button>
+              </div>
+              <p className="mb-3 text-xs text-gray-400">
+                Prix pratiqués · coût réel {formatMontant(reelLigne)}
+                {l.emballage ? ` le ${l.emballage.toLowerCase()}` : ''}
+              </p>
+
+              <div className="flex flex-col gap-1.5">
+                {liste.map(x => {
+                  /* Sous le coût, ce site vendrait à perte : c'est le
+                     seul jugement qu'on porte sur un prix qu'on ne
+                     décide pas. */
+                  const perd = x.prix < reelLigne;
+                  return (
+                    <div key={x.siteId}
+                      className={`flex items-center justify-between gap-3 rounded-xl px-3 py-2 text-xs ${
+                        x.siteId === dossier.siteId
+                          ? 'bg-indigo-50 dark:bg-indigo-900/20'
+                          : 'bg-gray-50 dark:bg-gray-800/50'}`}>
+                      <span className="flex min-w-0 flex-col">
+                        <span className="truncate font-bold text-gray-900 dark:text-gray-100">
+                          {nomsSites[x.siteId] ?? '—'}
+                          {x.siteId === dossier.siteId && (
+                            <span className="ml-1.5 font-normal text-indigo-500">
+                              destination
+                            </span>
+                          )}
+                        </span>
+                        <span className="text-gray-400">
+                          {x.stock > 0
+                            ? `${x.stock.toLocaleString('fr-FR')} en stock`
+                            : 'rupture'}
+                        </span>
+                      </span>
+                      <span className={`shrink-0 font-bold ${perd
+                        ? 'text-red-500' : 'text-gray-900 dark:text-gray-100'}`}>
+                        {formatMontant(x.prix)}
+                        {perd && (
+                          <span className="ml-1 text-[10px] font-normal">sous le coût</span>
+                        )}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Le rapport du marché : deux totaux, puis le produit qui les
           porte — le même écran que la marge d'un reçu au comptoir. */}
