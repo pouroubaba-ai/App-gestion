@@ -1331,6 +1331,11 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
                         <tr key={l.cle}
                           onClick={() => router.push(`/site/${l.produit.siteId ?? ctx.siteEcriture}/inventaire/${l.produit.id}`)}
                           className="cursor-pointer transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/50">
+                          {/* Une ligne par article réellement vendable :
+                              la variante se lit à côté du nom, en
+                              pastille. C'est cette ligne-là qui porte un
+                              coût, un prix et un stock — le produit qui
+                              la contient n'en a aucun en propre. */}
                           <td className="px-3 py-2.5 text-center font-medium text-gray-900 dark:text-gray-100">
                             {l.produit.designation}
                             {l.varianteCle && (
