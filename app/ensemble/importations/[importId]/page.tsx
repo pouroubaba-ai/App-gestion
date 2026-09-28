@@ -18,6 +18,11 @@ import {
   valeurEnvoyee, confirmerAchat, type LigneFlux,
 } from '@/lib/flux-marchandise';
 import { ChampNombre } from '@/components/Champs';
+import SelecteurProduits, { type ProduitChoisissable }
+  from '@/app/site/[id]/components/SelecteurProduits';
+import ModalGammeProduit from '@/app/site/[id]/components/ModalGammeProduit';
+import { produitsDuSite, sitesDeLActivite } from '@/lib/produits-site';
+import { creerProduitRapide, creerGammeRapide } from '@/lib/produit-rapide';
 import { chargerDisponible } from '@/lib/attente-caisse';
 import DisponibleCaisse from '@/app/site/[id]/components/DisponibleCaisse';
 import { ecrireEnCaisse } from '@/lib/ecrire-caisse';
@@ -93,6 +98,16 @@ export default function FicheImportationPage() {
      fournisseur ne passe pas par le tiroir du site. */
   const [origine, setOrigine] = useState<'caisse' | 'admin'>('caisse');
 
+  /* La liste se complète tant que le fournisseur n'a rien confirmé : on
+     se souvient d'une référence oubliée, on l'ajoute. Après « Validé »,
+     la commande est partie — l'allonger ici la ferait diverger de ce que
+     le fournisseur a accepté. */
+  const [produits, setProduits] = useState<ProduitChoisissable[]>([]);
+  const [produitsNeufs, setProduitsNeufs] = useState<Set<string>>(new Set());
+  const [gamme, setGamme] = useState<string | null>(null);
+  const [lignesSales, setLignesSales] = useState(false);
+  const [lignes, setLignes] = useState<LigneFlux[]>([]);
+
   /* Le prix de vente, ligne par ligne. Il se décide tard : tant que le
      fret et la douane ne sont pas répartis, on ignore ce que la
      marchandise aura coûté, et un prix posé avant serait posé à
@@ -125,6 +140,10 @@ export default function FicheImportationPage() {
       setSoldeReelCaisse(caisse.solde);
       setEngageCaisse(caisse.engage);
     }
+    setLignesSales(sale => {
+      if (!sale) setLignes(d.lignes ?? []);
+      return sale;
+    });
     setPrixSales(sale => {
       if (!sale) {
         setPrix(Object.fromEntries(
@@ -148,6 +167,15 @@ export default function FicheImportationPage() {
   useEffect(() => {
     chargerReceptions(importId).then(setReceptions).catch(() => {});
   }, [importId]);
+
+  /* Le catalogue du site destinataire : c'est son rayon qu'on garnit. On
+     ne le lit que tant que la liste peut bouger. */
+  useEffect(() => {
+    if (!dossier || dossier.etat !== 'en_attente') return;
+    produitsDuSite(dossier.siteId)
+      .then(p => setProduits(p as ProduitChoisissable[]))
+      .catch(() => {});
+  }, [dossier?.siteId, dossier?.etat]);
 
   /* Le rôle se lit sur le site destinataire : c'est lui qui recevra la
      marchandise, et c'est son responsable des commandes qui comptera. */
@@ -320,6 +348,133 @@ export default function FicheImportationPage() {
      marges en portent la trace, et le changer réécrirait le passé. */
   const prixEditables = dossier.etat !== 'confirme' && dossier.etat !== 'annule'
     && montreArgent;
+
+  /* La liste ne se complète que tant que rien n'est parti : « Validé »
+     dit que le fournisseur a accepté cette commande-là. */
+  const lignesModifiables = dossier.etat === 'en_attente' && estAdmin;
+
+  async function enregistrerLignes() {
+    if (!dossier) return;
+    if (lignes.length === 0 || lignes.some(l => !l.produitId || l.quantiteDemandee <= 0)) {
+      setErreur('Chaque ligne veut un produit et une quantité.');
+      return;
+    }
+    setEnCours(true); setErreur('');
+    try {
+      await majPrixImportation({ id: importId, lignes });
+      setLignesSales(false);
+      /* Les parts imposées désignaient d'anciennes positions : une ligne
+         ajoutée au milieu les ferait porter au mauvais produit. */
+      setFraisCorrection(null);
+      await charger();
+    } catch (e: any) { setErreur(e?.message ?? 'Échec.'); }
+    finally { setEnCours(false); }
+  }
+
+  /**
+   * Créer un produit sans quitter le dossier.
+   *
+   * Un import apporte des références que la maison n'a jamais tenues —
+   * c'est même souvent pour cela qu'on importe.
+   */
+  async function creerEtAjouter(designation: string) {
+    if (!user || !dossier) return;
+    setErreur('');
+    try {
+      const siteIds = activite?.id
+        ? await sitesDeLActivite(activite.id)
+        : [dossier.siteId];
+      const neuf = await creerProduitRapide({
+        activiteId: activite?.id ?? null,
+        userId: user.uid,
+        designation,
+        unite: 'pièce',
+        siteIds: siteIds.length > 0 ? siteIds : [dossier.siteId],
+        siteOrigine: dossier.siteId,
+      });
+      setProduits(p => [...p, {
+        id: neuf.id, siteId: dossier.siteId,
+        designation: neuf.designation, unite: neuf.unite,
+        codeBarre: null, categorie: null,
+        emballages: [], caracteristiques: [], variantes: [],
+        actif: true, stock: 0, coutMoyen: 0, prixVente: 0,
+        seuilAlerte: null,
+      } as unknown as ProduitChoisissable]);
+      setProduitsNeufs(n => new Set(n).add(neuf.id));
+      setLignes(l => [...l, {
+        produitId: neuf.id,
+        designation: neuf.designation,
+        unite: neuf.unite,
+        varianteCle: null, varianteLibelle: null, emballage: null,
+        quantiteDemandee: 1, quantiteRecue: null,
+        valeurUnitaire: 0, prixVente: 0,
+      } as any]);
+      setLignesSales(true);
+    } catch (e: any) {
+      setErreur(e?.message ?? 'Le produit n’a pas pu être créé.');
+    }
+  }
+
+  /** Créer une gamme entière, et l'ajouter au dossier. */
+  async function creerGammeEtAjouter(saisie: {
+    designation: string; unite: string; categorie: string | null;
+    emballages: any[]; caracteristiques: any[];
+    declinaisons: { selection: Record<string, string> }[];
+    cout: number; prix: number;
+  }) {
+    if (!user || !dossier) return;
+    setErreur('');
+    try {
+      const siteIds = activite?.id
+        ? await sitesDeLActivite(activite.id)
+        : [dossier.siteId];
+      const neuf = await creerGammeRapide({
+        activiteId: activite?.id ?? null,
+        userId: user.uid,
+        designation: saisie.designation,
+        unite: saisie.unite,
+        categorie: saisie.categorie,
+        emballages: saisie.emballages,
+        caracteristiques: saisie.caracteristiques,
+        declinaisons: saisie.declinaisons,
+        coutProduit: saisie.cout,
+        prixProduit: saisie.prix,
+        siteIds: siteIds.length > 0 ? siteIds : [dossier.siteId],
+        siteOrigine: dossier.siteId,
+      });
+      setProduits(p => [...p, {
+        id: neuf.id, siteId: dossier.siteId,
+        designation: neuf.designation, unite: neuf.unite,
+        codeBarre: null, categorie: saisie.categorie,
+        emballages: saisie.emballages,
+        caracteristiques: saisie.caracteristiques,
+        variantes: neuf.variantes.map(v => ({
+          ...v, stock: 0, coutMoyen: 0, prixVente: v.prixVente ?? saisie.prix,
+        })),
+        actif: true, stock: 0, coutMoyen: 0, prixVente: saisie.prix,
+        seuilAlerte: null,
+      } as unknown as ProduitChoisissable]);
+      setProduitsNeufs(n => new Set(n).add(neuf.id));
+      const nouvelles = neuf.variantes.length > 0
+        ? neuf.variantes.map(v => ({
+            produitId: neuf.id, designation: neuf.designation, unite: neuf.unite,
+            varianteCle: v.cle, varianteLibelle: v.cle, emballage: null,
+            quantiteDemandee: 1, quantiteRecue: null,
+            valeurUnitaire: saisie.cout, prixVente: v.prixVente ?? saisie.prix,
+          }))
+        : [{
+            produitId: neuf.id, designation: neuf.designation, unite: neuf.unite,
+            varianteCle: null, varianteLibelle: null, emballage: null,
+            quantiteDemandee: 1, quantiteRecue: null,
+            valeurUnitaire: saisie.cout, prixVente: saisie.prix,
+          }];
+      setLignes(l => [...l, ...(nouvelles as any[])]);
+      setLignesSales(true);
+      setGamme(null);
+    } catch (e: any) {
+      setErreur(e?.message ?? 'La gamme n’a pas pu être créée.');
+    }
+  }
 
   async function enregistrerPrix() {
     if (!dossier) return;
@@ -578,7 +733,11 @@ export default function FicheImportationPage() {
         {/* La marchandise. */}
         <div className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-gray-900">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <p className="text-sm font-bold text-gray-900 dark:text-gray-100">Marchandise</p>
+            {/* Le sélecteur porte déjà ce titre : le répéter ferait deux
+                fois le même mot l'un sous l'autre. */}
+            {!lignesModifiables && (
+              <p className="text-sm font-bold text-gray-900 dark:text-gray-100">Marchandise</p>
+            )}
             {/* Tout recevoir d'un geste, quand le conteneur est conforme.
                 Il n'apparaît que s'il reste quelque chose à déclarer. */}
             {saisieQuantites && peut && (() => {
@@ -594,6 +753,38 @@ export default function FicheImportationPage() {
               );
             })()}
           </div>
+          {/* Tant que le fournisseur n'a rien confirmé, la liste se
+              complète : on se souvient d'une référence oubliée, on
+              l'ajoute sans rouvrir un dossier. Après « Validé », la
+              commande est partie — l'allonger ici la ferait diverger de
+              ce que le fournisseur a accepté. */}
+          {lignesModifiables ? (
+            <>
+              <SelecteurProduits
+                produits={produits} lignes={lignes}
+                onChange={l => { setLignes(l); setLignesSales(true); }}
+                coutEditable montrerStock={false} labelCout="Coût d'achat"
+                futur
+                onCreerProduit={creerEtAjouter}
+                onCreerGamme={setGamme}
+                produitsNeufs={produitsNeufs}
+              />
+              {lignesSales && (
+                <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
+                  <button type="button" disabled={enCours}
+                    onClick={() => { setLignes(dossier.lignes ?? []); setLignesSales(false); }}
+                    className="rounded-xl border border-gray-200 px-3 py-2 text-xs font-bold text-gray-500 transition-colors hover:bg-gray-50 disabled:opacity-40 dark:border-gray-700 dark:hover:bg-gray-800">
+                    Annuler
+                  </button>
+                  <button type="button" onClick={enregistrerLignes} disabled={enCours}
+                    className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-3 py-2 text-xs font-bold text-white transition-colors hover:bg-indigo-700 disabled:opacity-40">
+                    {enCours ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
+                    Inscrire la marchandise
+                  </button>
+                </div>
+              )}
+            </>
+          ) : (
           <div className="overflow-x-auto">
             <table className="w-full whitespace-nowrap text-center text-sm">
               <thead>
@@ -811,6 +1002,7 @@ export default function FicheImportationPage() {
               </tbody>
             </table>
           </div>
+          )}
 
           {/* Un prix saisi et non inscrit ne vaut rien : la confirmation
               lirait l'ancien. */}
@@ -1089,6 +1281,13 @@ export default function FicheImportationPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {gamme !== null && (
+        <ModalGammeProduit
+          designationInitiale={gamme}
+          onAnnuler={() => setGamme(null)}
+          onCreer={creerGammeEtAjouter} />
       )}
 
       {/* Confirmer fait entrer le stock : on dit ce qui va se passer. */}
