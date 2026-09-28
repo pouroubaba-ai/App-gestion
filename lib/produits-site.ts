@@ -28,7 +28,6 @@ import {
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { lireDocs, sitesDe, type Portee } from '@/lib/portee';
-import { etatsDepuisMouvements, etatDe, etatDuProduit } from '@/lib/cout-moyen';
 
 /** Le stock d'une variante, dans un site donné. */
 export interface VarianteSite {
@@ -269,6 +268,34 @@ export function activiteDuSite(siteId: string): Promise<string | null> {
   return p;
 }
 
+/**
+ * Le coût d'un produit détenu.
+ *
+ * Sans déclinaison, la détention le porte. Avec, chaque déclinaison a le
+ * sien et le produit n'en a pas : on le compose alors en pondérant par
+ * les stocks, faute de quoi un article rare pèserait autant qu'un autre
+ * détenu par centaines.
+ */
+function coutDuProduit(det: any, variantes: any[]): number {
+  if (variantes.length === 0) return det?.coutMoyen ?? 0;
+  const vs = det?.variantes ?? [];
+  let stock = 0, valeur = 0;
+  for (const v of variantes) {
+    const d = vs.find((x: any) => x.cle === v.cle);
+    const q = d?.stock ?? 0;
+    if (q <= 0) continue;
+    stock += q;
+    valeur += q * (d?.coutMoyen ?? 0);
+  }
+  /* Rien en rayon : on prend la première déclinaison qui sait ce qu'elle
+     a coûté — c'est mieux que zéro pour borner un prix de vente. */
+  if (stock <= 0) {
+    const connue = vs.find((x: any) => (x.coutMoyen ?? 0) > 0);
+    return connue?.coutMoyen ?? 0;
+  }
+  return Math.round(valeur / stock);
+}
+
 export async function produitsDuSite(siteId: string): Promise<any[]> {
   /* Les produits de CETTE maison, et d'aucune autre.
    *
@@ -281,19 +308,29 @@ export async function produitsDuSite(siteId: string): Promise<any[]> {
    * saisit. */
   const activiteId = await activiteDuSite(siteId);
 
-  const [snapProd, dets, mvts] = await Promise.all([
+  /* Le coût se lit sur la détention, il ne se reconstruit plus.
+   *
+   * On rapatriait tous les mouvements du site pour le recalculer, parce
+   * que la détention portait un coût faux — le prix d'un carton inscrit
+   * sur des pièces. Ce défaut est corrigé à l'écriture, et les
+   * détentions ont été recalées : la détention redit le vrai.
+   *
+   * La lecture, elle, ne tenait pas. Ce sélecteur s'ouvre au comptoir,
+   * sur un achat, sur une vente — des dizaines de fois par jour. Lire
+   * tout l'historique à chaque ouverture passe inaperçu sur une base
+   * neuve et devient insupportable après un an : le volume grandit sans
+   * cesse, l'écran qu'on ouvre le plus souvent ralentit le plus.
+   *
+   * La reconstruction reste dans `cout-moyen.ts` : c'est elle qui sert à
+   * vérifier la détention quand on la soupçonne, et à la recaler. */
+  const [snapProd, dets] = await Promise.all([
     activiteId
       ? getDocs(query(collection(db, 'produits'),
           where('activiteId', '==', activiteId)))
       : getDocs(query(collection(db, 'produits'),
           where('activiteId', '==', '__aucune__'))),
     getDocs(query(collection(db, 'produits_site'), where('siteId', '==', siteId))),
-    /* Le coût moyen se déduit des entrées : stocké, il part du stock
-       courant, et une sortie pas encore écrite le fausse durablement. */
-    getDocs(query(collection(db, 'mouvements'), where('siteId', '==', siteId))),
   ]);
-
-  const etats = etatsDepuisMouvements(mvts.docs.map(d => d.data() as any));
 
   const parProduit = new Map<string, ProduitSite>();
   for (const d of dets.docs) {
@@ -319,9 +356,10 @@ export async function produitsDuSite(siteId: string): Promise<any[]> {
         caracteristiques: data.caracteristiques ?? [],
         actif: data.actif ?? true,
         stock: det?.stock ?? 0,
-        coutMoyen: ((data.variantes ?? []).length > 0
-          ? etatDuProduit(etats, d.id, data.variantes)
-          : etatDe(etats, d.id, null)).coutMoyen,
+        /* Avec déclinaisons, le coût du produit est la moyenne des
+           siennes, pondérée par leurs stocks : le produit lui-même n'en
+           porte pas. */
+        coutMoyen: coutDuProduit(det, data.variantes ?? []),
         prixVente: det?.prixVente ?? 0,
         seuilAlerte: det?.seuilAlerte ?? null,
         /* Les déclinaisons viennent du produit, leurs stocks de la
@@ -331,7 +369,7 @@ export async function produitsDuSite(siteId: string): Promise<any[]> {
           return {
             ...v,
             stock: vs?.stock ?? 0,
-            coutMoyen: etatDe(etats, d.id, v.cle).coutMoyen,
+            coutMoyen: vs?.coutMoyen ?? 0,
             prixVente: vs?.prixVente ?? v.prixVente ?? 0,
           };
         }),
