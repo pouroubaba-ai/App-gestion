@@ -336,10 +336,21 @@ export default function FicheProduitPage() {
        dans sa détention, pas sur le produit commun. */
     const detId = detention?.id
       ?? await ouvrirDetention({ produitId, siteId, userId: user!.uid });
-    const varsSite = (detention?.variantes ?? []).map(v => v.cle === editVariante.cle
-      ? { ...v, prixVente: prix > 0 ? prix : null,
-          prixMarche: marche > 0 ? marche : null }
-      : v);
+    /* La détention peut ne rien savoir de cette variante : un site qui
+       n'a jamais reçu le produit n'en a pas la liste. Le `map` seul ne
+       produisait alors rien, et le prix se perdait en silence. On l'y
+       ajoute, à zéro de stock — c'est un prix, pas une entrée. */
+    const dejaLa = (detention?.variantes ?? []).some(v => v.cle === editVariante.cle);
+    const varsSite = dejaLa
+      ? (detention?.variantes ?? []).map(v => v.cle === editVariante.cle
+          ? { ...v, prixVente: prix > 0 ? prix : null,
+              prixMarche: marche > 0 ? marche : null }
+          : v)
+      : [...(detention?.variantes ?? []), {
+          cle: editVariante.cle, stock: 0, coutMoyen: 0, coutInconnu: true,
+          prixVente: prix > 0 ? prix : null,
+          prixMarche: marche > 0 ? marche : null,
+        }];
     await updateDoc(doc(db, 'produits_site', detId), { variantes: varsSite });
     setDetention(d => (d ? { ...d, variantes: varsSite } : d));
     setProduit({ ...produit, variantes: maj });

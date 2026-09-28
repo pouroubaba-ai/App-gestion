@@ -1213,7 +1213,10 @@ export default function FicheImportationPage() {
                               {formatMontant(etablis[i]!)}
                               {/* Le détail par site : le chiffre affiché
                                   n'est qu'un bout de l'éventail. */}
-                              {marcheDe(i).length > 1 && (
+                              {/* Dès qu'un prix est relevé : savoir où il
+                                  l'a été, et ce que ce site détient,
+                                  vaut même quand il n'y en a qu'un. */}
+                              {marcheDe(i).length > 0 && (
                                 <button type="button"
                                   onClick={() => setDetailMarche(i)}
                                   title="Voir le prix dans chaque site"
