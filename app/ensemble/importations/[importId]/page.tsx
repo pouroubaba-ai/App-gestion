@@ -5,7 +5,7 @@ import { db } from '@/lib/firebase';
 import { useAuth } from '@/lib/auth-context';
 import { useParams, useRouter } from 'next/navigation';
 import { Loader2, Check, Ship, ArrowRight, X, CheckCheck, Plus, Undo2, Info,
-  Wallet } from 'lucide-react';
+  Wallet, BarChart3 } from 'lucide-react';
 import { formatMontant, formatDate } from '@/lib/format';
 import { auteurCourant, auteurEtape } from '@/lib/auteur';
 import { roleSurSite, type RoleSite } from '@/lib/roles';
@@ -24,6 +24,8 @@ import {
 import SelecteurProduits, { type ProduitChoisissable }
   from '@/app/site/[id]/components/SelecteurProduits';
 import ModalGammeProduit from '@/app/site/[id]/components/ModalGammeProduit';
+import ModalMargeRecu, { type LigneMarge }
+  from '@/app/site/[id]/components/ModalMargeRecu';
 import { produitsDuSite, sitesDeLActivite } from '@/lib/produits-site';
 import { creerProduitRapide, creerGammeRapide } from '@/lib/produit-rapide';
 import { coutMoyenApresEntree, enUnitesBase, emballagesDe } from '@/lib/mouvements';
@@ -123,6 +125,9 @@ export default function FicheImportationPage() {
      prix — produit par produit on perd le total de vue. */
   const [objectif, setObjectif] = useState(0);
   const [blocBenefice, setBlocBenefice] = useState(false);
+  /* Le détail du scénario « au prix du marché » : quels produits
+     rapportent, lesquels perdent. */
+  const [rapportMarche, setRapportMarche] = useState(false);
 
   /* Le prix de vente, ligne par ligne. Il se décide tard : tant que le
      fret et la douane ne sont pas répartis, on ignore ce que la
@@ -929,8 +934,10 @@ export default function FicheImportationPage() {
                     {/* Où le coût moyen du rayon va se poser : c'est lui
                         qui décidera de la marge, pas le prix payé. */}
                     <th className="px-3 py-2.5 font-medium">CUMP après</th>
-                    <th className="px-3 py-2.5 font-medium">Prix établi</th>
-                    <th className="px-3 py-2.5 font-medium">Prix de vente</th>
+                    {/* Ce que le marché pratique déjà, puis ce qu'on
+                        recommande : on voit de combien on s'en écarte. */}
+                    <th className="px-3 py-2.5 font-medium">Prix du marché</th>
+                    <th className="px-3 py-2.5 font-medium">Prix recommandé</th>
                     <th className="px-3 py-2.5 font-medium">Total</th>
                   </>}
                   {saisieQuantites && peut && (
@@ -1120,7 +1127,7 @@ export default function FicheImportationPage() {
                           {(etablis[i] ?? 0) > 0
                             ? formatMontant(etablis[i]!)
                             : (
-                              <span title="Sans prix en rayon, cette ligne ne pèse pas dans la répartition du bénéfice."
+                              <span title="Ce produit ne se vend pas encore : le marché n’a pas fixé son prix."
                                 className="text-amber-600 dark:text-amber-500">—</span>
                             )}
                         </td>
@@ -1312,6 +1319,75 @@ export default function FicheImportationPage() {
               </div>
             );
           })()}
+
+          {/* Ce que donnerait la vente au prix que le marché pratique
+              déjà, face à ce que la marchandise vient de coûter.
+              Question distincte du prix recommandé : un produit dont le
+              coût moyen monte à cause du fret peut passer sous son prix
+              de marché sans que rien ne le signale. */}
+          {montreArgent && (() => {
+            const auMarche = dossier.lignes.map((l, i) => {
+              const qte = compte ? (recu[i] ?? 0)
+                : (qtes[i] ?? l.quantiteDemandee ?? 0);
+              const base = couts[i] ?? l.valeurUnitaire ?? 0;
+              const reel = qte > 0 ? base + (parts?.[i] ?? 0) / qte : base;
+              /* Sans prix de marché, la ligne ne dit rien de ce scénario :
+                 on ne l'invente pas, on l'écarte du compte. */
+              const marche = etablis[i] ?? 0;
+              return { l, i, qte, reel: Math.round(reel), marche };
+            }).filter(x => x.qte > 0 && x.marche > 0);
+
+            if (auMarche.length === 0) return null;
+
+            const gains = auMarche.reduce(
+              (n, x) => n + Math.max(0, (x.marche - x.reel) * x.qte), 0);
+            const pertes = auMarche.reduce(
+              (n, x) => n + Math.max(0, (x.reel - x.marche) * x.qte), 0);
+            const net = gains - pertes;
+            const muettes = dossier.lignes.length - auMarche.length;
+
+            return (
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-100 p-4 dark:border-gray-800">
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-sm font-bold text-gray-900 dark:text-gray-100">
+                    Au prix du marché
+                  </span>
+                  <span className="text-[11px] text-gray-400">
+                    Ce que rapporterait la vente aux prix déjà pratiqués
+                    {muettes > 0 && `, sur ${auMarche.length} ligne${auMarche.length > 1 ? 's' : ''} sur ${dossier.lignes.length}`}
+                  </span>
+                </div>
+                <div className="flex items-center gap-4">
+                  {/* Gains et pertes ne se compensent pas : une ligne
+                      vendue sous son coût creuse l'activité, une autre ne
+                      la comble pas. Le net seul cacherait celle qui
+                      coûte. */}
+                  {pertes > 0 && (
+                    <span className="flex flex-col text-right">
+                      <span className="text-[10px] font-bold uppercase text-gray-400">Perte</span>
+                      <span className="text-sm font-bold text-red-500">
+                        {formatMontant(pertes)}
+                      </span>
+                    </span>
+                  )}
+                  <span className="flex flex-col text-right">
+                    <span className="text-[10px] font-bold uppercase text-gray-400">
+                      {pertes > 0 ? 'Net' : 'Bénéfice'}
+                    </span>
+                    <span className={`text-sm font-bold ${net >= 0
+                      ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>
+                      {formatMontant(net)}
+                    </span>
+                  </span>
+                  <button type="button" onClick={() => setRapportMarche(true)}
+                    className="flex items-center gap-1.5 rounded-xl border border-gray-200 px-3 py-2 text-xs font-bold text-gray-600 transition-colors hover:border-indigo-400 hover:text-indigo-600 dark:border-gray-700 dark:text-gray-300">
+                    <BarChart3 size={13} /> Rapport
+                  </button>
+                </div>
+              </div>
+            );
+          })()}
+
 
           {(prixSales || chiffresSales) && (
             <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
@@ -1592,6 +1668,29 @@ export default function FicheImportationPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Le rapport du marché : deux totaux, puis le produit qui les
+          porte — le même écran que la marge d'un reçu au comptoir. */}
+      {rapportMarche && (
+        <ModalMargeRecu
+          titre="Au prix du marché"
+          onFermer={() => setRapportMarche(false)}
+          lignes={dossier.lignes.map((l, i) => {
+            const qte = compte ? (recu[i] ?? 0)
+              : (qtes[i] ?? l.quantiteDemandee ?? 0);
+            const base = couts[i] ?? l.valeurUnitaire ?? 0;
+            const reel = qte > 0 ? base + (parts?.[i] ?? 0) / qte : base;
+            return {
+              cle: `${l.produitId}-${l.varianteCle ?? ''}-${i}`,
+              designation: l.designation,
+              varianteLibelle: l.varianteLibelle ?? null,
+              emballage: l.emballage ?? null,
+              quantiteDemandee: qte,
+              cout: Math.round(reel),
+              prix: etablis[i] ?? 0,
+            } as LigneMarge;
+          }).filter(x => x.quantiteDemandee > 0 && x.prix > 0)} />
       )}
 
       {gamme !== null && (
