@@ -1360,23 +1360,33 @@ export default function FicheImportationPage() {
                 <div className="flex items-center gap-4">
                   {/* Gains et pertes ne se compensent pas : une ligne
                       vendue sous son coût creuse l'activité, une autre ne
-                      la comble pas. Le net seul cacherait celle qui
-                      coûte. */}
-                  {pertes > 0 && (
-                    <span className="flex flex-col text-right">
-                      <span className="text-[10px] font-bold uppercase text-gray-400">Perte</span>
-                      <span className="text-sm font-bold text-red-500">
-                        {formatMontant(pertes)}
+                      la comble pas. On les montre donc à part — mais
+                      seulement quand les deux existent. Avec un seul
+                      côté, le détail et le net portent le même chiffre,
+                      et l'écrire deux fois se lit comme une erreur. */}
+                  {gains > 0 && pertes > 0 && (
+                    <>
+                      <span className="flex flex-col text-right">
+                        <span className="text-[10px] font-bold uppercase text-gray-400">Gain</span>
+                        <span className="text-sm font-bold text-green-600 dark:text-green-400">
+                          {formatMontant(gains)}
+                        </span>
                       </span>
-                    </span>
+                      <span className="flex flex-col text-right">
+                        <span className="text-[10px] font-bold uppercase text-gray-400">Perte</span>
+                        <span className="text-sm font-bold text-red-500">
+                          {formatMontant(pertes)}
+                        </span>
+                      </span>
+                    </>
                   )}
                   <span className="flex flex-col text-right">
                     <span className="text-[10px] font-bold uppercase text-gray-400">
-                      {pertes > 0 ? 'Net' : 'Bénéfice'}
+                      {gains > 0 && pertes > 0 ? 'Net' : net < 0 ? 'Perte' : 'Bénéfice'}
                     </span>
                     <span className={`text-sm font-bold ${net >= 0
                       ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>
-                      {formatMontant(net)}
+                      {formatMontant(Math.abs(net))}
                     </span>
                   </span>
                   <button type="button" onClick={() => setRapportMarche(true)}
