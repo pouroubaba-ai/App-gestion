@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Loader2, Plus } from 'lucide-react';
+import { Loader2, Plus, ArrowUpDown } from 'lucide-react';
 import { formatMontant } from '@/lib/format';
 import { hankenGrotesk } from './finance/font';
 import { type RoleSite } from '@/lib/roles';
@@ -80,6 +80,37 @@ export default function OngletImportations({
      fournisseur : ce que vaut ce partenaire sur la durée — un retard
      isolé est un incident, répété c'est un comportement. */
   const [axe, setAxe] = useState<'document' | 'fournisseur'>('document');
+
+  /* Le tri est propre à chaque axe : on ne classe pas des dossiers et des
+     fournisseurs sur les mêmes colonnes. */
+  const [tri, setTri] = useState<
+    'date' | 'jours' | 'frais' | 'valeur' | 'reste'
+    | 'importations' | 'verse' | 'delai' | null>(null);
+  const [ordre, setOrdre] = useState<'asc' | 'desc'>('desc');
+
+  /* Recliquer la même colonne inverse le sens : c'est le geste attendu, et
+     il évite un second bouton pour dire dans quel ordre on veut lire. */
+  function basculer(col: typeof tri) {
+    if (tri === col) setOrdre(d => (d === 'asc' ? 'desc' : 'asc'));
+    else { setTri(col); setOrdre('desc'); }
+  }
+
+  function ordonner<T>(liste: T[], valeur: ((x: T) => number) | null): T[] {
+    if (!valeur) return liste;
+    return [...liste].sort((a, b) => (ordre === 'asc' ? 1 : -1) * (valeur(a) - valeur(b)));
+  }
+
+  /* Le bouton seul, sans sa cellule : la liste pose elle-même l'en-tête,
+     et un `<th>` imbriqué dans un `<th>` ne serait pas du HTML. */
+  function BoutonTri({ cle, label }: { cle: NonNullable<typeof tri>; label: string }) {
+    return (
+      <button type="button" onClick={() => basculer(cle)}
+        className="flex w-full items-center justify-center gap-1 transition-opacity hover:opacity-80">
+        {label}
+        <ArrowUpDown size={12} className={tri === cle ? 'opacity-100' : 'opacity-40'} />
+      </button>
+    );
+  }
   const [vue, setVueBrut] = useState<EtatImportation>(() => {
     const c = searchParams.get('carte') as EtatImportation | null;
     return c && CARTES_ETATS.includes(c) ? c : 'en_attente';
@@ -172,10 +203,26 @@ export default function OngletImportations({
   const compteVue = modeVue === 'statut' ? compté(vue) : vue === 'confirme';
 
   const q = recherche.trim().toLowerCase();
-  const affiches = listeVue.filter(d => !q
+  const filtres = listeVue.filter(d => !q
     || d.reference.toLowerCase().includes(q)
     || d.fournisseurNom.toLowerCase().includes(q)
     || (d.origine ?? '').toLowerCase().includes(q));
+
+  /* On classe sur ce qu'on montre. La date se trie sur son jour, pas sur
+     son texte : « 03/10 » précéderait « 28/09 » à l'alphabet. */
+  const affiches = ordonner(filtres,
+    tri === 'date' ? (d => Date.parse(dateOuverture(d) ?? '') || 0)
+      : tri === 'jours' ? (d => ageEnJours(d) ?? -1)
+      : tri === 'frais' ? (d => totalFrais(d.frais))
+      : tri === 'valeur' ? (d => valeurDe(d, compteVue))
+      : tri === 'reste' ? (d => Math.max(0, valeurDe(d, compteVue) - (d.avanceVersee ?? 0)))
+      : null);
+
+  /* Le délai moyen ne se montre que sur l'état confirmé.
+     C'est le seul où il veut dire quelque chose : ailleurs, il porterait
+     sur des dossiers encore en route, dont le délai n'est pas tenu mais
+     en cours. Une moyenne de ce qui n'est pas fini n'apprend rien. */
+  const montreDelai = vue === 'confirme';
 
   /* Vue par fournisseur : on ne juge plus un dossier mais un partenaire.
      Le délai moyen ne se calcule que sur les dossiers arrivés — un
@@ -200,20 +247,25 @@ export default function OngletImportations({
     });
     return acc;
   }, new Map<string, LigneFournisseur>())]
-    .map(([, v]) => v)
-    /* Le plus gros d'abord : c'est celui qui engage le plus d'argent. */
-    .sort((a, b) => b.valeur - a.valeur);
+    .map(([, v]) => v);
+
+  const moyenne = (l: number[]) =>
+    l.length === 0 ? null : Math.round(l.reduce((n, x) => n + x, 0) / l.length);
 
   const colonnesFournisseur: Colonne<LigneFournisseur>[] = [
     { cle: 'nom', label: 'Fournisseur', rang: 'titre', rendu: f => f.nom },
     { cle: 'documents', label: 'Importations', rang: 'corps',
+      enTete: <BoutonTri cle="importations" label="Importations" />,
       rendu: f => String(f.documents) },
     ...(montreArgent ? ([
       { cle: 'valeur', label: 'Valeur', rang: 'corps',
+        enTete: <BoutonTri cle="valeur" label="Valeur" />,
         rendu: (f: LigneFournisseur) => formatMontant(f.valeur) },
       { cle: 'verse', label: 'Versé', rang: 'corps',
+        enTete: <BoutonTri cle="verse" label="Versé" />,
         rendu: (f: LigneFournisseur) => formatMontant(f.verse) },
       { cle: 'reste', label: 'Reste', rang: 'corps',
+        enTete: <BoutonTri cle="reste" label="Reste" />,
         rendu: (f: LigneFournisseur) => {
           const r = Math.max(0, f.valeur - f.verse);
           return (
@@ -223,23 +275,38 @@ export default function OngletImportations({
           );
         } },
     ] as Colonne<LigneFournisseur>[]) : []),
-    /* Ce qu'il met à livrer, du feu vert à l'arrivée. C'est le vrai
-       jugement sur un fournisseur d'import : pas seulement ce qu'il
-       coûte, mais en combien de temps il sert. */
-    { cle: 'delai', label: 'Délai moyen', rang: 'pied',
-      rendu: f => {
-        if (f.delais.length === 0) return '—';
-        const moy = Math.round(f.delais.reduce((n, x) => n + x, 0) / f.delais.length);
-        return (
-          <span className={moy >= 60 ? 'font-bold text-orange-500' : undefined}>
-            {moy} j
-            <span className="ml-1 text-[11px] text-gray-400">
-              sur {f.delais.length}
+    /* Ce qu'il met à livrer, du feu vert à l'arrivée.
+       La colonne ne paraît que sur l'état confirmé : ailleurs elle
+       porterait sur des dossiers encore en mer, dont le délai n'est pas
+       tenu mais en cours. Une moyenne de ce qui n'est pas fini ne dit
+       rien. */
+    ...(montreDelai ? ([
+      { cle: 'delai', label: 'Délai moyen', rang: 'pied',
+        enTete: <BoutonTri cle="delai" label="Délai moyen" />,
+        rendu: (f: LigneFournisseur) => {
+          const moy = moyenne(f.delais);
+          if (moy == null) return '—';
+          return (
+            <span className={moy >= 60 ? 'font-bold text-orange-500' : undefined}>
+              {moy} j
+              <span className="ml-1 text-[11px] text-gray-400">
+                sur {f.delais.length}
+              </span>
             </span>
-          </span>
-        );
-      } },
+          );
+        } },
+    ] as Colonne<LigneFournisseur>[]) : []),
   ];
+
+  const fournisseursAffiches = ordonner(parFournisseur,
+    tri === 'importations' ? (f => f.documents)
+      : tri === 'valeur' ? (f => f.valeur)
+      : tri === 'verse' ? (f => f.verse)
+      : tri === 'reste' ? (f => Math.max(0, f.valeur - f.verse))
+      : tri === 'delai' ? (f => moyenne(f.delais) ?? -1)
+      /* Sans tri choisi, le plus gros d'abord : c'est celui qui engage
+         le plus d'argent avec ce fournisseur. */
+      : (f => f.valeur));
 
   const colonnes: Colonne<Importation>[] = [
     { cle: 'reference', label: 'Référence', rang: 'titre', rendu: d => d.reference },
@@ -252,6 +319,7 @@ export default function OngletImportations({
     { cle: 'destination', label: 'Destination', rang: 'corps',
       rendu: d => d.siteNom || '—' },
     { cle: 'date', label: 'Date', rang: 'corps',
+      enTete: <BoutonTri cle="date" label="Date" />,
       rendu: d => {
         const j = dateOuverture(d);
         return j ? j.split('-').reverse().join('/') : '—';
@@ -260,6 +328,7 @@ export default function OngletImportations({
        encore « expédié » se voit ici d'un coup d'œil : son état seul
        dirait la même chose qu'hier. */
     { cle: 'age', label: 'Jours', rang: 'corps',
+      enTete: <BoutonTri cle="jours" label="Jours" />,
       rendu: d => {
         const n = ageEnJours(d);
         if (n == null) return '—';
@@ -272,11 +341,14 @@ export default function OngletImportations({
       } },
     ...(montreArgent ? ([
       { cle: 'frais', label: 'Frais', rang: 'corps',
+        enTete: <BoutonTri cle="frais" label="Frais" />,
         rendu: (d: Importation) => totalFrais(d.frais) > 0
           ? formatMontant(totalFrais(d.frais)) : '—' },
       { cle: 'valeur', label: 'Valeur', rang: 'corps',
+        enTete: <BoutonTri cle="valeur" label="Valeur" />,
         rendu: (d: Importation) => formatMontant(valeurDe(d, compteVue)) },
       { cle: 'reste', label: 'Reste', rang: 'pied',
+        enTete: <BoutonTri cle="reste" label="Reste" />,
         rendu: (d: Importation) => formatMontant(
           Math.max(0, valeurDe(d, compteVue) - (d.avanceVersee ?? 0))) },
     ] as Colonne<Importation>[]) : []),
@@ -515,10 +587,10 @@ export default function OngletImportations({
 
         {axe === 'fournisseur' ? (
           <ListeDossiers
-            dossiers={parFournisseur}
+            dossiers={fournisseursAffiches}
             colonnes={colonnesFournisseur}
             cleDe={f => f.id ?? f.nom}
-            compte={`${parFournisseur.length} fournisseur${parFournisseur.length > 1 ? 's' : ''}`} />
+            compte={`${fournisseursAffiches.length} fournisseur${fournisseursAffiches.length > 1 ? 's' : ''}`} />
         ) : (
           <ListeDossiers
             dossiers={affiches}
