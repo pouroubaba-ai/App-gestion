@@ -203,6 +203,22 @@ export default function FicheImportationPage() {
   const parts = fraisTotal > 0
     ? repartirFrais(dossier.lignes, frais, fraisCorrection, fraisCle) : null;
 
+  /* Les frais se posent entièrement, ou le dossier n'avance pas. */
+  const controle = controlerRepartition(dossier.lignes, frais, fraisCorrection, fraisCle);
+
+  /**
+   * Ce qu'une ligne peut porter au plus : tout ce que les AUTRES lignes
+   * ne se sont pas vu imposer.
+   *
+   * On ne compte que les parts posées à la main. Les compter toutes
+   * donnerait un plafond égal à la part du moment : la ligne serait
+   * gelée, impossible à monter comme à baisser.
+   */
+  function plafondPart(i: number): number {
+    return Math.max(0, fraisTotal - Object.entries(fraisCorrection ?? {})
+      .reduce((n, [j, v]) => Number(j) === i ? n : n + (v ?? 0), 0));
+  }
+
   const suivant = prochainEtat(dossier.etat, role, estAdmin);
   const peut = peutAvancer(dossier.etat, role, estAdmin);
   /* C'est à la réception qu'on compte : avant, il n'y a rien à confronter. */
@@ -364,6 +380,14 @@ export default function FicheImportationPage() {
 
   async function avancer() {
     if (!suivant || !user) return;
+    /* Un frais à moitié réparti fait disparaître de l'argent : la dette
+       le porte, le coût des produits ne le porte pas, et la marge
+       annoncée est fausse de la différence. Un bouton grisé ne protège
+       que l'écran — la garde tient ici aussi. */
+    if (!controle.juste) {
+      setErreur(controle.motif ?? 'Les frais ne se répartissent pas en entier.');
+      return;
+    }
     /* Confirmer fait entrer le stock : ce geste a sa propre porte. */
     if (suivant === 'confirme') { setModalConfirmation(true); return; }
     setEnCours(true); setErreur('');
@@ -458,8 +482,6 @@ export default function FicheImportationPage() {
     finally { setEnCours(false); }
   }
 
-  const controle = controlerRepartition(dossier.lignes, frais, fraisCorrection, fraisCle);
-
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900 dark:bg-gray-950 dark:text-gray-100">
 
@@ -487,7 +509,8 @@ export default function FicheImportationPage() {
               Fermer
             </button>
             {peut && suivant && (
-              <button onClick={avancer} disabled={enCours}
+              <button onClick={avancer} disabled={enCours || !controle.juste}
+                title={controle.juste ? undefined : controle.motif}
                 className={`flex items-center gap-1.5 rounded-xl px-5 py-2 text-sm font-bold text-white transition-colors disabled:opacity-40 ${
                   suivant === 'confirme'
                     ? 'bg-green-600 hover:bg-green-700'
@@ -668,7 +691,25 @@ export default function FicheImportationPage() {
                           {formatMontant(l.valeurUnitaire)}
                         </td>
                         {parts && <>
-                          <td className="px-3 py-2.5 text-gray-500">{formatMontant(part)}</td>
+                          {/* La part se corrige à la main : la règle donne
+                              une base juste, celui qui a vu le camion garde
+                              le dernier mot. Une ligne ne peut prendre que
+                              ce que les autres ne se sont pas vu imposer —
+                              pour donner davantage à l'une, il faut d'abord
+                              retirer à l'autre. */}
+                          <td className="px-3 py-2.5">
+                            {fraisModifiables && estAdmin ? (
+                              <ChampNombre valeur={part} max={plafondPart(i)}
+                                onChange={n => {
+                                  setFraisCorrection(c => ({
+                                    ...(c ?? {}), [i]: Math.min(n, plafondPart(i)) }));
+                                  setFraisSales(true);
+                                }}
+                                className="w-28 rounded-lg border border-gray-200 bg-gray-50 px-2 py-1 text-center text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:border-gray-700 dark:bg-gray-800" />
+                            ) : (
+                              <span className="text-gray-500">{formatMontant(part)}</span>
+                            )}
+                          </td>
                           <td className="px-3 py-2.5 font-bold text-gray-900 dark:text-gray-100">
                             {formatMontant(Math.round(reel))}
                           </td>
