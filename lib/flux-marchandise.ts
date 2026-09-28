@@ -1541,6 +1541,8 @@ export function venteEnCours(v: Pick<Vente, 'etat'>): boolean {
 
 export async function chargerVentesDuSite(siteId: Portee): Promise<Vente[]> {
   return (await lireDocs<Vente>('ventes', siteId))
+    /* Voir `chargerAchatsDuSite` : une ouverture n'est pas une vente. */
+    .filter(v => !(v as any).ouverture)
     .sort((a, b) => (b.createdAt?.seconds ?? 0) - (a.createdAt?.seconds ?? 0));
 }
 
@@ -1560,5 +1562,11 @@ export async function chargerDocumentsDuSite(
 
 export async function chargerAchatsDuSite(siteId: Portee): Promise<Achat[]> {
   return (await lireDocs<Achat>('achats', siteId))
+    /* Les soldes d'ouverture vivent dans cette collection pour que les
+       dettes les comptent, mais ce ne sont pas des achats : aucune
+       marchandise n'a été commandée, et il n'y a rien à recevoir. Les
+       laisser ici les ferait attendre une réception qui ne viendra
+       jamais. Ils se lisent sur la fiche du partenaire. */
+    .filter(a => !(a as any).ouverture)
     .sort((a, b) => (b.dateCommande ?? '').localeCompare(a.dateCommande ?? ''));
 }

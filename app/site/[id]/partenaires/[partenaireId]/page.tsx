@@ -13,7 +13,9 @@ import {
   type ApercuCompensation,
 } from '@/lib/compensation';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
-import { formatMontant } from '@/lib/format';
+import { formatMontant, formatDate } from '@/lib/format';
+import { ChampNombre } from '@/components/Champs';
+import { creerOuverture, ouvertureDe, aDesDossiers } from '@/lib/ouverture';
 import { soldeTiers, type SoldeTiers } from '@/lib/soldes';
 import { employesDuSite, type Apporteur, type EmployeChoix } from '@/lib/apporteur';
 import {
@@ -96,6 +98,65 @@ export default function FichePartenairePage() {
   const [soldes, setSoldes] = useState<{
     fournisseur: SoldeTiers; client: SoldeTiers;
   } | null>(null);
+
+  /* Ce qui venait d'avant l'app, de chaque côté. Un dossier sans
+     marchandise, qui porte seulement ce qui était dû. */
+  const [ouvFournisseur, setOuvFournisseur] =
+    useState<Awaited<ReturnType<typeof ouvertureDe>>>(null);
+  const [ouvClient, setOuvClient] =
+    useState<Awaited<ReturnType<typeof ouvertureDe>>>(null);
+  const [ouvPossible, setOuvPossible] =
+    useState<{ fournisseur: boolean; client: boolean }>({ fournisseur: false, client: false });
+  const [modalOuv, setModalOuv] = useState(false);
+  const [roleOuverture, setRoleOuverture] =
+    useState<'fournisseur' | 'client'>('fournisseur');
+  const [ouvMontant, setOuvMontant] = useState(0);
+  const [ouvDate, setOuvDate] = useState(new Date().toISOString().slice(0, 10));
+  const [ouvNote, setOuvNote] = useState('');
+  const [ouvEnCours, setOuvEnCours] = useState(false);
+  const [ouvErreur, setOuvErreur] = useState('');
+
+  /** Relire les deux soldes et les deux ouvertures. */
+  async function relireSoldes() {
+    const [f, c, of_, oc] = await Promise.all([
+      soldeTiers(siteId, partenaireId, 'fournisseur'),
+      soldeTiers(siteId, partenaireId, 'client'),
+      ouvertureDe(siteId, 'fournisseur', partenaireId).catch(() => null),
+      ouvertureDe(siteId, 'client', partenaireId).catch(() => null),
+    ]);
+    setSoldes({ fournisseur: f, client: c });
+    setOuvFournisseur(of_);
+    setOuvClient(oc);
+    /* Le bouton disparaît dès qu'un dossier existe : la garde tient à
+       l'écriture, mais proposer un geste qu'on refusera se lit comme une
+       panne. */
+    const [dF, dC] = await Promise.all([
+      aDesDossiers(siteId, 'fournisseur', partenaireId).catch(() => true),
+      aDesDossiers(siteId, 'client', partenaireId).catch(() => true),
+    ]);
+    setOuvPossible({ fournisseur: !dF, client: !dC });
+    setPartenaire(prev => prev
+      ? { ...prev, dette: f.reste, creance: c.reste } : prev);
+  }
+
+  async function poserOuverture() {
+    if (!user || !partenaire) return;
+    setOuvEnCours(true); setOuvErreur('');
+    try {
+      const a = await auteurCourant(siteId, user.uid, user.displayName);
+      await creerOuverture({
+        siteId, role: roleOuverture,
+        partenaireId, partenaireNom: partenaire.nom,
+        montant: ouvMontant, date: ouvDate,
+        note: ouvNote, userId: user.uid, parNom: a.utilisateurNom,
+      });
+      setModalOuv(false);
+      setOuvMontant(0); setOuvNote('');
+      await relireSoldes();
+    } catch (e: any) {
+      setOuvErreur(e?.message ?? 'Le solde n’a pas pu être posé.');
+    } finally { setOuvEnCours(false); }
+  }
   const [site, setSite] = useState<Site | null>(null);
   const [categories, setCategories] = useState<Categorie[]>([]);
   const [loading, setLoading] = useState(true);
@@ -180,14 +241,7 @@ export default function FichePartenairePage() {
         /* Dette et créance se déduisent des achats confirmés et des ventes
            livrées non soldés : stockées sur la fiche, elles survivaient à la
            suppression de leur document. */
-        Promise.all([
-          soldeTiers(siteId, partenaireId, 'fournisseur'),
-          soldeTiers(siteId, partenaireId, 'client'),
-        ]).then(([f, c]) => {
-          setSoldes({ fournisseur: f, client: c });
-          setPartenaire(prev => prev
-            ? { ...prev, dette: f.reste, creance: c.reste } : prev);
-        });
+        relireSoldes().catch(() => {});
         setNom(p.nom);
         setApporteurEmploye(p.apporteur?.employeId ?? (p.apporteur ? 'externe' : ''));
         /* Le modal sert aussi à modifier : il doit rouvrir sur le cas déjà
@@ -243,13 +297,19 @@ export default function FichePartenairePage() {
        dont les achats existent rendrait ces documents orphelins — ils
        désigneraient un fournisseur que la fiche ne reconnaît plus. */
     if (!rolesFournisseur && (soldes?.fournisseur.total ?? 0) > 0) {
-      setErreur('Ce partenaire a des achats : son rôle de fournisseur ne '
-        + 'peut plus être retiré.');
+      setErreur(ouvFournisseur
+        ? 'Ce partenaire porte un solde d’ouverture de ce côté : son rôle '
+          + 'de fournisseur ne peut plus être retiré.'
+        : 'Ce partenaire a des achats : son rôle de fournisseur ne '
+          + 'peut plus être retiré.');
       return;
     }
     if (!rolesClient && (soldes?.client.total ?? 0) > 0) {
-      setErreur('Ce partenaire a des ventes : son rôle de client ne peut '
-        + 'plus être retiré.');
+      setErreur(ouvClient
+        ? 'Ce partenaire porte un solde d’ouverture de ce côté : son rôle '
+          + 'de client ne peut plus être retiré.'
+        : 'Ce partenaire a des ventes : son rôle de client ne peut '
+          + 'plus être retiré.');
       return;
     }
     setSaving(true); setErreur('');
@@ -405,6 +465,11 @@ export default function FichePartenairePage() {
                     Total {formatMontant(total)} · Versé {formatMontant(verse)}
                     {retour > 0 && <> · Retour {formatMontant(retour)}</>}
                   </p>
+                  {/* Ce qui venait d'avant l'app : sans cette ligne, le
+                      total ne s'expliquerait pas par les dossiers. */}
+                  <LigneOuverture role="client" ouverture={ouvClient}
+                    possible={ouvPossible.client}
+                    onPoser={() => { setRoleOuverture('client'); setModalOuv(true); }} />
                 </div>
               </div>
             );
@@ -432,6 +497,9 @@ export default function FichePartenairePage() {
                     Total {formatMontant(total)} · Versé {formatMontant(verse)}
                     {retour > 0 && <> · Retour {formatMontant(retour)}</>}
                   </p>
+                  <LigneOuverture role="fournisseur" ouverture={ouvFournisseur}
+                    possible={ouvPossible.fournisseur}
+                    onPoser={() => { setRoleOuverture('fournisseur'); setModalOuv(true); }} />
                 </div>
               </div>
             );
@@ -702,6 +770,99 @@ export default function FichePartenairePage() {
           </div>
         </div>
       )}
+
+      {/* Le solde d'ouverture : ce qui était dû avant l'app.
+          Aucune marchandise, aucun mouvement — seulement un montant, une
+          date, et de quoi s'en souvenir. */}
+      {modalOuv && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-xl dark:bg-gray-900">
+            <div className="mb-1 flex items-start justify-between gap-3">
+              <p className="text-sm font-bold text-gray-900 dark:text-gray-100">
+                Solde d’ouverture ·{' '}
+                {roleOuverture === 'fournisseur' ? 'ce qu’on lui devait' : 'ce qu’il nous devait'}
+              </p>
+              <button onClick={() => setModalOuv(false)}
+                className="shrink-0 rounded-lg p-1 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800">
+                <X size={16} />
+              </button>
+            </div>
+            <p className="mb-4 text-xs leading-snug text-gray-400">
+              Ce compte existait avant l’app. Rien n’entre au stock : on
+              reporte seulement ce qui restait dû. Une fois posé, il ne se
+              modifie plus.
+            </p>
+
+            <label className="mb-1 block text-xs font-bold uppercase text-gray-400">Montant</label>
+            <ChampNombre valeur={ouvMontant} onChange={setOuvMontant}
+              className="mb-3 w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2.5 text-right text-sm text-gray-900 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100" />
+
+            <label className="mb-1 block text-xs font-bold uppercase text-gray-400">
+              Arrêté au
+            </label>
+            <input type="date" value={ouvDate} max={new Date().toISOString().slice(0, 10)}
+              onChange={e => setOuvDate(e.target.value)}
+              className="mb-3 w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm text-gray-900 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100" />
+
+            <label className="mb-1 block text-xs font-bold uppercase text-gray-400">
+              Note
+            </label>
+            <input type="text" value={ouvNote} placeholder="Facultatif — d’où vient ce montant"
+              onChange={e => setOuvNote(e.target.value)}
+              className="w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm text-gray-900 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100" />
+
+            {ouvErreur && <p className="mt-3 text-xs text-red-500">{ouvErreur}</p>}
+
+            <div className="mt-4 flex gap-2">
+              <button onClick={() => setModalOuv(false)}
+                className="flex-1 rounded-xl border border-gray-200 px-4 py-2 text-sm font-bold text-gray-500 dark:border-gray-700">
+                Annuler
+              </button>
+              <button onClick={poserOuverture} disabled={ouvEnCours || ouvMontant <= 0}
+                className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-indigo-700 disabled:opacity-40">
+                {ouvEnCours ? <Loader2 size={14} className="animate-spin" /> : null}
+                Poser
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
+  );
+}
+
+/**
+ * Ce qu'un partenaire devait avant l'app, sous la barre de son solde.
+ *
+ * Sans cette ligne, le total ne s'expliquerait pas : on chercherait un
+ * dossier qui n'existe pas. Posé, il ne se modifie plus — un versement a
+ * pu s'y imputer, et déplacer le point de départ ferait réapparaître de
+ * l'argent déjà réglé.
+ */
+function LigneOuverture({ ouverture, possible, onPoser }: {
+  role: 'fournisseur' | 'client';
+  ouverture: { montant: number; date: string; verse: number } | null;
+  /** Aucun dossier encore : c'est le seul moment où l'on peut le poser. */
+  possible: boolean;
+  onPoser: () => void;
+}) {
+  if (ouverture) {
+    return (
+      <p className="mt-1 text-xs text-gray-400">
+        Dont{' '}
+        <span className="font-bold text-gray-600 dark:text-gray-300">
+          {formatMontant(ouverture.montant)}
+        </span>{' '}
+        d’ouverture{ouverture.date ? ` au ${formatDate(ouverture.date)}` : ''}
+      </p>
+    );
+  }
+  if (!possible) return null;
+  return (
+    <button type="button"
+      onClick={e => { e.stopPropagation(); onPoser(); }}
+      className="mt-1 text-xs font-bold text-indigo-500 transition-colors hover:text-indigo-700">
+      + Solde d’ouverture
+    </button>
   );
 }

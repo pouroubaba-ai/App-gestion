@@ -7,6 +7,7 @@ import { db } from '@/lib/firebase';
 import { useAuth } from '@/lib/auth-context';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { formatMontant } from '@/lib/format';
+import { ouvertureDe } from '@/lib/ouverture';
 import {
   LIBELLES_MOTIF_VERSEMENT, type MotifVersement,
 } from '@/lib/versements-collection';
@@ -283,6 +284,27 @@ export default function TransactionsPage() {
   const uniteReelle = (a: string | null, b: string) =>
     (a && a.toLowerCase() !== 'unité') ? a : b;
 
+  /* Les soldes d'ouverture n'ont aucune ligne de stock : cet écran
+     construit ses documents à partir des mouvements, et ne les verrait
+     donc jamais. On les charge à part pour les y poser. */
+  const [ouvertures, setOuvertures] = useState<{
+    id: string; role: Role; reference: string; date: string;
+    montant: number; verse: number;
+  }[]>([]);
+
+  useEffect(() => {
+    if (!user) return;
+    Promise.all([
+      ouvertureDe(siteId, 'fournisseur', partenaireId).catch(() => null),
+      ouvertureDe(siteId, 'client', partenaireId).catch(() => null),
+    ]).then(([f, c]) => {
+      const out = [];
+      if (f) out.push({ ...f, role: 'fournisseur' as Role, reference: 'Ouverture' });
+      if (c) out.push({ ...c, role: 'client' as Role, reference: 'Ouverture' });
+      setOuvertures(out);
+    }).catch(() => {});
+  }, [user, siteId, partenaireId]);
+
   const documents = useMemo(() => {
     const map = new Map<string, {
       cle: string; reference: string; achatId?: string | null; venteId?: string | null;
@@ -313,8 +335,24 @@ export default function TransactionsPage() {
         verse: versesParAchat[m.achatId ?? m.venteId ?? ''] ?? 0,
       });
     });
+    /* L'ouverture rejoint la liste : datée, référencée, elle porte son
+       reste comme les autres. « — » en produits, parce qu'il n'y en a
+       aucun — et c'est précisément ce qui la distingue. */
+    for (const o of ouvertures.filter(x => x.role === role)) {
+      map.set(o.id, {
+        cle: o.id,
+        reference: o.reference,
+        achatId: null, venteId: null,
+        motif: 'Ouverture',
+        date: o.date,
+        produits: 0,
+        total: o.montant,
+        retour: 0,
+        verse: o.verse,
+      });
+    }
     return [...map.values()].sort((a, b) => b.date.localeCompare(a.date));
-  }, [filtres, versesParAchat]);
+  }, [filtres, versesParAchat, ouvertures, role]);
 
   /** Soldé quand plus rien n'est dû dessus ; partiel sinon.
    *  Le retour éteint autant que l'argent : l'ignorer laissait « Partiel »
@@ -467,7 +505,10 @@ export default function TransactionsPage() {
 
           {/* Onglet Partenaire */}
           {onglet === 'partenaire' && (
-            filtres.length === 0
+            /* Un solde d'ouverture n'a aucun mouvement de stock : s'en
+               tenir aux mouvements refermait la page sur « aucune
+               transaction » alors qu'un document existe. */
+            documents.length === 0
               ? <div className="text-center py-16 text-gray-400 text-sm">Aucune transaction</div>
               : (
                 <div className="overflow-x-auto">
@@ -516,7 +557,12 @@ export default function TransactionsPage() {
                           className={`hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors ${d.achatId || d.venteId ? 'cursor-pointer' : ''}`}>
                           <td className="px-4 py-3 font-medium text-gray-900 dark:text-gray-100 text-center">{d.reference}</td>
                           <td className="px-4 py-3 text-gray-500 text-center">{d.motif}</td>
-                          <td className="px-4 py-3 text-gray-500 text-center">{d.produits}</td>
+                          {/* Une ouverture n'a pas de marchandise : le
+                              tiret le dit, là où un zéro se lirait comme
+                              une erreur de saisie. */}
+                          <td className="px-4 py-3 text-gray-500 text-center">
+                            {d.motif === 'Ouverture' ? '—' : d.produits}
+                          </td>
                           <td className="px-4 py-3 text-gray-500 text-center">{new Date(d.date).toLocaleDateString('fr-FR')}</td>
                           <td className="px-4 py-3 font-medium text-gray-900 dark:text-gray-100 text-center">{fmt(d.total)}</td>
                           <td className={`px-4 py-3 text-center ${d.retour > 0 ? 'text-orange-500 font-medium' : 'text-gray-300 dark:text-gray-600'}`}>
