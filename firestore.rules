@@ -520,7 +520,10 @@ service cloud.firestore {
           'employe_prelevements', 'employe_remunerations',
           'employe_rem_configs', 'employe_rem_assignations',
           'employe_versements',
-          'vente_montants_configs'
+          'vente_montants_configs',
+          /* La marchandise qui vient de loin : un achat avec le temps en
+             plus. Elle vise un site, et c'est lui qui la comptera. */
+          'importations'
         ]
         && travailleSur(resource.data.get('siteId', ''));
 
@@ -540,7 +543,10 @@ service cloud.firestore {
           'employe_prelevements', 'employe_remunerations',
           'employe_rem_configs', 'employe_rem_assignations',
           'employe_versements',
-          'vente_montants_configs'
+          'vente_montants_configs',
+          /* La marchandise qui vient de loin : un achat avec le temps en
+             plus. Elle vise un site, et c'est lui qui la comptera. */
+          'importations'
         ]
         && travailleSur(siteEnvoye());
 
@@ -555,7 +561,10 @@ service cloud.firestore {
           'employe_prelevements', 'employe_remunerations',
           'employe_rem_configs', 'employe_rem_assignations',
           'employe_versements',
-          'vente_montants_configs'
+          'vente_montants_configs',
+          /* La marchandise qui vient de loin : un achat avec le temps en
+             plus. Elle vise un site, et c'est lui qui la comptera. */
+          'importations'
         ]
         && travailleSur(siteDuDoc());
     }

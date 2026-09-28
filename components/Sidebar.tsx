@@ -9,7 +9,7 @@ import { useTheme } from '@/lib/theme-context';
 import {
   LogOut, ChevronLeft, ChevronRight, ChevronDown, Sun, Moon, MapPin, Settings,
   LayoutDashboard, Wallet, Handshake, CalendarClock, HandCoins, Users, RefreshCw, Undo2,
-  ShoppingCart, ArrowLeftRight, Package, History, UserCog,
+  ShoppingCart, Ship, ArrowLeftRight, Package, History, UserCog,
 } from 'lucide-react';
 import {
   compterEnAttente, AUCUNE_ATTENTE, SIGNAL_ATTENTE, type EnAttente,
@@ -42,6 +42,8 @@ const nav: NavItem[] = [
      marchandise circule, et ce qui reste se compte. */
   { type: 'link', label: 'Cycle de vente', href: '/ensemble?onglet=cycle-vente', icon: RefreshCw },
   { type: 'link', label: 'Achats', href: '/ensemble?onglet=achats', icon: ShoppingCart },
+  /* L'import suit l'achat : c'est le même geste, avec le voyage en plus. */
+  { type: 'link', label: 'Importations', href: '/ensemble?onglet=importations', icon: Ship },
   { type: 'link', label: 'Transferts', href: '/ensemble?onglet=transferts', icon: ArrowLeftRight },
   { type: 'link', label: 'Retours', href: '/ensemble?onglet=retours', icon: Undo2 },
   { type: 'link', label: 'Inventaire', href: '/ensemble?onglet=inventaire', icon: Package },

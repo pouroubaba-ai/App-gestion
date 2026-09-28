@@ -26,14 +26,15 @@ import OngletRetours from '@/app/site/[id]/components/OngletRetours';
 import OngletEmployes from '@/app/site/[id]/components/OngletEmployes';
 import OngletCycleVente from '@/app/site/[id]/components/OngletCycleVente';
 import OngletAchats from '@/app/site/[id]/components/OngletAchats';
+import OngletImportations from '@/app/site/[id]/components/OngletImportations';
 import OngletTransferts from '@/app/site/[id]/components/OngletTransferts';
 import OngletInventaire from '@/app/site/[id]/components/OngletInventaire';
 import OngletHistorique from '@/app/site/[id]/components/OngletHistorique';
 
 export type OngletEnsemble =
   | 'dashboard' | 'fonds' | 'partenaires' | 'recouvrements' | 'employes'
-  | 'cycle-vente' | 'achats' | 'transferts' | 'inventaire' | 'historique'
-  | 'remises' | 'retours';
+  | 'cycle-vente' | 'achats' | 'importations' | 'transferts' | 'inventaire'
+  | 'historique' | 'remises' | 'retours';
 
 /* Le titre de la page. Il vit ici, sur le header, et non dans chaque
    onglet : celui-ci sert aussi la fiche d'un site, où le nom du site tient
@@ -51,6 +52,9 @@ const TITRES: Record<OngletEnsemble, string> = {
   employes: 'Employés',
   'cycle-vente': 'Cycle de vente',
   achats: 'Achats',
+  /* La marchandise qui vient de loin. Elle n'appartient à aucun site en
+     particulier tant qu'elle voyage : le dossier se mène d'ici. */
+  importations: 'Importations',
   transferts: 'Transferts',
   inventaire: 'Inventaire',
   historique: 'Historique',
@@ -171,6 +175,7 @@ function Ensemble() {
             {onglet === 'employes' && <OngletEmployes {...commun} />}
             {onglet === 'cycle-vente' && <OngletCycleVente {...commun} />}
             {onglet === 'achats' && <OngletAchats {...commun} />}
+            {onglet === 'importations' && <OngletImportations {...commun} />}
             {onglet === 'transferts' && <OngletTransferts {...commun} />}
             {onglet === 'inventaire' && <OngletInventaire {...commun} />}
             {onglet === 'historique' && <OngletHistorique {...commun} />}
