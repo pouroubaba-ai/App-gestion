@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
+import { useBrouillon, cleBrouillon, oublierBrouillon } from '@/lib/brouillon';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { Loader2, Check, SlidersHorizontal, ChevronLeft } from 'lucide-react';
 import { doc, getDoc } from 'firebase/firestore';
@@ -48,7 +49,12 @@ export default function NouvelAjustementPage() {
 
   const [motif, setMotif] = useState<MotifAjustement>('stock_initial');
   const [date, setDate] = useState(aujourdhui());
-  const [lignes, setLignes] = useState<LigneFlux[]>([]);
+  /* La marchandise préparée survit au rechargement : les lignes
+     cherchées une à une ne doivent pas disparaître parce que la page
+     s'est rafraîchie. Le partenaire et la date ne se gardent pas — on
+     ne réengage pas quelqu'un qu'on n'a pas revu. */
+  const cleDraft = cleBrouillon('ajustement', siteId);
+  const [lignes, setLignes] = useBrouillon<LigneFlux[]>(cleDraft, []);
   const [note, setNote] = useState('');
   const [enCours, setEnCours] = useState(false);
   const [erreur, setErreur] = useState('');
@@ -145,6 +151,10 @@ export default function NouvelAjustementPage() {
         parUid: user.uid,
         parNom: auteur.utilisateurNom,
       });
+      /* Le brouillon a fait son office : la marchandise est
+         inscrite, le garder ferait repartir d'une préparation
+         déjà envoyée. */
+      oublierBrouillon(cleDraft);
       router.push(`/site/${siteId}/ajustements/${id}`);
     } catch (e: any) {
       setErreur(e?.message ?? 'Enregistrement impossible.');

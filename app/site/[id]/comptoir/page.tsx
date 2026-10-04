@@ -1,6 +1,6 @@
 'use client';
 import { produitsDuSite } from '@/lib/produits-site';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   collection, query, where, getDocs, addDoc, serverTimestamp,
 } from 'firebase/firestore';
@@ -9,7 +9,7 @@ import { useAuth } from '@/lib/auth-context';
 import { roleSurSite, type RoleSite } from '@/lib/roles';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { formatMontant } from '@/lib/format';
-import { auteurEtape } from '@/lib/auteur';
+import { auteurCourant, auteurEtape } from '@/lib/auteur';
 import {
   LigneFlux, referenceFlux, livrerVente, type Vente,
 } from '@/lib/flux-marchandise';
@@ -34,7 +34,7 @@ import {
 } from '@/lib/reductions';
 import {
   Loader2, Plus, Minus, Trash2, Check, ArrowLeft, ShoppingCart, Package, X, Info,
-  BarChart3, WifiOff, Percent,
+  BarChart3, WifiOff, Percent, ChevronLeft, ChevronRight, Maximize2,
 } from 'lucide-react';
 
 interface ClientBref { id: string; nom: string }
@@ -163,6 +163,26 @@ export default function ComptoirPage() {
   /* '' = toutes. Une catégorie retranche, elle ne se cumule pas : au comptoir
      on cherche un rayon, pas une combinaison de rayons. */
   const [categorie, setCategorie] = useState('');
+  /* Le panier en grand. La colonne est étroite et bornée en hauteur :
+     dès cinq articles on ne voit plus l'ensemble, et c'est justement
+     quand le total surprend qu'on veut tout relire d'un coup. */
+  const [panierOuvert, setPanierOuvert] = useState(false);
+
+  /* La page ne défile plus derrière le modal : la molette y glissait,
+     et en refermant on ne savait plus où l'on était dans le catalogue. */
+  useEffect(() => {
+    if (!panierOuvert) return;
+    const avant = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = avant; };
+  }, [panierOuvert]);
+  /* La bande des rayons. Sur un écran tactile le doigt la fait glisser
+     tout seul ; à la souris, rien ne le dit — d'où les deux flèches, et
+     la molette qui pousse de côté au lieu de descendre la page. */
+  const bandeRayons = useRef<HTMLDivElement>(null);
+  function glisser(sens: -1 | 1) {
+    bandeRayons.current?.scrollBy({ left: sens * 240, behavior: 'smooth' });
+  }
   const [panier, setPanier] = useState<LignePanier[]>([]);
   /* Un panier à moitié rempli ne doit pas disparaître parce qu'on est allé
      vérifier un prix ailleurs, ni parce que la page s'est rechargée. Il vit
@@ -221,7 +241,7 @@ export default function ComptoirPage() {
         if (vivant) setProduits(frais as ProduitChoisissable[]);
       })
       .catch(() => {});
-    return () => { vivant = false; };
+  return () => { vivant = false; };
   }, [user, enLigne, siteId]);
   const [enCours, setEnCours] = useState(false);
   const [erreur, setErreur] = useState('');
@@ -705,6 +725,209 @@ export default function ComptoirPage() {
     </div>
   );
 
+    /* Créer un client sans quitter le comptoir.
+   *
+   * Un client qui n'a pas encore de fiche arrivait au pire moment : il
+   * fallait ouvrir les partenaires, créer, revenir, retrouver le panier.
+   * La fiche naît ici, avec le nom tapé dans la recherche, et la vente
+   * continue.
+   *
+   * Elle naît cliente, et rien d'autre. Un fournisseur se déclare où on
+   * le connaît — ici on ne sait qu'une chose, c'est que cette personne
+   * achète. */
+  async function creerClient(nom: string): Promise<string | null> {
+    const propre = nom.trim();
+    if (!propre || !user) return null;
+
+    /* Deux fiches du même nom deviendraient deux historiques pour une
+       seule personne, et la dette se lirait à moitié. On rend celle qui
+       existe plutôt que d'en ouvrir une autre. */
+    const cle = propre.toLowerCase().normalize('NFD')
+      .replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ');
+    const deja = clients.find(c =>
+      c.nom.trim().toLowerCase().normalize('NFD')
+        .replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ') === cle);
+    if (deja) {
+      setErreur(`« ${deja.nom} » existe déjà.`);
+      return deja.id;
+    }
+
+    try {
+      const ref = await addDoc(collection(db, 'partenaires'), {
+        userId: user.uid,
+        siteId,
+        nom: propre,
+        contact: '',
+        rolesFournisseur: false,
+        rolesClient: true,
+        categoriesFournisseur: [],
+        categoriesClient: [],
+        prochainRecouvrement: null,
+        ...(await auteurCourant(siteId, user.uid, user.displayName)),
+        apporteur: null,
+        createdAt: serverTimestamp(),
+      });
+      setClients(l => [...l, { id: ref.id, nom: propre }]
+        .sort((a, b) => a.nom.localeCompare(b.nom)));
+      setErreur('');
+      return ref.id;
+    } catch (e: unknown) {
+      setErreur(e instanceof Error ? e.message : 'Création impossible.');
+      return null;
+    }
+  }
+
+  /* Une ligne du panier, dessinée une fois pour les deux endroits où
+     elle vit : la colonne étroite, et le modal qui l'élargit. La
+     recopier aurait laissé les deux versions diverger au premier
+     changement — et c'est l'écran où l'on encaisse. */
+  function ligneDuPanier(l: typeof panier[number]) {
+    const max = plafond(l.stockUnites, l.contenance);
+    const auPlafond = l.quantiteDemandee >= max;
+    /* Ceux de cette déclinaison : les communs, plus les
+       siens. Un carton de 10W n'a pas le même contenu
+       qu'un carton de 30W. */
+    const embs = emballagesDe(
+      produits.find(x => x.id === l.produitId)?.emballages,
+      l.varianteCle);
+    const uniteNom = (l.unite?.trim() || 'unité').toLowerCase();
+    /* Le coût de ce qu'on vend : un carton a coûté vingt-huit
+       fois ce qu'a coûté la pièce. */
+    const coutLigne = l.valeurUnitaire;
+    const aPerte = (l.prixVente ?? 0) < coutLigne;
+    /* Chaque ligne est une marchandise, pas une rangée de tableau : un
+       fond et une bordure franche la détachent de sa voisine. À six
+       articles alignés, un contour trop pâle les faisait lire comme un
+       bloc, et l'œil ne retrouvait plus la sienne. */
+    return (
+      <div key={l.cle} className="rounded-xl border border-gray-200 bg-gray-50/60 p-3 transition-colors hover:border-indigo-200 dark:border-gray-700 dark:bg-gray-800/40 dark:hover:border-indigo-800">
+        <div className="flex items-start justify-between gap-2">
+          <p className="text-[13px] font-bold leading-tight text-gray-900 dark:text-gray-100 flex items-start gap-1">
+            {/* Ce qu'a coûté la marchandise ne se montre pas en
+                permanence : on le consulte au moment de fixer un
+                prix, pas à chaque ligne du panier. */}
+            <button onClick={() => setDetail(detail === l.cle ? null : l.cle)}
+              data-detail-cout title="Prix d'achat"
+              className={`shrink-0 mt-px transition-colors ${detail === l.cle
+                ? 'text-indigo-600 dark:text-indigo-400'
+                : 'text-gray-300 hover:text-indigo-500'}`}>
+              <Info size={12} />
+            </button>
+            <span>
+              {l.designation}{l.varianteLibelle ? ` · ${l.varianteLibelle}` : ''}
+            </span>
+          </p>
+          <button onClick={() => changerQuantite(l.cle, 0)}
+            className="text-gray-300 hover:text-red-500 shrink-0">
+            <Trash2 size={13} />
+          </button>
+        </div>
+
+        {detail === l.cle && (() => {
+          /* Le prix affiché est le plus élevé des deux : on
+             dit lesquels, pour qu'on sache d'où il vient et
+             qu'on puisse le discuter. Les deux suivent
+             l'emballage, comme le coût. */
+          const par = l.emballage
+            ? ` / ${l.emballage.toLowerCase()}` : ` / ${uniteNom}`;
+          /* Les lignes posées avant que les deux prix
+             voyagent n'ont que celui qu'elles portent : on
+             s'y replie plutôt que de cacher la ligne. */
+          const reco = (l.prixRecommande ?? l.prixUnitaire ?? 0) * l.contenance;
+          const marche = (l.prixMarche ?? 0) * l.contenance;
+          const retenu = Math.max(reco, marche);
+          return (
+            <div data-detail-cout
+              className="mt-1.5 flex flex-col gap-1 rounded-lg bg-gray-50 px-2 py-1.5 dark:bg-gray-800">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-gray-400">Prix d&apos;achat{par}</span>
+                <span className="text-xs font-bold text-gray-900 dark:text-gray-100">
+                  {formatMontant(coutLigne)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-gray-400">Prix recommandé</span>
+                <span className={`text-xs font-bold ${reco > 0 && retenu === reco
+                  ? 'text-indigo-600 dark:text-indigo-400'
+                  : 'text-gray-500'}`}>
+                  {reco > 0 ? formatMontant(reco) : '—'}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-gray-400">Prix du marché</span>
+                <span className={`text-xs font-bold ${marche > 0 && retenu === marche
+                  ? 'text-indigo-600 dark:text-indigo-400'
+                  : 'text-gray-500'}`}>
+                  {marche > 0 ? formatMontant(marche) : '—'}
+                </span>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* L'emballage qu'on vend. Le plus petit par défaut ;
+            en changer refait le prix et ramène la quantité. */}
+        {embs.length > 0 && (
+          <div className="flex flex-wrap gap-1 mt-2">
+            <button onClick={() => changerEmballage(l.cle, null)}
+              className={`px-2 py-1 rounded-lg text-xs font-bold transition-colors ${!l.emballage
+                ? 'bg-indigo-600 text-white'
+                : 'border border-gray-200 dark:border-gray-700 text-gray-500 hover:border-indigo-400'}`}>
+              {uniteNom}
+            </button>
+            {embs.map(e => (
+              <button key={e.nom} onClick={() => changerEmballage(l.cle, e.nom)}
+                disabled={l.stockUnites < e.quantite}
+                className={`px-2 py-1 rounded-lg text-xs font-bold transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${l.emballage === e.nom
+                  ? 'bg-indigo-600 text-white'
+                  : 'border border-gray-200 dark:border-gray-700 text-gray-500 hover:border-indigo-400'}`}>
+                {e.nom.toLowerCase()}×{e.quantite}
+              </button>
+            ))}
+          </div>
+        )}
+
+        <div className="flex items-center justify-between gap-2 mt-2">
+          <div className="flex items-center gap-1">
+            <button onClick={() => changerQuantite(l.cle, l.quantiteDemandee - 1)}
+              className="p-1 rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800">
+              <Minus size={11} />
+            </button>
+            {/* Une ligne se retire par la corbeille, pas en
+                vidant sa quantité : on efface pour retaper. */}
+            <ChampNombre valeur={l.quantiteDemandee} min={1}
+              onChange={n => changerQuantite(l.cle, n)}
+              className="w-24 px-2 py-1 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-xs text-center focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+            <button onClick={() => changerQuantite(l.cle, l.quantiteDemandee + 1)}
+              disabled={auPlafond}
+              className="p-1 rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-30 disabled:cursor-not-allowed">
+              <Plus size={11} />
+            </button>
+          </div>
+          {/* Vendre sous le coût reste permis — on écoule un
+              fond de stock, on arrange un client — mais jamais
+              sans le savoir. */}
+          <ChampNombre valeur={l.prixVente ?? 0}
+            onChange={n => changerPrix(l.cle, n)}
+            className={`w-24 px-2 py-1 rounded-lg border text-xs text-center focus:outline-none focus:ring-2 ${aPerte
+              ? 'border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 focus:ring-red-500'
+              : 'border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 focus:ring-indigo-500'}`} />
+        </div>
+
+        <div className="mt-2 flex items-center justify-between border-t border-gray-200 pt-2 dark:border-gray-700">
+          <span className={`text-xs ${auPlafond ? 'text-orange-500' : 'text-gray-400'}`}>
+            {auPlafond
+              ? 'tout le stock'
+              : `${max} ${l.emballage ? l.emballage.toLowerCase() : uniteNom} dispo.`}
+          </span>
+          <span className="text-sm font-bold tabular-nums text-indigo-600 dark:text-indigo-400">
+            {formatMontant(l.quantiteDemandee * (l.prixVente ?? 0))}
+          </span>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-950 text-gray-900 dark:text-gray-100">
 
@@ -727,6 +950,16 @@ export default function ComptoirPage() {
             </button>
             <ShoppingCart size={18} className="text-indigo-500" />
             <h1 className="text-lg font-bold">Comptoir</h1>
+          </div>
+          {/* Le client tient dans l'en-tête, à l'autre bout : on y touche
+              une fois par vente, et une barre entière pour lui seul
+              repoussait le catalogue — là où se passe tout le travail. */}
+          <div className="ml-auto w-44 sm:w-56">
+            <SelectCherchable valeur={clientId} onChange={setClientId}
+              options={clients.map(c => ({ valeur: c.id, label: c.nom }))}
+              placeholder={aCredit ? 'Choisir le client…' : 'Client de passage'}
+              vide="Aucun client" effacable
+              surCreer={creerClient} creerLibelle="Nouveau client" />
           </div>
           {/* Une vente différée est prise, pas perdue : le dire en jaune
               plutôt qu'en vert évite de la croire partie — et de la
@@ -759,34 +992,6 @@ export default function ComptoirPage() {
         </div>
       </header>
 
-      {/* Le client et la validation ne descendent pas dans la colonne : ce
-          sont les deux seuls gestes qui ferment une vente, et les chercher
-          entre deux clients coûte plus que tout le reste de l'écran. */}
-      <div className="sticky top-[57px] z-20 bg-white/90 dark:bg-gray-900/90 backdrop-blur border-b border-gray-100 dark:border-gray-800">
-        <div className="w-full px-4 sm:px-6 lg:px-8 py-3 flex items-center gap-3">
-          {/* Le client occupe la largeur disponible ; la validation se pose à
-              l'autre bout, toujours au même endroit quelle que soit la page. */}
-          <div className="w-full max-w-sm">
-            <SelectCherchable valeur={clientId} onChange={setClientId}
-              options={clients.map(c => ({ valeur: c.id, label: c.nom }))}
-              placeholder={aCredit ? 'Choisir le client…' : 'Client de passage'}
-              vide="Aucun client" />
-          </div>
-          {/* À crédit, la vente engage quelqu'un : le dire ici évite de
-              chercher pourquoi le bouton refuse. */}
-          {aCredit && !clientId && panier.length > 0 ? (
-            <span className="text-xs font-bold text-red-500 shrink-0 hidden sm:block">
-              Client obligatoire
-            </span>
-          ) : null}
-          <button onClick={valider} disabled={!pret}
-            className="ml-auto flex items-center justify-center gap-1.5 px-7 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-bold rounded-xl transition-colors shrink-0">
-            {enCours ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}
-            Valider
-          </button>
-        </div>
-      </div>
-
       <div className="w-full p-4 sm:p-6 lg:p-8 grid grid-cols-1 lg:grid-cols-5 gap-4">
 
         {/* ─────────── Catalogue ─────────── */}
@@ -795,9 +1000,41 @@ export default function ComptoirPage() {
             placeholder="Chercher un produit…" />
 
           {/* Les rayons du magasin. « Tout » d'abord : c'est l'état par
-              défaut, et y revenir doit être le geste le plus court. */}
+              défaut, et y revenir doit être le geste le plus court.
+
+              Sur une seule ligne qui défile, pas sur quatre. Au comptoir
+              on sert debout : quinze rayons repliés poussaient le premier
+              produit hors de l'écran, et il fallait descendre avant de
+              pouvoir vendre. Un doigt fait glisser la bande, un autre
+              choisit — là où un menu déroulant aurait demandé d'ouvrir
+              puis de choisir, et aurait caché ce qui existe. */}
           {categories.length > 0 && (
-            <div className="flex flex-wrap gap-1.5 mt-3">
+            <div className="relative mt-3">
+            <button type="button" onClick={() => glisser(-1)}
+              aria-label="Rayons précédents"
+              className="absolute left-0 top-1/2 z-10 hidden -translate-y-1/2
+                rounded-full border border-gray-200 bg-white/95 p-1
+                text-gray-500 shadow-sm hover:text-indigo-600 sm:block
+                dark:border-gray-700 dark:bg-gray-900/95">
+              <ChevronLeft size={16} />
+            </button>
+            <button type="button" onClick={() => glisser(1)}
+              aria-label="Rayons suivants"
+              className="absolute right-0 top-1/2 z-10 hidden -translate-y-1/2
+                rounded-full border border-gray-200 bg-white/95 p-1
+                text-gray-500 shadow-sm hover:text-indigo-600 sm:block
+                dark:border-gray-700 dark:bg-gray-900/95">
+              <ChevronRight size={16} />
+            </button>
+            <div ref={bandeRayons}
+              onWheel={e => {
+                /* La molette descend la page par défaut : sur une bande
+                   horizontale, elle ne ferait rien de visible. */
+                if (e.deltaY === 0) return;
+                e.currentTarget.scrollLeft += e.deltaY;
+              }}
+              className="flex gap-1.5 overflow-x-auto pb-1 sm:px-7
+              [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
               {[{ cle: '', label: 'Tout' },
                 ...categories.map(c => ({ cle: c, label: c }))].map(c => {
                 const n = c.cle
@@ -805,7 +1042,7 @@ export default function ComptoirPage() {
                   : articles.length;
                 return (
                   <button key={c.cle || 'tout'} onClick={() => setCategorie(c.cle)}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors ${categorie === c.cle
+                    className={`shrink-0 whitespace-nowrap px-3 py-1.5 rounded-xl text-xs font-bold transition-colors ${categorie === c.cle
                       ? 'bg-indigo-600 text-white'
                       : 'border border-gray-200 dark:border-gray-700 text-gray-500 hover:border-indigo-400'}`}>
                     {c.label}
@@ -814,6 +1051,7 @@ export default function ComptoirPage() {
                   </button>
                 );
               })}
+            </div>
             </div>
           )}
 
@@ -864,7 +1102,17 @@ export default function ComptoirPage() {
 
           <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800 shadow-sm p-4">
             <div className="flex items-center justify-between mb-3">
-              <p className="text-xs font-bold text-gray-500 dark:text-gray-400">
+              <p className="flex items-center gap-1.5 text-xs font-bold text-gray-500 dark:text-gray-400">
+                {/* Le panier en grand : la colonne est étroite et bornée
+                    en hauteur, et c'est quand le total surprend qu'on
+                    veut relire toute la facture d'un coup. */}
+                {panier.length > 0 && (
+                  <button onClick={() => setPanierOuvert(true)}
+                    title="Voir tout le panier"
+                    className="text-gray-300 transition-colors hover:text-indigo-500">
+                    <Maximize2 size={13} />
+                  </button>
+                )}
                 Panier{panier.length > 0 ? ` (${panier.length})` : ''}
               </p>
               {panier.length > 0 && (
@@ -880,148 +1128,7 @@ export default function ComptoirPage() {
               </p>
             ) : (
               <div className="space-y-2 max-h-[40vh] overflow-y-auto">
-                {panier.map(l => {
-                  const max = plafond(l.stockUnites, l.contenance);
-                  const auPlafond = l.quantiteDemandee >= max;
-                  /* Ceux de cette déclinaison : les communs, plus les
-                     siens. Un carton de 10W n'a pas le même contenu
-                     qu'un carton de 30W. */
-                  const embs = emballagesDe(
-                    produits.find(x => x.id === l.produitId)?.emballages,
-                    l.varianteCle);
-                  const uniteNom = (l.unite?.trim() || 'unité').toLowerCase();
-                  /* Le coût de ce qu'on vend : un carton a coûté vingt-huit
-                     fois ce qu'a coûté la pièce. */
-                  const coutLigne = l.valeurUnitaire;
-                  const aPerte = (l.prixVente ?? 0) < coutLigne;
-                  return (
-                    <div key={l.cle} className="p-2.5 rounded-xl border border-gray-100 dark:border-gray-800">
-                      <div className="flex items-start justify-between gap-2">
-                        <p className="text-xs font-bold leading-tight flex items-start gap-1">
-                          {/* Ce qu'a coûté la marchandise ne se montre pas en
-                              permanence : on le consulte au moment de fixer un
-                              prix, pas à chaque ligne du panier. */}
-                          <button onClick={() => setDetail(detail === l.cle ? null : l.cle)}
-                            data-detail-cout title="Prix d'achat"
-                            className={`shrink-0 mt-px transition-colors ${detail === l.cle
-                              ? 'text-indigo-600 dark:text-indigo-400'
-                              : 'text-gray-300 hover:text-indigo-500'}`}>
-                            <Info size={12} />
-                          </button>
-                          <span>
-                            {l.designation}{l.varianteLibelle ? ` · ${l.varianteLibelle}` : ''}
-                          </span>
-                        </p>
-                        <button onClick={() => changerQuantite(l.cle, 0)}
-                          className="text-gray-300 hover:text-red-500 shrink-0">
-                          <Trash2 size={13} />
-                        </button>
-                      </div>
-
-                      {detail === l.cle && (() => {
-                        /* Le prix affiché est le plus élevé des deux : on
-                           dit lesquels, pour qu'on sache d'où il vient et
-                           qu'on puisse le discuter. Les deux suivent
-                           l'emballage, comme le coût. */
-                        const par = l.emballage
-                          ? ` / ${l.emballage.toLowerCase()}` : ` / ${uniteNom}`;
-                        /* Les lignes posées avant que les deux prix
-                           voyagent n'ont que celui qu'elles portent : on
-                           s'y replie plutôt que de cacher la ligne. */
-                        const reco = (l.prixRecommande ?? l.prixUnitaire ?? 0) * l.contenance;
-                        const marche = (l.prixMarche ?? 0) * l.contenance;
-                        const retenu = Math.max(reco, marche);
-                        return (
-                          <div data-detail-cout
-                            className="mt-1.5 flex flex-col gap-1 rounded-lg bg-gray-50 px-2 py-1.5 dark:bg-gray-800">
-                            <div className="flex items-center justify-between">
-                              <span className="text-xs text-gray-400">Prix d&apos;achat{par}</span>
-                              <span className="text-xs font-bold text-gray-900 dark:text-gray-100">
-                                {formatMontant(coutLigne)}
-                              </span>
-                            </div>
-                            <div className="flex items-center justify-between">
-                              <span className="text-xs text-gray-400">Prix recommandé</span>
-                              <span className={`text-xs font-bold ${reco > 0 && retenu === reco
-                                ? 'text-indigo-600 dark:text-indigo-400'
-                                : 'text-gray-500'}`}>
-                                {reco > 0 ? formatMontant(reco) : '—'}
-                              </span>
-                            </div>
-                            <div className="flex items-center justify-between">
-                              <span className="text-xs text-gray-400">Prix du marché</span>
-                              <span className={`text-xs font-bold ${marche > 0 && retenu === marche
-                                ? 'text-indigo-600 dark:text-indigo-400'
-                                : 'text-gray-500'}`}>
-                                {marche > 0 ? formatMontant(marche) : '—'}
-                              </span>
-                            </div>
-                          </div>
-                        );
-                      })()}
-
-                      {/* L'emballage qu'on vend. Le plus petit par défaut ;
-                          en changer refait le prix et ramène la quantité. */}
-                      {embs.length > 0 && (
-                        <div className="flex flex-wrap gap-1 mt-2">
-                          <button onClick={() => changerEmballage(l.cle, null)}
-                            className={`px-2 py-1 rounded-lg text-xs font-bold transition-colors ${!l.emballage
-                              ? 'bg-indigo-600 text-white'
-                              : 'border border-gray-200 dark:border-gray-700 text-gray-500 hover:border-indigo-400'}`}>
-                            {uniteNom}
-                          </button>
-                          {embs.map(e => (
-                            <button key={e.nom} onClick={() => changerEmballage(l.cle, e.nom)}
-                              disabled={l.stockUnites < e.quantite}
-                              className={`px-2 py-1 rounded-lg text-xs font-bold transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${l.emballage === e.nom
-                                ? 'bg-indigo-600 text-white'
-                                : 'border border-gray-200 dark:border-gray-700 text-gray-500 hover:border-indigo-400'}`}>
-                              {e.nom.toLowerCase()}×{e.quantite}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-
-                      <div className="flex items-center justify-between gap-2 mt-2">
-                        <div className="flex items-center gap-1">
-                          <button onClick={() => changerQuantite(l.cle, l.quantiteDemandee - 1)}
-                            className="p-1 rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800">
-                            <Minus size={11} />
-                          </button>
-                          {/* Une ligne se retire par la corbeille, pas en
-                              vidant sa quantité : on efface pour retaper. */}
-                          <ChampNombre valeur={l.quantiteDemandee} min={1}
-                            onChange={n => changerQuantite(l.cle, n)}
-                            className="w-24 px-2 py-1 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-xs text-center focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-                          <button onClick={() => changerQuantite(l.cle, l.quantiteDemandee + 1)}
-                            disabled={auPlafond}
-                            className="p-1 rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-30 disabled:cursor-not-allowed">
-                            <Plus size={11} />
-                          </button>
-                        </div>
-                        {/* Vendre sous le coût reste permis — on écoule un
-                            fond de stock, on arrange un client — mais jamais
-                            sans le savoir. */}
-                        <ChampNombre valeur={l.prixVente ?? 0}
-                          onChange={n => changerPrix(l.cle, n)}
-                          className={`w-24 px-2 py-1 rounded-lg border text-xs text-center focus:outline-none focus:ring-2 ${aPerte
-                            ? 'border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 focus:ring-red-500'
-                            : 'border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 focus:ring-indigo-500'}`} />
-                      </div>
-
-                      <div className="flex items-center justify-between mt-1.5">
-                        <span className={`text-xs ${auPlafond ? 'text-orange-500' : 'text-gray-400'}`}>
-                          {auPlafond
-                            ? 'tout le stock'
-                            : `${max} ${l.emballage ? l.emballage.toLowerCase() : uniteNom} dispo.`}
-                        </span>
-                        <span className="text-xs font-bold">
-                          {formatMontant(l.quantiteDemandee * (l.prixVente ?? 0))}
-                        </span>
-                      </div>
-                    </div>
-                  );
-                })}
+                {panier.map(l => ligneDuPanier(l))}
               </div>
             )}
           </div>
@@ -1104,6 +1211,23 @@ export default function ComptoirPage() {
               )}
             </div>
 
+            {/* Valider juste sous le total : c'est le montant qu'on
+                regarde en encaissant, et le geste suit. Plus bas, un
+                panier de dix articles poussait le bouton hors de
+                l'écran ; plus haut, dans l'en-tête, il voisinait la
+                flèche qui sort — et au comptoir, pressé, on touche à
+                côté. */}
+            {aCredit && !clientId && panier.length > 0 ? (
+              <p className="mb-2 text-xs font-bold text-red-500">
+                Client obligatoire
+              </p>
+            ) : null}
+            <button onClick={valider} disabled={!pret}
+              className="mb-3 flex w-full items-center justify-center gap-1.5 rounded-xl bg-indigo-600 px-7 py-3 text-sm font-bold text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-40">
+              {enCours ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}
+              Valider
+            </button>
+
             {montantsOuverts && panier.length > 0 && (
               <div className="-mt-1 mb-3">
                 <PanneauMontants
@@ -1168,10 +1292,103 @@ export default function ComptoirPage() {
               </div>
             )}
 
-            {erreur ? <p className="text-xs text-red-500">{erreur}</p> : null}
+            {erreur ? <p className="mt-2 text-xs text-red-500">{erreur}</p> : null}
           </div>
         </div>
       </div>
+      {/* Le panier en grand.
+          Deux colonnes là où la carte n'en tenait qu'une, et toute la
+          hauteur de l'écran : on relit la facture entière sans faire
+          défiler, et on corrige sur place. Ce sont les mêmes lignes,
+          les mêmes gestes — rien n'est recopié. */}
+      {panierOuvert && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center
+          bg-black/40 p-0 backdrop-blur-sm sm:items-center sm:p-6"
+          onClick={() => setPanierOuvert(false)}>
+          <div onClick={e => e.stopPropagation()}
+            className="flex max-h-[92vh] w-full max-w-4xl flex-col
+              rounded-t-2xl bg-white shadow-xl dark:bg-gray-900
+              sm:rounded-2xl">
+
+            <div className="flex items-center justify-between border-b
+              border-gray-100 px-5 py-4 dark:border-gray-800">
+              <div className="flex items-center gap-2">
+                <ShoppingCart size={16} className="text-indigo-500" />
+                <h2 className="text-sm font-bold">
+                  Panier ({panier.length})
+                </h2>
+              </div>
+              <div className="flex items-center gap-3">
+                {panier.length > 0 && (
+                  <button onClick={vider}
+                    className="text-xs font-bold text-gray-400 hover:text-red-500">
+                    Vider
+                  </button>
+                )}
+                <button onClick={() => setPanierOuvert(false)}
+                  className="rounded-lg p-1 text-gray-400 transition-colors
+                    hover:bg-gray-100 dark:hover:bg-gray-800">
+                  <X size={16} />
+                </button>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-5 py-4">
+              {panier.length === 0 ? (
+                <p className="py-12 text-center text-xs text-gray-400">
+                  Choisissez un produit dans le catalogue.
+                </p>
+              ) : (
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {panier.map(l => ligneDuPanier(l))}
+                </div>
+              )}
+            </div>
+
+            {/* Le total ferme la liste, comme sur un reçu. */}
+            <div className="border-t border-gray-100 px-5 py-4
+              dark:border-gray-800">
+              <div className="flex items-baseline justify-between">
+                <span className="text-xs font-bold text-gray-500
+                  dark:text-gray-400">Total</span>
+                <span className="text-xl font-bold">{formatMontant(total)}</span>
+              </div>
+              {(reductionRecu > 0 || fraisRecu > 0) && (
+                <div className="mt-1.5 space-y-0.5 text-xs">
+                  <div className="flex items-baseline justify-between text-gray-400">
+                    <span>Sous-total</span>
+                    <span className="tabular-nums">{formatMontant(sousTotal)}</span>
+                  </div>
+                  {reductionRecu > 0 && (
+                    <div className="flex items-baseline justify-between">
+                      <span className="text-gray-400">Réduction</span>
+                      <span className="font-bold tabular-nums text-red-500">
+                        −{formatMontant(reductionRecu)}
+                      </span>
+                    </div>
+                  )}
+                  {fraisRecu > 0 && (
+                    <div className="flex items-baseline justify-between">
+                      <span className="text-gray-400">Frais annexes</span>
+                      <span className="font-bold tabular-nums">
+                        {formatMontant(fraisRecu)}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+              <button onClick={() => setPanierOuvert(false)}
+                className="mt-3 w-full rounded-xl border border-gray-200
+                  py-2.5 text-sm font-bold text-gray-600 transition-colors
+                  hover:border-indigo-400 hover:text-indigo-600
+                  dark:border-gray-700 dark:text-gray-300">
+                Fermer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {marge && (
         <ModalMargeRecu onFermer={() => setMarge(false)}
           lignes={panier.map((l, i) => ({

@@ -160,12 +160,29 @@ service cloud.firestore {
     }
 
     /* Le site que porte le document, avant ou après écriture. */
+    /* Le site d'un document.
+     *
+     * Presque tous portent `siteId`. Un transfert fait exception : il
+     * relie deux sites, et n'en a donc aucun « à lui » — il porte une
+     * source et une destination. C'est la source qui l'écrit et qui en
+     * répond, comme l'expéditeur répond du colis. */
     function siteDuDoc() {
-      return resource != null ? resource.data.get('siteId', '') : '';
+      return resource == null ? ''
+        : resource.data.get('siteId',
+            resource.data.get('siteSourceId', ''));
     }
 
     function siteEnvoye() {
-      return request.resource.data.get('siteId', '');
+      return request.resource.data.get('siteId',
+        request.resource.data.get('siteSourceId', ''));
+    }
+
+    /* La destination d'un transfert, quand il en a une. Elle doit
+       pouvoir le lire et le confirmer : la marchandise entre chez elle,
+       et personne d'autre ne peut constater qu'elle est arrivée. */
+    function siteDestDuDoc() {
+      return resource == null ? ''
+        : resource.data.get('siteDestId', '');
     }
 
     // ---------------------------------------------------------------
@@ -525,7 +542,10 @@ service cloud.firestore {
              plus. Elle vise un site, et c'est lui qui la comptera. */
           'importations'
         ]
-        && travailleSur(resource.data.get('siteId', ''));
+        && (travailleSur(siteDuDoc())
+          /* Un transfert se lit des deux bouts : celui qui envoie et
+             celui qui reçoit. */
+          || travailleSur(siteDestDuDoc()));
 
       /* La liste ne sait pas ce qu'elle rapportera : on la borne à la
          maison, le site se vérifie à chaque document lu et à chaque
@@ -566,7 +586,10 @@ service cloud.firestore {
              plus. Elle vise un site, et c'est lui qui la comptera. */
           'importations'
         ]
-        && travailleSur(siteDuDoc());
+        /* Un transfert se confirme à l'arrivée : la destination écrit
+           ce qu'elle a réellement reçu, et elle seule peut le constater. */
+        && (travailleSur(siteDuDoc())
+          || travailleSur(siteDestDuDoc()));
     }
 
     /**

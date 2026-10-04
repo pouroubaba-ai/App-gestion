@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
+import { useBrouillon, cleBrouillon, oublierBrouillon } from '@/lib/brouillon';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/lib/auth-context';
@@ -42,7 +43,12 @@ export default function NouvelleImportationPage() {
   const [siteId, setSiteId] = useState('');
   const [fournisseurId, setFournisseurId] = useState('');
   const [origine, setOrigine] = useState('');
-  const [lignes, setLignes] = useState<LigneFlux[]>([]);
+  /* La marchandise préparée survit au rechargement : les lignes
+     cherchées une à une ne doivent pas disparaître parce que la page
+     s'est rafraîchie. Le partenaire et la date ne se gardent pas — on
+     ne réengage pas quelqu'un qu'on n'a pas revu. */
+  const cleDraft = cleBrouillon('importation', 'ensemble');
+  const [lignes, setLignes] = useBrouillon<LigneFlux[]>(cleDraft, []);
   const [note, setNote] = useState('');
   /* Les produits nés pendant cette saisie : une pastille les signale sur
      leur ligne, le temps qu'on relise le bon. */
@@ -234,6 +240,10 @@ export default function NouvelleImportationPage() {
         auteurNom: auteur.utilisateurNom,
         auteurFonction: auteur.utilisateurFonction,
       });
+      /* Le brouillon a fait son office : la marchandise est
+         inscrite, le garder ferait repartir d'une préparation
+         déjà envoyée. */
+      oublierBrouillon(cleDraft);
       router.push(`/ensemble/importations/${id}`);
     } catch (e: any) {
       setErreur(e?.message ?? 'Enregistrement impossible.');

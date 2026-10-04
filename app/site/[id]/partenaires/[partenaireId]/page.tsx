@@ -337,7 +337,11 @@ export default function FichePartenairePage() {
   async function supprimer() {
     setDeleting(true);
     await deleteDoc(doc(db, 'partenaires', partenaireId));
-    router.push(`/site/${siteId}`);
+    /* Là d'où l'on venait, comme la flèche de retour. Renvoyer à la
+       racine du site ouvrait le tableau de bord : on supprimait un
+       partenaire et on se retrouvait ailleurs, sans la liste qu'on
+       était en train de parcourir. */
+    router.push(retourHref);
   }
 
   function toggleCat(role: 'f' | 'c', id: string) {

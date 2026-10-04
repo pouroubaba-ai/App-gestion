@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
-import { Search, X, ChevronDown, Check } from 'lucide-react';
+import { Search, X, ChevronDown, Check, Plus } from 'lucide-react';
 
 /**
  * Champ de recherche avec effacement.
@@ -135,7 +135,8 @@ export interface OptionSelect {
  */
 export function SelectCherchable({
   valeur, onChange, options, placeholder = 'Choisir…', vide = 'Aucun résultat', disabled,
-  compact = false,
+  compact = false, surCreer, creerLibelle = 'Ajouter',
+  effacable = false,
 }: {
   valeur: string;
   onChange: (v: string) => void;
@@ -145,7 +146,20 @@ export function SelectCherchable({
   disabled?: boolean;
   /** dans une cellule de tableau : même hauteur que les champs voisins */
   compact?: boolean;
+  /**
+   * Créer ce qu'on cherchait et qui n'existe pas.
+   *
+   * Sans cela il faut quitter l'écran, créer la fiche ailleurs, revenir,
+   * et retrouver où l'on en était — au comptoir, avec un client qui
+   * attend, c'est la vente qu'on perd. La fonction reçoit le texte tapé
+   * et rend l'identifiant créé, que le champ sélectionne aussitôt.
+   */
+  surCreer?: (nom: string) => Promise<string | null>;
+  creerLibelle?: string;
+  /** Revenir à rien, quand le choix lui-même est facultatif. */
+  effacable?: boolean;
 }) {
+  const [creation, setCreation] = useState(false);
   const [ouvert, setOuvert] = useState(false);
   const [filtre, setFiltre] = useState('');
   const [survol, setSurvol] = useState(0);
@@ -238,7 +252,23 @@ export function SelectCherchable({
         <span className={`truncate ${choisie ? 'text-gray-900 dark:text-gray-100' : 'text-gray-400'}`}>
           {choisie ? (choisie.labelCourt ?? choisie.label) : placeholder}
         </span>
-        <ChevronDown size={compact ? 11 : 14} className={`shrink-0 text-gray-400 transition-transform ${ouvert ? 'rotate-180' : ''}`} />
+        <span className="flex shrink-0 items-center gap-1">
+          {/* Effacer sans ouvrir la liste : le choix était facultatif,
+              revenir en arrière doit l'être aussi. */}
+          {effacable && choisie && !disabled && (
+            <span role="button" tabIndex={0} title="Effacer"
+              onClick={e => { e.stopPropagation(); onChange(''); }}
+              onKeyDown={e => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault(); e.stopPropagation(); onChange('');
+                }
+              }}
+              className="rounded p-0.5 text-gray-400 transition-colors hover:text-red-500">
+              <X size={compact ? 10 : 13} />
+            </span>
+          )}
+          <ChevronDown size={compact ? 11 : 14} className={`text-gray-400 transition-transform ${ouvert ? 'rotate-180' : ''}`} />
+        </span>
       </button>
 
       {ouvert && (
@@ -275,6 +305,36 @@ export function SelectCherchable({
               }}
               className="w-full px-2 py-1.5 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
           </div>
+
+          {/* Ce qu'on cherchait n'existe pas : le créer d'ici. Le nom
+              proposé est celui qu'on vient de taper — c'est déjà le bon,
+              et le retaper ailleurs n'ajouterait qu'une faute possible. */}
+          {surCreer && filtre.trim() && (
+            <button type="button" disabled={creation}
+              onClick={async () => {
+                setCreation(true);
+                try {
+                  const id = await surCreer(filtre.trim());
+                  if (id) {
+                    onChange(id);
+                    setOuvert(false);
+                    setFiltre('');
+                    setSurvol(0);
+                  }
+                } finally {
+                  setCreation(false);
+                }
+              }}
+              className="flex shrink-0 items-center gap-1.5 border-b border-gray-100
+                px-3 py-2 text-left text-xs font-bold text-indigo-600
+                transition-colors hover:bg-indigo-50 disabled:opacity-50
+                dark:border-gray-800 dark:text-indigo-400 dark:hover:bg-indigo-900/20">
+              <Plus size={12} className="shrink-0" />
+              <span className="truncate">
+                {creation ? 'Création…' : `${creerLibelle} « ${filtre.trim()} »`}
+              </span>
+            </button>
+          )}
 
           {visibles.length === 0 ? (
             <p className="px-3 py-4 text-xs text-gray-400 text-center">{vide}</p>

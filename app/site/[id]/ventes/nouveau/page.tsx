@@ -2,6 +2,7 @@
 import { produitsDuSite } from '@/lib/produits-site';
 import { estEnsemble, marqueOrigine, racineRetour } from '@/lib/retour';
 import { useEffect, useState } from 'react';
+import { useBrouillon, cleBrouillon, oublierBrouillon } from '@/lib/brouillon';
 import { collection, query, where, getDocs, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { ligneDepuisVente, synchroniserLignes } from '@/lib/lignes-vente';
@@ -74,7 +75,12 @@ export default function NouvelleVentePage() {
   }, [user, siteId, activite?.adminUid]);
 
   const [clientId, setClientId] = useState('');
-  const [lignes, setLignes] = useState<LigneFlux[]>([]);
+  /* La marchandise préparée survit au rechargement : les lignes
+     cherchées une à une ne doivent pas disparaître parce que la page
+     s'est rafraîchie. Le partenaire et la date ne se gardent pas — on
+     ne réengage pas quelqu'un qu'on n'a pas revu. */
+  const cleDraft = cleBrouillon('vente', siteId);
+  const [lignes, setLignes] = useBrouillon<LigneFlux[]>(cleDraft, []);
   /* Ce qu'on accorde et ce qu'on facture en plus. Rien par défaut : la
      vente se fait au prix du catalogue tant qu'on n'a rien décidé. */
   const [montants, setMontants] = useState<MontantVente[]>([]);
@@ -205,6 +211,10 @@ export default function NouvelleVentePage() {
 
       /* L'origine suit le dossier : il se refermera la ou l'on a
          commence, ensemble ou site. */
+      /* Le brouillon a fait son office : la marchandise est
+         inscrite, le garder ferait repartir d'une préparation
+         déjà envoyée. */
+      oublierBrouillon(cleDraft);
       router.push(`/site/${siteId}/ventes/${ref.id}${marqueOrigine(vientEnsemble)}`);
     } catch (e: any) {
       setErreur(e?.message ?? 'Enregistrement impossible.');

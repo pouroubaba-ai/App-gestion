@@ -3,6 +3,7 @@ import { produitsDuSite, sitesDeLActivite } from '@/lib/produits-site';
 import { creerProduitRapide, creerGammeRapide } from '@/lib/produit-rapide';
 import ModalGammeProduit from '../../components/ModalGammeProduit';
 import { useEffect, useState } from 'react';
+import { useBrouillon, cleBrouillon, oublierBrouillon } from '@/lib/brouillon';
 import { collection, query, where, getDocs, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/lib/auth-context';
@@ -56,7 +57,12 @@ export default function NouvelAchatPage() {
   }, [user, siteId, activite?.adminUid]);
 
   const [fournisseurId, setFournisseurId] = useState('');
-  const [lignes, setLignes] = useState<LigneFlux[]>([]);
+  /* La marchandise préparée survit au rechargement : les lignes
+     cherchées une à une ne doivent pas disparaître parce que la page
+     s'est rafraîchie. Le partenaire et la date ne se gardent pas — on
+     ne réengage pas quelqu'un qu'on n'a pas revu. */
+  const cleDraft = cleBrouillon('achat', siteId);
+  const [lignes, setLignes] = useBrouillon<LigneFlux[]>(cleDraft, []);
   /* immédiat = payé et reçu dans le même geste ; sinon la marchandise suivra */
   const [immediat, setImmediat] = useState(true);
   /* « immédiat » veut dire reçu à l'instant : la date se verrouille sur le jour.
@@ -398,6 +404,10 @@ export default function NouvelAchatPage() {
 
       /* Le dossier nait avec l'origine qu'on lui a transmise : il se
          refermera sur l'ecran d'ou l'on est parti. */
+      /* Le brouillon a fait son office : la marchandise est
+         inscrite, le garder ferait repartir d'une préparation
+         déjà envoyée. */
+      oublierBrouillon(cleDraft);
       router.push(`/site/${siteId}/achats/${ref.id}${marqueOrigine(vientEnsemble)}`);
     } catch (e: any) {
       setErreur(e?.message ?? 'Enregistrement impossible.');

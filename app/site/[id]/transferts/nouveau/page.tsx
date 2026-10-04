@@ -1,6 +1,7 @@
 'use client';
 import { produitsDuSite } from '@/lib/produits-site';
 import { useEffect, useState } from 'react';
+import { useBrouillon, cleBrouillon, oublierBrouillon } from '@/lib/brouillon';
 import { collection, query, where, getDocs, getDoc, doc, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/lib/auth-context';
@@ -46,7 +47,12 @@ export default function NouveauTransfertPage() {
   }, [user, siteId, activite?.adminUid]);
 
   const [destId, setDestId] = useState('');
-  const [lignes, setLignes] = useState<LigneFlux[]>([]);
+  /* La marchandise préparée survit au rechargement : vingt lignes
+     cherchées une à une ne doivent pas disparaître parce que la page
+     s'est rafraîchie. La destination et la date, elles, ne se gardent
+     pas — on ne redate pas d'hier ce qu'on fait aujourd'hui. */
+  const cleDraft = cleBrouillon('transfert', siteId);
+  const [lignes, setLignes] = useBrouillon<LigneFlux[]>(cleDraft, []);
   const [date, setDate] = useState(aujourdhui());
   const [note, setNote] = useState('');
   const [enCours, setEnCours] = useState(false);
@@ -151,6 +157,9 @@ export default function NouveauTransfertPage() {
         userId: user!.uid,
         createdAt: serverTimestamp(),
       });
+      /* Le brouillon a fait son office : la marchandise est inscrite,
+         le garder ferait repartir d'une préparation déjà envoyée. */
+      oublierBrouillon(cleDraft);
       /* Le dossier hérite de l'origine : il se refermera là où l'on a
          commencé, dans le site ou dans l'ensemble. */
       router.push(
