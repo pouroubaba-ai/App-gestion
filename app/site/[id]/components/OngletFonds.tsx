@@ -25,6 +25,8 @@ import {
 } from '@/lib/roles';
 import { aLOnglet } from '@/lib/onglets-site';
 import { BarresHorizontales } from '@/components/Graphiques';
+import { useTirerRecharger } from '@/lib/tirer-recharger';
+import IndicateurTirer from '@/components/IndicateurTirer';
 import {
   useSites, FiltreSite, CelluleSite, ToggleVue, CartesParSite,
   type PropsPortee,
@@ -131,6 +133,36 @@ export default function OngletFonds({ siteId, userId, sites, titre }: Props) {
   /* Le rôle sur ce site, une fois su. `undefined` veut dire « pas encore
      demandé » ; `null` est une réponse — celle du propriétaire. */
   const roleConnu = useRef<RoleSite | null | undefined>(undefined);
+
+  /* Tirer l'écran vers le bas le relit.
+   *
+   * C'est le geste de celui qui doute de son solde, et il lui
+   * appartient : installée sur l'écran d'accueil, l'app n'a plus la
+   * barre d'adresse du navigateur, donc plus rien pour recharger. */
+  const tirer = useTirerRecharger(() => setVersion(v => v + 1));
+
+  /* La caisse se relit aussi quand on y revient.
+   *
+   * Le registre se recharge après chaque geste fait ici, mais l'argent
+   * bouge ailleurs : une vente au comptoir, un versement sur un autre
+   * poste. On revenait alors sur des chiffres d'il y a une heure, sans
+   * rien pour le dire — et sur un téléphone il n'y a pas de barre
+   * d'adresse : il fallait fermer l'app et la rouvrir.
+   *
+   * Demander un bouton « Actualiser » reviendrait à faire porter ce
+   * défaut par celui qui s'en sert. L'écran se relit de lui-même quand
+   * il redevient visible, et se tait le reste du temps. */
+  useEffect(() => {
+    const revenu = () => {
+      if (document.visibilityState === 'visible') setVersion(v => v + 1);
+    };
+    document.addEventListener('visibilitychange', revenu);
+    window.addEventListener('focus', revenu);
+    return () => {
+      document.removeEventListener('visibilitychange', revenu);
+      window.removeEventListener('focus', revenu);
+    };
+  }, []);
 
   useEffect(() => {
     const charger = async () => {
@@ -277,7 +309,11 @@ export default function OngletFonds({ siteId, userId, sites, titre }: Props) {
   return (
     /* Même habillage que le tableau de bord : la carte active en dégradé
        indigo, les autres en blanc. Les trois servent d'onglets. */
-    <div className={`${hankenGrotesk.className} flex flex-col gap-4`}>
+    <div
+      className={`${hankenGrotesk.className} flex flex-col gap-4`}
+      {...tirer.gestes}
+    >
+      <IndicateurTirer etat={tirer} />
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className={titre

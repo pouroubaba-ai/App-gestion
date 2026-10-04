@@ -59,21 +59,45 @@ export async function creerOuverture(params: {
   if (!(params.montant > 0)) {
     throw new Error('Un solde d’ouverture porte un montant.');
   }
-  const deja = await ouvertureDe(params.siteId, params.role, params.partenaireId);
-  if (deja) {
-    throw new Error('Ce partenaire a déjà un solde d’ouverture de ce côté.');
+  /* Plusieurs comptes anciens, parce que c'est ainsi qu'ils arrivent.
+   *
+   * L'app n'en acceptait qu'un, et refusait d'en poser un dès qu'une
+   * opération existait. C'était supposer qu'un commerçant connaît tous
+   * ses comptes anciens le jour où il s'informatise, et qu'ils tiennent
+   * en une ligne. Ni l'un ni l'autre n'est vrai : les comptes d'avant se
+   * retrouvent par morceaux — un cahier, une ardoise, un associé qui se
+   * souvient — et un même partenaire peut en porter deux.
+   *
+   * Ce que la règle protégeait reste à protéger : qu'on ne rattrape pas
+   * une saisie oubliée en l'appelant « solde d'ouverture ». Mais
+   * l'interdire ne protégeait rien — cela poussait à saisir une fausse
+   * vente, et là c'est le stock qui aurait menti. Le garde-fou n'est donc
+   * plus l'interdiction, c'est la trace : la date, qui doit précéder la
+   * première opération, et la note, exigée dès qu'un second compte se
+   * pose.
+   */
+  const dejaOuvertes = await ouverturesDe(
+    params.siteId, params.role, params.partenaireId);
+
+  /* Dire d'où vient ce compte-là. Le premier se comprend seul : c'est le
+     report d'avant l'app. Le second a besoin qu'on le distingue — sinon
+     deux lignes du même nom, dans six mois, ne se lisent plus. */
+  if (dejaOuvertes.length > 0 && !params.note?.trim()) {
+    throw new Error(
+      'Ce partenaire a déjà un solde d’ouverture : précisez en note d’où '
+      + 'vient ce second compte.');
   }
 
-  /* Un solde d'ouverture se pose avant tout, ou jamais.
-   *
-   * Posé après des achats ou des ventes, il ne reporterait plus rien :
-   * il viendrait gonfler une dette déjà constituée, ou rattraper une
-   * saisie oubliée sous un nom qui ment. Borné au premier jour, il ne
-   * peut être que ce qu'il prétend — ce qui était dû avant l'app. */
-  if (await aDesDossiers(params.siteId, params.role, params.partenaireId)) {
+  /* Un solde d'ouverture reporte ce qui était dû avant l'app : il se date
+     donc avant la première opération. Posé après, il ne reporterait plus
+     rien — il gonflerait une dette déjà constituée. */
+  const premier = await premierDossier(
+    params.siteId, params.role, params.partenaireId);
+  if (premier && params.date > premier) {
     throw new Error(
-      'Ce partenaire a déjà des dossiers : un solde d’ouverture se pose '
-      + 'avant la première opération, pas après.');
+      `Un solde d’ouverture reporte ce qui était dû avant l’app : datez-le `
+      + `au plus tard du ${new Date(premier).toLocaleDateString('fr-FR')}, `
+      + `jour de la première opération avec ce partenaire.`);
   }
 
   const estFourn = params.role === 'fournisseur';
@@ -107,7 +131,67 @@ export async function creerOuverture(params: {
   return ref.id;
 }
 
-/** Le dossier d'ouverture d'un partenaire, de ce côté, s'il existe. */
+/**
+ * Tous les soldes d'ouverture d'un partenaire, de ce côté.
+ *
+ * Rendus du plus ancien au plus récent : c'est l'ordre dans lequel les
+ * comptes se sont ouverts, et celui dans lequel on les lit.
+ */
+export async function ouverturesDe(
+  siteId: string, role: RoleOuverture, partenaireId: string,
+): Promise<{ id: string; montant: number; date: string; verse: number; note: string | null }[]> {
+  const champ = role === 'fournisseur' ? 'fournisseurId' : 'clientId';
+  const snap = await getDocs(query(
+    collection(db, collectionDe(role)),
+    where('siteId', '==', siteId),
+    where(champ, '==', partenaireId),
+    where('ouverture', '==', true)));
+  return snap.docs
+    .map(d => {
+      const x = d.data() as any;
+      return {
+        id: d.id,
+        montant: x.montantOuverture ?? 0,
+        date: x.dateConfirmation ?? x.dateLivraison ?? x.dateCommande ?? '',
+        verse: x.avanceVersee ?? 0,
+        note: x.note ?? null,
+      };
+    })
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+/**
+ * La date de la première opération avec ce partenaire, hors ouvertures.
+ *
+ * C'est elle qui borne un solde d'ouverture : il reporte ce qui précède,
+ * donc il se date avant. Chaîne vide quand rien n'existe encore — alors
+ * rien ne le borne.
+ */
+export async function premierDossier(
+  siteId: string, role: RoleOuverture, partenaireId: string,
+): Promise<string> {
+  const champ = role === 'fournisseur' ? 'fournisseurId' : 'clientId';
+  const snap = await getDocs(query(
+    collection(db, collectionDe(role)),
+    where('siteId', '==', siteId),
+    where(champ, '==', partenaireId)));
+  const dates = snap.docs
+    .filter(d => !(d.data() as any).ouverture)
+    .map(d => {
+      const x = d.data() as any;
+      return (x.dateCommande ?? x.dateConfirmation ?? x.dateLivraison ?? '') as string;
+    })
+    .filter(Boolean)
+    .sort();
+  return dates[0] ?? '';
+}
+
+/**
+ * Le dossier d'ouverture d'un partenaire, de ce côté, s'il existe.
+ *
+ * Rend le plus ancien quand il y en a plusieurs. Les écrans qui doivent
+ * tous les montrer passent par `ouverturesDe`.
+ */
 export async function ouvertureDe(
   siteId: string, role: RoleOuverture, partenaireId: string,
 ): Promise<{ id: string; montant: number; date: string; verse: number } | null> {
@@ -117,9 +201,15 @@ export async function ouvertureDe(
     where('siteId', '==', siteId),
     where(champ, '==', partenaireId),
     where('ouverture', '==', true)));
-  const d = snap.docs[0];
+  /* Le plus ancien : plusieurs comptes peuvent coexister, et c'est celui
+     qui a ouvert la relation qui répond pour elle. */
+  const docs = snap.docs
+    .map(d => ({ id: d.id, x: d.data() as any }))
+    .sort((a, b) => String(a.x.dateConfirmation ?? a.x.dateLivraison ?? a.x.dateCommande ?? '')
+      .localeCompare(String(b.x.dateConfirmation ?? b.x.dateLivraison ?? b.x.dateCommande ?? '')));
+  const d = docs[0];
   if (!d) return null;
-  const x = d.data() as any;
+  const x = d.x;
   return {
     id: d.id,
     montant: x.montantOuverture ?? 0,

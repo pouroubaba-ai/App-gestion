@@ -15,7 +15,7 @@ import {
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { formatMontant, formatDate } from '@/lib/format';
 import { ChampNombre } from '@/components/Champs';
-import { creerOuverture, ouvertureDe, aDesDossiers } from '@/lib/ouverture';
+import { creerOuverture, ouverturesDe, premierDossier } from '@/lib/ouverture';
 import { soldeTiers, type SoldeTiers } from '@/lib/soldes';
 import { employesDuSite, type Apporteur, type EmployeChoix } from '@/lib/apporteur';
 import {
@@ -101,12 +101,16 @@ export default function FichePartenairePage() {
 
   /* Ce qui venait d'avant l'app, de chaque côté. Un dossier sans
      marchandise, qui porte seulement ce qui était dû. */
+  /* Tous les comptes anciens, pas seulement le premier : un partenaire
+     peut en porter plusieurs, et la ligne doit les dire ensemble. */
   const [ouvFournisseur, setOuvFournisseur] =
-    useState<Awaited<ReturnType<typeof ouvertureDe>>>(null);
+    useState<Awaited<ReturnType<typeof ouverturesDe>>>([]);
   const [ouvClient, setOuvClient] =
-    useState<Awaited<ReturnType<typeof ouvertureDe>>>(null);
-  const [ouvPossible, setOuvPossible] =
-    useState<{ fournisseur: boolean; client: boolean }>({ fournisseur: false, client: false });
+    useState<Awaited<ReturnType<typeof ouverturesDe>>>([]);
+  /* La date de la première opération, par côté. Vide : rien ne borne
+     encore le solde d'ouverture. */
+  const [borneOuverture, setBorneOuverture] =
+    useState<{ fournisseur: string; client: string }>({ fournisseur: '', client: '' });
   const [modalOuv, setModalOuv] = useState(false);
   const [roleOuverture, setRoleOuverture] =
     useState<'fournisseur' | 'client'>('fournisseur');
@@ -121,20 +125,22 @@ export default function FichePartenairePage() {
     const [f, c, of_, oc] = await Promise.all([
       soldeTiers(siteId, partenaireId, 'fournisseur'),
       soldeTiers(siteId, partenaireId, 'client'),
-      ouvertureDe(siteId, 'fournisseur', partenaireId).catch(() => null),
-      ouvertureDe(siteId, 'client', partenaireId).catch(() => null),
+      ouverturesDe(siteId, 'fournisseur', partenaireId).catch(() => []),
+      ouverturesDe(siteId, 'client', partenaireId).catch(() => []),
     ]);
     setSoldes({ fournisseur: f, client: c });
     setOuvFournisseur(of_);
     setOuvClient(oc);
-    /* Le bouton disparaît dès qu'un dossier existe : la garde tient à
-       l'écriture, mais proposer un geste qu'on refusera se lit comme une
-       panne. */
-    const [dF, dC] = await Promise.all([
-      aDesDossiers(siteId, 'fournisseur', partenaireId).catch(() => true),
-      aDesDossiers(siteId, 'client', partenaireId).catch(() => true),
+    /* Un compte ancien peut se retrouver après coup, et il y en a parfois
+       deux : le geste reste offert. Ce qui le borne, c'est sa date — elle
+       doit précéder la première opération, puisqu'il reporte ce qui la
+       précède. On la retient ici pour la dire avant l'écriture plutôt que
+       de refuser après. */
+    const [pF, pC] = await Promise.all([
+      premierDossier(siteId, 'fournisseur', partenaireId).catch(() => ''),
+      premierDossier(siteId, 'client', partenaireId).catch(() => ''),
     ]);
-    setOuvPossible({ fournisseur: !dF, client: !dC });
+    setBorneOuverture({ fournisseur: pF, client: pC });
     setPartenaire(prev => prev
       ? { ...prev, dette: f.reste, creance: c.reste } : prev);
   }
@@ -297,7 +303,7 @@ export default function FichePartenairePage() {
        dont les achats existent rendrait ces documents orphelins — ils
        désigneraient un fournisseur que la fiche ne reconnaît plus. */
     if (!rolesFournisseur && (soldes?.fournisseur.total ?? 0) > 0) {
-      setErreur(ouvFournisseur
+      setErreur(ouvFournisseur.length > 0
         ? 'Ce partenaire porte un solde d’ouverture de ce côté : son rôle '
           + 'de fournisseur ne peut plus être retiré.'
         : 'Ce partenaire a des achats : son rôle de fournisseur ne '
@@ -305,7 +311,7 @@ export default function FichePartenairePage() {
       return;
     }
     if (!rolesClient && (soldes?.client.total ?? 0) > 0) {
-      setErreur(ouvClient
+      setErreur(ouvClient.length > 0
         ? 'Ce partenaire porte un solde d’ouverture de ce côté : son rôle '
           + 'de client ne peut plus être retiré.'
         : 'Ce partenaire a des ventes : son rôle de client ne peut '
@@ -472,7 +478,7 @@ export default function FichePartenairePage() {
                   {/* Ce qui venait d'avant l'app : sans cette ligne, le
                       total ne s'expliquerait pas par les dossiers. */}
                   <LigneOuverture role="client" ouverture={ouvClient}
-                    possible={ouvPossible.client}
+                    possible borne={borneOuverture.client}
                     onPoser={() => { setRoleOuverture('client'); setModalOuv(true); }} />
                 </div>
               </div>
@@ -502,7 +508,7 @@ export default function FichePartenairePage() {
                     {retour > 0 && <> · Retour {formatMontant(retour)}</>}
                   </p>
                   <LigneOuverture role="fournisseur" ouverture={ouvFournisseur}
-                    possible={ouvPossible.fournisseur}
+                    possible borne={borneOuverture.fournisseur}
                     onPoser={() => { setRoleOuverture('fournisseur'); setModalOuv(true); }} />
                 </div>
               </div>
@@ -778,7 +784,16 @@ export default function FichePartenairePage() {
       {/* Le solde d'ouverture : ce qui était dû avant l'app.
           Aucune marchandise, aucun mouvement — seulement un montant, une
           date, et de quoi s'en souvenir. */}
-      {modalOuv && (
+      {modalOuv && (() => {
+        const borneRole = borneOuverture[roleOuverture];
+        const dejaUn = roleOuverture === 'fournisseur' ? ouvFournisseur : ouvClient;
+        const secondCompte = dejaUn.length > 0;
+        /* Le report se date avant ce qu'il reporte, et jamais dans le
+           futur : la borne est la plus proche des deux. */
+        const aujourdhui = new Date().toISOString().slice(0, 10);
+        const maxOuverture = borneRole && borneRole < aujourdhui
+          ? borneRole : aujourdhui;
+        return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
           <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-xl dark:bg-gray-900">
             <div className="mb-1 flex items-start justify-between gap-3">
@@ -795,6 +810,7 @@ export default function FichePartenairePage() {
               Ce compte existait avant l’app. Rien n’entre au stock : on
               reporte seulement ce qui restait dû. Une fois posé, il ne se
               modifie plus.
+              {secondCompte && ' Ce partenaire en porte déjà un : dites en note d’où vient celui-ci.'}
             </p>
 
             <label className="mb-1 block text-xs font-bold uppercase text-gray-400">Montant</label>
@@ -804,14 +820,25 @@ export default function FichePartenairePage() {
             <label className="mb-1 block text-xs font-bold uppercase text-gray-400">
               Arrêté au
             </label>
-            <input type="date" value={ouvDate} max={new Date().toISOString().slice(0, 10)}
+            {/* Borné à la veille de la première opération : un report ne
+                peut pas être postérieur à ce qu'il reporte. */}
+            <input type="date" value={ouvDate} max={maxOuverture}
               onChange={e => setOuvDate(e.target.value)}
-              className="mb-3 w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm text-gray-900 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100" />
+              className="mb-1 w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm text-gray-900 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100" />
+            {borneRole && (
+              <p className="mb-3 text-[11px] text-gray-400">
+                Première opération le {formatDate(borneRole)} : le report se
+                date avant.
+              </p>
+            )}
 
             <label className="mb-1 block text-xs font-bold uppercase text-gray-400">
               Note
             </label>
-            <input type="text" value={ouvNote} placeholder="Facultatif — d’où vient ce montant"
+            <input type="text" value={ouvNote}
+              placeholder={secondCompte
+                ? 'Requise — d’où vient ce second compte'
+                : 'Facultatif — d’où vient ce montant'}
               onChange={e => setOuvNote(e.target.value)}
               className="w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm text-gray-900 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100" />
 
@@ -822,7 +849,9 @@ export default function FichePartenairePage() {
                 className="flex-1 rounded-xl border border-gray-200 px-4 py-2 text-sm font-bold text-gray-500 dark:border-gray-700">
                 Annuler
               </button>
-              <button onClick={poserOuverture} disabled={ouvEnCours || ouvMontant <= 0}
+              <button onClick={poserOuverture}
+                disabled={ouvEnCours || ouvMontant <= 0
+                  || (secondCompte && !ouvNote.trim())}
                 className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-indigo-700 disabled:opacity-40">
                 {ouvEnCours ? <Loader2 size={14} className="animate-spin" /> : null}
                 Poser
@@ -830,7 +859,8 @@ export default function FichePartenairePage() {
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
@@ -843,30 +873,42 @@ export default function FichePartenairePage() {
  * pu s'y imputer, et déplacer le point de départ ferait réapparaître de
  * l'argent déjà réglé.
  */
-function LigneOuverture({ ouverture, possible, onPoser }: {
+function LigneOuverture({ ouverture, possible, borne, onPoser }: {
   role: 'fournisseur' | 'client';
-  ouverture: { montant: number; date: string; verse: number } | null;
-  /** Aucun dossier encore : c'est le seul moment où l'on peut le poser. */
+  ouverture: { montant: number; date: string; verse: number }[];
+  /** Le geste est offert : ce qui le borne, c'est la date, pas l'existant. */
   possible: boolean;
+  /** La date de la première opération ; vide quand rien ne borne encore. */
+  borne: string;
   onPoser: () => void;
 }) {
-  if (ouverture) {
-    return (
-      <p className="mt-1 text-xs text-gray-400">
-        Dont{' '}
-        <span className="font-bold text-gray-600 dark:text-gray-300">
-          {formatMontant(ouverture.montant)}
-        </span>{' '}
-        d’ouverture{ouverture.date ? ` au ${formatDate(ouverture.date)}` : ''}
-      </p>
-    );
-  }
-  if (!possible) return null;
+  /* Un compte ancien déjà posé n'en interdit pas un second : ils se
+     retrouvent par morceaux, et le second a sa note pour dire d'où il
+     vient. La ligne montre donc ce qui est reporté, et laisse ajouter. */
   return (
-    <button type="button"
-      onClick={e => { e.stopPropagation(); onPoser(); }}
-      className="mt-1 text-xs font-bold text-indigo-500 transition-colors hover:text-indigo-700">
-      + Solde d’ouverture
-    </button>
+    <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+      {ouverture.length > 0 && (
+        <p className="text-xs text-gray-400">
+          Dont{' '}
+          <span className="font-bold text-gray-600 dark:text-gray-300">
+            {formatMontant(ouverture.reduce((n, o) => n + o.montant, 0))}
+          </span>{' '}
+          d’ouverture
+          {ouverture.length > 1
+            ? ` sur ${ouverture.length} comptes`
+            : (ouverture[0].date ? ` au ${formatDate(ouverture[0].date)}` : '')}
+        </p>
+      )}
+      {possible && (
+        <button type="button"
+          onClick={e => { e.stopPropagation(); onPoser(); }}
+          title={borne
+            ? `À dater au plus tard du ${formatDate(borne)}`
+            : undefined}
+          className="text-xs font-bold text-indigo-500 transition-colors hover:text-indigo-700">
+          {ouverture.length > 0 ? '+ Autre compte' : '+ Solde d’ouverture'}
+        </button>
+      )}
+    </div>
   );
 }

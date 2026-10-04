@@ -10,7 +10,7 @@ import {
 import { hankenGrotesk } from './finance/font';
 import { ecrireEnCaisse } from '@/lib/ecrire-caisse';
 import { chargerDisponible } from '@/lib/attente-caisse';
-import { peutReglerFournisseur, type RoleSite } from '@/lib/roles';
+import { aUnCaissier, peutReglerFournisseur, type RoleSite } from '@/lib/roles';
 import DisponibleCaisse from './DisponibleCaisse';
 import { useAuth } from '@/lib/auth-context';
 import {
@@ -75,6 +75,24 @@ export default function ModalVersementTiers({
   const [apport, setApport] = useState(0);
   const [detailApport, setDetailApport] = useState('');
 
+  /* Le site a-t-il un caissier, et est-ce quelqu'un d'autre que moi ?
+   *
+   * De cette réponse dépend si le complément de caisse peut accompagner
+   * le versement. Voir plus bas `apportImpossible` : un apport qui part
+   * en file d'attente pendant que le versement s'exécute éteindrait la
+   * dette avec un argent qui n'est pas entré. */
+  const [caissierTiers, setCaissierTiers] = useState(false);
+  useEffect(() => {
+    if (!sortDeCaisse) return;
+    let vivant = true;
+    aUnCaissier(siteId)
+      .then(ok => { if (vivant) setCaissierTiers(ok && roleSite !== 'caissier'); })
+      /* Sans réponse, on retient l'hypothèse prudente : mieux vaut refuser
+         un apport possible que d'en laisser passer un qui ne l'est pas. */
+      .catch(() => { if (vivant) setCaissierTiers(true); });
+    return () => { vivant = false; };
+  }, [sortDeCaisse, siteId, roleSite]);
+
   useEffect(() => {
     if (!sortDeCaisse) return;
     chargerDisponible(siteId)
@@ -116,7 +134,9 @@ export default function ModalVersementTiers({
       /* L'apport d'abord : l'ordre inverse ferait passer la caisse en
          négatif entre les deux écritures, et chaque mouvement porte son
          solde — la ligne négative resterait dans l'historique. */
-      if (depasseCaisse && avecApport && apport > 0) {
+      /* La garde tient ici aussi : masquer la case ne ferme pas
+         l'écriture, et c'est celle-ci qui engage l'argent. */
+      if (depasseCaisse && !apportImpossible && avecApport && apport > 0) {
         const auteur = await auteurCourant(siteId, userId);
         await ecrireEnCaisse({
           siteId, sens: 'entree', motif: 'apport',
@@ -152,7 +172,23 @@ export default function ModalVersementTiers({
   const depasseCaisse = sortDeCaisse && soldeCaisseSite != null
     && montant > soldeCaisseSite;
   const manque = depasseCaisse ? montant - (soldeCaisseSite ?? 0) : 0;
-  const apportSuffit = !depasseCaisse || (avecApport && apport >= manque);
+
+  /* Le complément ne peut pas accompagner le versement quand la caisse a
+   * un gardien.
+   *
+   * L'apport passe par la file d'attente — c'est le caissier qui ouvre le
+   * tiroir, pas celui qui décide. Mais le versement au tiers, lui, part
+   * aussitôt : la dette s'éteindrait avec un argent encore dehors, et le
+   * registre dirait qu'on a payé ce qu'on n'avait pas.
+   *
+   * On ne rend donc pas les deux solidaires — ce serait lier deux
+   * écritures dans une file qui ne sait pas les tenir ensemble. On refuse
+   * le raccourci : le complément se demande d'abord, le versement se fait
+   * ensuite, quand l'argent est réellement dans le tiroir. */
+  const apportImpossible = depasseCaisse && caissierTiers;
+
+  const apportSuffit = !depasseCaisse
+    || (!apportImpossible && avecApport && apport >= manque);
 
   /* Le complément par défaut : mettre moins laisserait le paiement
      impossible, mettre plus approvisionne la caisse d'un coup. */
@@ -299,6 +335,18 @@ export default function ModalVersementTiers({
                   <p className="mb-2 text-xs font-bold text-red-600 dark:text-red-400">
                     Manque {formatMontant(manque)}
                   </p>
+                  {apportImpossible ? (
+                    /* Dire pourquoi, et quoi faire : un bouton éteint sans
+                       raison laisse chercher une panne là où il y a une
+                       règle. */
+                    <p className="text-xs text-amber-800 dark:text-amber-400">
+                      La caisse a un responsable : l’apport doit lui être
+                      demandé et entrer au tiroir avant ce règlement.
+                      Passez par <span className="font-bold">Fonds
+                      disponible</span> pour le déclarer, puis revenez ici.
+                    </p>
+                  ) : (
+                  <>
                   <label className="flex cursor-pointer items-start gap-2">
                     <input type="checkbox" checked={avecApport}
                       onChange={e => { setAvecApport(e.target.checked); if (e.target.checked) setApport(manque); }}
@@ -325,6 +373,8 @@ export default function ModalVersementTiers({
                         placeholder="Détail"
                         className="mt-2 w-full rounded-lg border border-amber-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-amber-600/50 dark:border-amber-800 dark:bg-gray-800 dark:text-gray-100" />
                     </div>
+                  )}
+                  </>
                   )}
                 </div>
               )}

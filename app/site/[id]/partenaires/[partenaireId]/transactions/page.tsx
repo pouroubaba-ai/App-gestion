@@ -7,7 +7,7 @@ import { db } from '@/lib/firebase';
 import { useAuth } from '@/lib/auth-context';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { formatMontant } from '@/lib/format';
-import { ouvertureDe } from '@/lib/ouverture';
+import { ouverturesDe } from '@/lib/ouverture';
 import {
   LIBELLES_MOTIF_VERSEMENT, type MotifVersement,
 } from '@/lib/versements-collection';
@@ -295,13 +295,22 @@ export default function TransactionsPage() {
   useEffect(() => {
     if (!user) return;
     Promise.all([
-      ouvertureDe(siteId, 'fournisseur', partenaireId).catch(() => null),
-      ouvertureDe(siteId, 'client', partenaireId).catch(() => null),
+      ouverturesDe(siteId, 'fournisseur', partenaireId).catch(() => []),
+      ouverturesDe(siteId, 'client', partenaireId).catch(() => []),
     ]).then(([f, c]) => {
-      const out = [];
-      if (f) out.push({ ...f, role: 'fournisseur' as Role, reference: 'Ouverture' });
-      if (c) out.push({ ...c, role: 'client' as Role, reference: 'Ouverture' });
-      setOuvertures(out);
+      /* Un partenaire peut porter plusieurs comptes anciens : chacun
+         prend sa ligne, numérotée, sinon deux reports du même côté se
+         liraient comme un seul. */
+      const nommer = (
+        liste: typeof f, role: Role,
+      ) => liste.map((o, i) => ({
+        ...o, role,
+        reference: liste.length > 1 ? `Ouverture ${i + 1}` : 'Ouverture',
+      }));
+      setOuvertures([
+        ...nommer(f, 'fournisseur' as Role),
+        ...nommer(c, 'client' as Role),
+      ]);
     }).catch(() => {});
   }, [user, siteId, partenaireId]);
 

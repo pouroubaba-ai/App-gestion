@@ -84,6 +84,20 @@ export interface MouvementAttente {
   /** Le réajustement qui acte l'écart, s'il y en a eu un. */
   mouvementEcartId?: string | null;
 
+  /**
+   * Les versements que ce mouvement règle, et qui attendent avec lui.
+   *
+   * Un règlement de partenaire éteint une dette. Tant que l'argent n'est
+   * pas entré au tiroir, cette dette n'est pas éteinte : l'écrire tout de
+   * suite ferait dire au registre qu'on a payé avec un argent qui n'est
+   * pas là. Les lignes restent donc ici, prêtes, et ne partent qu'à
+   * l'autorisation.
+   *
+   * Vide — ou absent — pour tout mouvement qui ne règle aucun dossier :
+   * une vente au comptant, un apport, une rémunération.
+   */
+  versementsEnAttente?: unknown[] | null;
+
   createdAt?: any;
 }
 
@@ -114,6 +128,9 @@ export async function mettreEnAttente(saisie: {
   documentType?: MouvementAttente['documentType'];
   utilisateurNom?: string | null;
   utilisateurFonction?: string | null;
+  /* Les lignes de versement qui attendent avec ce mouvement : elles ne
+     s'écriront qu'à l'autorisation, quand l'argent sera au tiroir. */
+  versementsEnAttente?: unknown[] | null;
 }): Promise<string> {
   if (saisie.montant <= 0) throw new Error('Le montant doit être positif.');
 
@@ -140,6 +157,7 @@ export async function mettreEnAttente(saisie: {
     constat: null,
     mouvementCaisseId: null,
     mouvementEcartId: null,
+    versementsEnAttente: saisie.versementsEnAttente ?? null,
     createdAt: serverTimestamp(),
   });
   /* La file s'est remplie : la pastille du caissier doit le dire avant
@@ -301,6 +319,27 @@ export async function autoriser(params: {
         partenaireId: null,
       })
     : null;
+
+  /* Les versements que ce mouvement portait s'écrivent maintenant.
+   *
+   * Ils attendaient avec lui : une dette ne s'éteint pas avant que
+   * l'argent soit au tiroir. Il y est, et le mouvement qui l'y a fait
+   * entrer leur sert de référence.
+   *
+   * L'import se fait ici, pas en tête de fichier : `versements-collection`
+   * passe par `ecrire-caisse`, qui revient à ce module — le cycle casserait
+   * le chargement.
+   *
+   * Si l'écriture échoue, la ligne reste en attente et le mouvement de
+   * caisse est déjà passé : on le dit plutôt que de marquer autorisé un
+   * règlement qui ne s'est pas inscrit. */
+  const enReserve = (m.versementsEnAttente ?? []) as Record<string, unknown>[];
+  if (enReserve.length > 0 && mouvementCaisseId) {
+    const { enregistrerVersement } = await import('./versements-collection');
+    await Promise.all(enReserve.map(v => enregistrerVersement({
+      ...v, mouvementCaisseId,
+    } as Parameters<typeof enregistrerVersement>[0])));
+  }
 
   await updateDoc(doc(db, 'mouvements_attente', m.id), {
     etat: 'autorise' as EtatAttente,

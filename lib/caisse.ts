@@ -1,9 +1,9 @@
 import {
   collection, addDoc, getDoc, getDocs, query, where, serverTimestamp, doc,
-  updateDoc, runTransaction,
+  updateDoc, runTransaction, onSnapshot,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
-import { lireDocs, type Portee } from '@/lib/portee';
+import { lireDocs, sitesDe, type Portee } from '@/lib/portee';
 
 /**
  * Le registre de caisse.
@@ -332,8 +332,76 @@ export async function soldeDuTiroir(siteId: string): Promise<number> {
   return snap.exists() ? (snap.data().solde ?? 0) : 0;
 }
 
-/** Le solde actuel : celui d'après le dernier mouvement écrit. */
+/**
+ * Être prévenu quand la caisse bouge.
+ *
+ * Le registre se lit une fois et ne bouge plus : on reste sur l'écran
+ * pendant qu'un caissier encaisse au comptoir, et les chiffres affichés
+ * sont ceux d'il y a une heure sans que rien ne le dise. Sur un
+ * téléphone, dans une app installée, il n'y a ni barre d'adresse ni
+ * geste de rechargement — il fallait fermer l'app et la rouvrir.
+ *
+ * On écoute le compteur du solde, et lui seul : un document par site,
+ * que chaque écriture en caisse met à jour dans la même transaction.
+ * Écouter le registre entier coûterait une lecture par mouvement à
+ * chaque changement ; écouter un compteur en coûte une.
+ *
+ * Il dit qu'il faut relire, pas ce qu'il faut afficher : c'est l'écran
+ * qui recharge ce dont il a besoin. Le premier état est ignoré — il
+ * décrit ce qu'on vient déjà de lire.
+ */
+export function surChangementCaisse(
+  portee: Portee, quand: () => void,
+): () => void {
+  const sites = sitesDe(portee);
+  if (sites.length === 0) return () => {};
+
+  const premiers = new Set<string>();
+  const arrets = sites.map(s => onSnapshot(
+    doc(db, 'caisse_compteurs', `${s}_solde`),
+    snap => {
+      if (!premiers.has(s)) { premiers.add(s); return; }
+      /* Un compteur peut remonter sans que le solde change — une
+         écriture annulée, un champ voisin. Relire est sans danger :
+         c'est une lecture, et elle rend la vérité. */
+      void snap;
+      quand();
+    },
+    /* Une écoute refusée ou coupée ne doit pas casser l'écran : il
+       garde ce qu'il a, comme avant. */
+    () => {},
+  ));
+  return () => { for (const a of arrets) a(); };
+}
+
+/**
+ * Le solde actuel : celui d'après le dernier mouvement écrit.
+ *
+ * Le solde ne se recalcule pas en additionnant les montants : chaque
+ * mouvement porte le solde figé au moment où il a été écrit, et c'est
+ * lui qui fait foi. Une annulation, un mouvement antidaté, un montant
+ * corrigé — le registre les a déjà pris en compte.
+ *
+ * Mais ce solde figé appartient à un site, et à un seul. Vue
+ * d'ensemble, la liste mêle plusieurs caisses : prendre le dernier
+ * mouvement de la pile revenait à montrer le solde du site qui a bougé
+ * en dernier, et à l'appeler le fonds de l'ensemble. Cinq caisses
+ * portant deux millions six cent mille affichaient deux mille cinq
+ * cents, parce que le dernier encaissement venait de la plus petite.
+ *
+ * On prend donc le dernier mouvement de chaque site, et on additionne
+ * ces soldes-là. Sur un site unique, cela ne change rien.
+ */
 export function soldeCaisse(mouvements: MouvementCaisse[]): number {
   if (mouvements.length === 0) return 0;
-  return [...mouvements].sort(comparerOrdre)[mouvements.length - 1].soldeApres ?? 0;
+  /* Le dernier mouvement de chaque caisse, au sens du registre : pas le
+     plus récent par date, mais le dernier écrit — c'est l'ordre du
+     numéro qui fait le registre. */
+  const derniers = new Map<string, MouvementCaisse>();
+  for (const m of [...mouvements].sort(comparerOrdre)) {
+    derniers.set(m.siteId ?? '', m);
+  }
+  let total = 0;
+  for (const m of derniers.values()) total += m.soldeApres ?? 0;
+  return total;
 }

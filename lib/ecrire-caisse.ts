@@ -45,6 +45,11 @@ export async function ecrireEnCaisse(
        son tiroir tant qu'on ne le lui a pas remis. Encaisser et remettre
        sont deux faits, et seul le second fait entrer l'argent. */
     forcerAttente?: boolean;
+    /* Les versements que ce mouvement règle. Mis en réserve sur la ligne
+       d'attente plutôt qu'écrits : une dette ne s'éteint pas avant que
+       l'argent soit au tiroir. Ignorés quand l'écriture est directe —
+       l'appelant les écrit lui-même, l'argent a bougé. */
+    versementsEnAttente?: unknown[] | null;
   },
 ): Promise<ResultatEcriture> {
   /* Une annulation naît du registre lui-même : la faire attendre
@@ -92,6 +97,7 @@ export async function ecrireEnCaisse(
     documentType: saisie.documentType ?? null,
     utilisateurNom: saisie.utilisateurNom ?? null,
     utilisateurFonction: saisie.utilisateurFonction ?? null,
+    versementsEnAttente: options?.versementsEnAttente ?? null,
   });
   return { id, applique: false };
 }

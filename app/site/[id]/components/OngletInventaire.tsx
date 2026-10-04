@@ -804,11 +804,20 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
        recoller à la main ici les ferait diverger au premier oubli. On
        relit, c'est la seule version juste. */
     await charger();
-    if (categorie.trim() && !categories.includes(categorie.trim())) {
-      setCategories(prev => [...prev, categorie.trim()].sort());
+    /* Le test se fait dans le setter, pas avant.
+     *
+     * `charger()` vient de reconstruire ces listes depuis les produits
+     * relus : la catégorie qu'on ajoute y est déjà. Mais `categories`,
+     * capturé au moment du rendu, tient encore la liste d'avant — le
+     * test passait, et la même catégorie s'inscrivait deux fois. Dans le
+     * setter, `prev` est la liste à jour. */
+    if (categorie.trim()) {
+      setCategories(prev => (prev.includes(categorie.trim())
+        ? prev : [...prev, categorie.trim()].sort()));
     }
-    if (unite.trim() && !unites.includes(unite.trim())) {
-      setUnites(prev => [...prev, unite.trim()].sort());
+    if (unite.trim()) {
+      setUnites(prev => (prev.includes(unite.trim())
+        ? prev : [...prev, unite.trim()].sort()));
     }
     setSaving(false);
     setModalOuvert(false);

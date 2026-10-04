@@ -756,11 +756,22 @@ export async function precharger(
   const [snapsProduits, snapsDetentions] = await Promise.all([
     Promise.all(paquets(produitIds, 30).map(lot => getDocs(query(
       collection(db, 'produits'), where(documentId(), 'in', lot))))),
-    /* Par site plutôt que par produit : un site a rarement assez de
-       références pour que ce soit plus lourd, et cela tient en une
-       requête par site au lieu d'une par paquet de produits. */
-    Promise.all(siteIds.map(s => getDocs(query(
-      collection(db, 'produits_site'), where('siteId', '==', s))))),
+    /* Par produit, et non par site.
+     *
+     * Lire tout un site tenait en une requête, ce qui semblait économe :
+     * un commerce de cinquante références n'en souffrait pas. Après une
+     * reprise de catalogue il y en a trois cents, et confirmer un bon de
+     * deux lignes en téléchargeait trois cents pour en garder deux. Le
+     * reste partait à la poubelle quelques lignes plus bas.
+     *
+     * On ne demande plus que ce dont le bon a besoin. Firestore limite
+     * un « in » à trente valeurs : au-delà, on découpe — et même
+     * découpé, cela reste une fraction de ce qu'un site entier pèse. */
+    Promise.all(siteIds.flatMap(s =>
+      paquets(produitIds, 30).map(lot => getDocs(query(
+        collection(db, 'produits_site'),
+        where('siteId', '==', s),
+        where('produitId', 'in', lot)))))),
   ]);
 
   for (const snap of snapsProduits) {

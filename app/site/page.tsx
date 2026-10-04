@@ -400,19 +400,19 @@ export default function SitePage() {
             </div>
 
             <input
-              type="text" placeholder="Nom du site" value={nom}
+              type="text" placeholder="Nom du site (requis)" value={nom}
               onChange={e => setNom(e.target.value)}
               className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 mb-3 focus:outline-none focus:ring-2 focus:ring-indigo-500"
             />
 
             <input
-              type="text" placeholder="Adresse" value={adresse}
+              type="text" placeholder="Adresse (requise)" value={adresse}
               onChange={e => setAdresse(e.target.value)}
               className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 mb-3 focus:outline-none focus:ring-2 focus:ring-indigo-500"
             />
 
             <input
-              type="text" placeholder="Numéro de téléphone" value={numero}
+              type="text" placeholder="Numéro de téléphone (facultatif)" value={numero}
               onChange={e => setNumero(e.target.value)}
               className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 mb-3 focus:outline-none focus:ring-2 focus:ring-indigo-500"
             />

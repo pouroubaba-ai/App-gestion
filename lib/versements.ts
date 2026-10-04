@@ -176,28 +176,9 @@ export async function verserAuTiers(params: {
      fois, quel que soit le nombre de dossiers qu'il règle. Chaque mouvement
      coûtait une transaction sur le compteur, en série — c'est ce qui rendait
      un versement multiple si lent. */
-  const ecriture = await ecrireEnCaisse({
-    siteId,
-    sens: role === 'client' ? 'entree' : 'sortie',
-    motif: role === 'client' ? 'client' : 'fournisseur',
-    /* Les colonnes du registre, dès la déclaration : le motif dit de quoi
-       il s'agit, le sous-motif à quel titre, le détail nomme qui. */
-    sousMotif: parEcheance.length > 0 ? 'Recouvrement' : 'Règlement',
-    detail: params.partenaireNom ?? null,
-    montant: total,
-    date: jour,
-    utilisateur: userId,
-    utilisateurNom: params.utilisateurNom ?? null,
-    utilisateurFonction: params.utilisateurFonction ?? null,
-    partenaireId,
-  }, userId, params.adminUid ?? null, { forcerAttente: params.parRemise });
-
-  /* Le versement ne porte le mouvement que si l'argent a bougé. En
-     attente, il n'y a encore aucune ligne de registre à rattacher — elle
-     naîtra à l'autorisation. */
-  const mouvementCaisseId = ecriture.applique ? ecriture.id : null;
-
-  /* Les lignes ne se disputent plus rien : elles partent ensemble. */
+  /* Les lignes se préparent avant d'écrire quoi que ce soit : selon que
+     l'argent entre au tiroir ou attend le caissier, elles partiront
+     maintenant ou plus tard, mais elles sont les mêmes. */
   let restant = total;
   const aEcrire: Parameters<typeof enregistrerVersement>[0][] = [];
   for (const { d, part } of parDocument) {
@@ -219,7 +200,7 @@ export async function verserAuTiers(params: {
       utilisateurNom: params.utilisateurNom ?? null,
       utilisateurFonction: params.utilisateurFonction ?? null,
       sansCaisse: true,
-      mouvementCaisseId,
+      mouvementCaisseId: null,
     });
     restant -= part;
   }
@@ -242,11 +223,47 @@ export async function verserAuTiers(params: {
       utilisateurNom: params.utilisateurNom ?? null,
       utilisateurFonction: params.utilisateurFonction ?? null,
       sansCaisse: true,
-      mouvementCaisseId,
+      mouvementCaisseId: null,
     });
   }
 
-  await Promise.all(aEcrire.map(v => enregistrerVersement(v)));
+  const ecriture = await ecrireEnCaisse({
+    siteId,
+    sens: role === 'client' ? 'entree' : 'sortie',
+    motif: role === 'client' ? 'client' : 'fournisseur',
+    /* Les colonnes du registre, dès la déclaration : le motif dit de quoi
+       il s'agit, le sous-motif à quel titre, le détail nomme qui. */
+    sousMotif: parEcheance.length > 0 ? 'Recouvrement' : 'Règlement',
+    detail: params.partenaireNom ?? null,
+    montant: total,
+    date: jour,
+    utilisateur: userId,
+    utilisateurNom: params.utilisateurNom ?? null,
+    utilisateurFonction: params.utilisateurFonction ?? null,
+    partenaireId,
+  }, userId, params.adminUid ?? null, {
+    forcerAttente: params.parRemise,
+    /* Si le mouvement attend, les versements attendent avec lui. */
+    versementsEnAttente: aEcrire,
+  });
+
+  /* Une dette ne s'éteint pas avant que l'argent soit là.
+   *
+   * Quand la caisse a un responsable, le mouvement part en file et rien
+   * n'est encore entré au tiroir. Écrire les versements à cet instant
+   * soldait les échéances et faisait passer le document à « payé » : le
+   * registre disait qu'on avait payé avec un argent qui n'était pas là.
+   * Les lignes voyagent donc avec la ligne d'attente, et c'est
+   * l'autorisation qui les écrit.
+   *
+   * Quand l'argent entre directement — pas de caissier, ou c'est lui qui
+   * agit — rien ne change : on écrit ici, avec le mouvement en référence. */
+  if (ecriture.applique) {
+    /* Les lignes ne se disputent plus rien : elles partent ensemble. */
+    await Promise.all(aEcrire.map(v => enregistrerVersement({
+      ...v, mouvementCaisseId: ecriture.id,
+    })));
+  }
 
   /* La dette n'est plus écrite sur le partenaire : elle se déduit des
      dossiers non soldés, et tombe d'elle-même quand ils sont réglés. */

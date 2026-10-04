@@ -163,8 +163,12 @@ export async function enregistrerVersement(saisie: SaisieVersement): Promise<Ver
      remboursement inverse ce sens : c'est le même geste à l'envers. */
   /* L'argent ne va pas droit au tiroir : dès que le site a un responsable
      de la caisse et que ce n'est pas lui qui agit, le mouvement attend son
-     autorisation. Le versement existe quand même — la dette est éteinte,
-     le dossier est réglé — mais le registre ne compte rien encore. */
+     autorisation — et le versement attend avec lui.
+     L'écrire tout de suite éteignait la dette et faisait passer le dossier
+     à « réglé » alors que rien n'était entré : le registre disait qu'on
+     avait payé avec un argent qui n'était pas là. La ligne voyage donc en
+     réserve sur le mouvement d'attente, et c'est l'autorisation qui
+     l'écrit. */
   const ecriture = saisie.sansCaisse ? null : await ecrireEnCaisse({
     siteId: saisie.siteId,
     sens: saisie.sens === 'entree' ? 'entree' : 'sortie',
@@ -189,7 +193,25 @@ export async function enregistrerVersement(saisie: SaisieVersement): Promise<Ver
     documentId: saisie.achatId ?? saisie.venteId ?? null,
     documentType: saisie.achatId ? 'achat' : saisie.venteId ? 'vente' : null,
     partenaireId: saisie.partenaireId,
-  }, saisie.userId, saisie.adminUid ?? null);
+  }, saisie.userId, saisie.adminUid ?? null, {
+    /* La même saisie, rejouée à l'autorisation — mais sans repasser par
+       la caisse : le mouvement sera déjà écrit, et c'est lui qu'on
+       rattachera. */
+    versementsEnAttente: [{ ...saisie, sansCaisse: true }],
+  });
+
+  /* En attente, rien ne s'écrit ici : ni le versement, ni le total du
+     dossier. L'appelant reçoit la ligne telle qu'elle sera, pour que
+     l'écran puisse l'afficher, mais la base ne la porte pas encore. */
+  if (ecriture && !ecriture.applique) {
+    return {
+      id: ecriture.id,
+      ...saisie,
+      heure,
+      mouvementCaisseId: null,
+      enAttente: true,
+    } as unknown as Versement;
+  }
 
   /* Le versement ne porte le mouvement que si l'argent a bougé : en
      attente, la ligne de registre naîtra à l'autorisation. */
