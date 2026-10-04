@@ -1,6 +1,16 @@
+/**
+ * Un montant, tel qu'on l'écrit ici.
+ *
+ * Le franc CFA n'a pas de centimes : aucun prix ne s'exprime en
+ * fractions, et aucune caisse n'en rend. Les décimales qu'on voit
+ * parfois ne sont pas de la monnaie, ce sont les restes d'un calcul —
+ * un coût moyen pondéré, une somme de produits. Les afficher ferait
+ * croire à une précision qui n'existe pas, et deux totaux justes
+ * sembleraient se contredire pour un centième.
+ */
 export function formatMontant(n: number | null | undefined): string {
   if (n == null || isNaN(n)) return '— FCFA';
-  return n.toLocaleString('fr-FR') + ' FCFA';
+  return Math.round(n).toLocaleString('fr-FR') + ' FCFA';
 }
 
 /**

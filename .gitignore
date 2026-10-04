@@ -48,3 +48,10 @@ next-env.d.ts
 # Dans /public, un fichier est servi à qui en connaît l'adresse, sans
 # connexion. Il sert à la migration, qui se fait sur le poste.
 /public/croisement.json
+
+# La reprise du stock : un échafaudage, pas une fonctionnalité.
+# Elle crée des centaines de fiches d'un clic et confirme un stock de
+# départ sans seconde main. Elle n'a rien à faire en production : elle
+# vit sur le poste, le temps de la reprise, et s'efface ensuite.
+/app/migration-stock/
+/lib/migration-stock.ts

@@ -235,6 +235,9 @@ export default function FicheProduitPage() {
     ? variantes.reduce((s, v) => s + (v.prixVente ?? produit.prixVente) * v.stock, 0)
     : produit.prixVente * produit.stock;
   const benefice = valeurVente - valeurStock;
+  /* Sans coût connu, la soustraction rend le prix de vente entier : la
+     carte annoncerait comme gain ce qui n'est qu'un chiffre d'affaires. */
+  const coutConnu = valeurStock > 0;
 
   const variantesFiltrees = variantes.filter(v => {
     const q = rechVariante.trim().toLowerCase();
@@ -479,10 +482,16 @@ export default function FicheProduitPage() {
 
         {/* On revient d'où l'on vient : renvoyer dans le site ferait
             changer d'écran sans l'avoir demandé. */}
-        <button onClick={() => router.push(
-          searchParams.get('de') === 'ensemble'
-            ? '/ensemble?onglet=inventaire'
-            : `/site/${siteId}?onglet=inventaire`)} className="flex items-center gap-2 mb-6 group">
+        {/* La vue d'où l'on vient revient avec nous : entrer depuis
+            « Déclinaisons » et ressortir sur « Produits » ferait perdre
+            sa place à chaque aller-retour. */}
+        <button onClick={() => {
+          const groupe = searchParams.get('groupe');
+          const vue = groupe ? `&groupe=${groupe}` : '';
+          router.push(searchParams.get('de') === 'ensemble'
+            ? `/ensemble?onglet=inventaire${vue}`
+            : `/site/${siteId}?onglet=inventaire${vue}`);
+        }} className="flex items-center gap-2 mb-6 group">
           <ArrowLeft size={15} className="text-gray-400 group-hover:text-gray-600 transition-colors" />
           <span className="text-sm font-medium text-gray-600 dark:text-gray-300 group-hover:text-gray-900 dark:group-hover:text-white transition-colors">Retour</span>
         </button>
@@ -600,10 +609,16 @@ export default function FicheProduitPage() {
           <div className="bg-green-50 dark:bg-green-900/10 border border-green-100 dark:border-green-800/30 rounded-2xl p-4">
             <div className="flex items-center gap-1.5 mb-3">
               <TrendingUp size={13} className="text-green-500" />
-              <p className="text-xs font-bold text-green-600 dark:text-green-400">Bénéfice estimé</p>
+              <p className="text-xs font-bold text-green-600 dark:text-green-400">
+                Bénéfice estimé
+              </p>
             </div>
-            <p className="text-2xl font-bold text-gray-900 dark:text-gray-100">{formatMontant(benefice)}</p>
-            <p className="text-xs text-gray-400 mt-0.5">Si tout le stock est vendu</p>
+            <p className="text-2xl font-bold text-gray-900 dark:text-gray-100">
+              {coutConnu ? formatMontant(benefice) : '—'}
+            </p>
+            <p className="text-xs text-gray-400 mt-0.5">
+              {coutConnu ? 'Si tout le stock est vendu' : 'Coût inconnu'}
+            </p>
           </div>
         </div>
 

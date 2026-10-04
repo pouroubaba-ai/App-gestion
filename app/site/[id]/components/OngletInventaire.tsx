@@ -5,7 +5,7 @@ import {
   collection, query, where, getDocs, addDoc, doc, updateDoc, serverTimestamp,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { enregistrerStockInitial } from '@/lib/mouvements';
 import { formatMontant } from '@/lib/format';
 import { hankenGrotesk } from './finance/font';
@@ -316,6 +316,14 @@ function AjoutDansCategorie({ categorie, produits, onClasser }: {
 
 export default function OngletInventaire({ siteId, userId, sites, titre }: Props) {
   const ctx = useSites(siteId, sites);
+  /* Vers quel site ouvrir la fiche d'un produit.
+   *
+   * Le produit appartient à l'activité depuis la migration : il ne porte
+   * plus de site. `siteEcriture` ne répond que lorsqu'il n'y en a qu'un,
+   * et vaut `null` en vue d'ensemble — l'adresse devenait « /site/null ».
+   * À plusieurs, on ouvre sur le site dont on regarde l'inventaire. */
+  const siteOuvert = ctx.siteEcriture
+    ?? (Array.isArray(siteId) ? siteId[0] : siteId);
   /* Un produit naît pour l'activité : il lui faut son identifiant. */
   const { activite } = useAuth();
   /* Échafaudage d'essai : garnir une activité neuve pour l'éprouver à
@@ -345,6 +353,7 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
     setReprise(false);
   }
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [produits, setProduits] = useState<Produit[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
   const [unites, setUnites] = useState<string[]>([]);
@@ -366,7 +375,16 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
    *
    * Trois questions différentes sur la même marchandise : les mêler dans
    * un seul tableau obligerait à retrier à l'œil. */
-  const [groupe, setGroupe] = useState<'produit' | 'variante' | 'categorie'>('produit');
+  /* La vue choisie vit dans l'adresse, pas seulement en mémoire.
+     Sans cela, ouvrir un produit depuis « Déclinaisons » et revenir
+     ramenait sur « Produits » : le retour rouvre la page, et la page
+     repartait de son état par défaut. */
+  const groupeInitial = (searchParams.get('groupe') === 'variante'
+    || searchParams.get('groupe') === 'categorie')
+    ? searchParams.get('groupe') as 'variante' | 'categorie'
+    : 'produit';
+  const [groupe, setGroupe] = useState<'produit' | 'variante' | 'categorie'>(
+    groupeInitial);
   /* La catégorie ouverte, quand on veut voir ce qu'elle contient. */
   const [categorieOuverte, setCategorieOuverte] = useState<string | null>(null);
   /* par produit : ce qui est entré, ce qui est sorti, et quand pour la dernière fois */
@@ -805,8 +823,26 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
   const enStock = produits.filter(p => stockTotal(p) > 0);
   const valeurStock = enStock.reduce((s, p) => s + valeurCout(p), 0);
   const valeurVente = enStock.reduce((s, p) => s + valeurVenteProduit(p), 0);
-  const beneficeEstime = valeurVente - valeurStock;
-  const marge = valeurStock > 0 ? (beneficeEstime / valeurStock) * 100 : 0;
+  /* Un bénéfice se mesure contre un coût.
+   *
+   * À la reprise, le stock entre sans qu'on sache ce qu'il a coûté. La
+   * soustraction rendrait alors le prix de vente entier, et l'écran
+   * annoncerait comme gain ce qui n'est qu'un chiffre d'affaires.
+   *
+   * Le bénéfice ne se calcule donc que sur les produits valorisés, et
+   * l'écran dit combien ils sont. Mêler les autres ferait un chiffre
+   * qui n'est ni l'un ni l'autre : plus faux à mesure que le stock non
+   * valorisé pèse lourd. */
+  const valorises = enStock.filter(p => valeurCout(p) > 0);
+  const valeurStockVal = valorises.reduce((s, p) => s + valeurCout(p), 0);
+  const valeurVenteVal = valorises.reduce(
+    (s, p) => s + valeurVenteProduit(p), 0);
+  const beneficeEstime = valeurVenteVal - valeurStockVal;
+  const marge = valeurStockVal > 0
+    ? (beneficeEstime / valeurStockVal) * 100 : 0;
+  const coutConnu = valorises.length > 0;
+  /* Tous valorisés : le compte n'apprend rien, on ne l'écrit pas. */
+  const partiel = coutConnu && valorises.length < enStock.length;
 
   const ruptures = produits.filter(p => stockTotal(p) <= 0).length;
 
@@ -1145,11 +1181,15 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
           <p className="mt-3 text-[11px] font-bold uppercase tracking-wide text-neutral-400">
             Bénéfice estimé
           </p>
-          <p className={`${hankenGrotesk.className} mt-0.5 text-[26px] font-bold leading-8 tracking-tight ${beneficeEstime < 0
+          <p className={`${hankenGrotesk.className} mt-0.5 text-[26px] font-bold leading-8 tracking-tight ${coutConnu && beneficeEstime < 0
             ? 'text-red-500' : 'text-green-600 dark:text-green-400'}`}>
-            {formatMontant(beneficeEstime)}
+            {coutConnu ? formatMontant(beneficeEstime) : '—'}
           </p>
-          <p className="mt-1 text-[11px] font-medium text-neutral-400">Si tout le stock est vendu</p>
+          <p className="mt-1 text-[11px] font-medium text-neutral-400">
+            {partiel
+              ? `Sur ${valorises.length} produits valorisés`
+              : 'Si tout le stock est vendu'}
+          </p>
           {/* Le coût du stock est déjà la carte voisine : le répéter ici ne
               dit rien de plus. Reste ce que la carte apporte — ce que tout
               ce stock rapporterait une fois vendu. */}
@@ -1361,7 +1401,7 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
                     <tbody className="divide-y divide-gray-50 dark:divide-gray-800">
                       {lignesVariantes.map(l => (
                         <tr key={l.cle}
-                          onClick={() => router.push(`/site/${l.produit.siteId ?? ctx.siteEcriture}/inventaire/${l.produit.id}`)}
+                          onClick={() => router.push(`/site/${l.produit.siteId || siteOuvert}/inventaire/${l.produit.id}` + `?groupe=${groupe}`)}
                           className="cursor-pointer transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/50">
                           {/* Une ligne par article réellement vendable :
                               la variante se lit à côté du nom, en
@@ -1532,7 +1572,7 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
                                 <div key={p.id}
                                   className="flex flex-wrap items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-sm transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/50">
                                   <button type="button"
-                                    onClick={() => router.push(`/site/${p.siteId ?? ctx.siteEcriture}/inventaire/${p.id}`)}
+                                    onClick={() => router.push(`/site/${p.siteId || siteOuvert}/inventaire/${p.id}` + `?groupe=${groupe}`)}
                                     className="min-w-0 flex-1 truncate text-left text-gray-900 hover:text-indigo-600 dark:text-gray-100">
                                     {p.designation}
                                   </button>
@@ -1605,7 +1645,7 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
                       return (
                         <tr key={p.id}
                           onClick={() => router.push(
-                            `/site/${p.siteId ?? ctx.siteEcriture}/inventaire/${p.id}${ctx.ensemble ? '?de=ensemble' : ''}`)}
+                            `/site/${p.siteId || siteOuvert}/inventaire/${p.id}` + `?groupe=${groupe}${ctx.ensemble ? '&de=ensemble' : ''}`)}
                           className="cursor-pointer transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/50">
                           <td className="px-3 py-2.5 font-medium text-gray-900 dark:text-gray-100 text-center">{p.designation}</td>
                           {ctx.ensemble && <CelluleSite nom={ctx.nomDe(p.siteId)} />}
@@ -1670,7 +1710,7 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
                       return (
                         <tr key={p.id}
                           onClick={() => router.push(
-                            `/site/${p.siteId ?? ctx.siteEcriture}/inventaire/${p.id}${ctx.ensemble ? '?de=ensemble' : ''}`)}
+                            `/site/${p.siteId || siteOuvert}/inventaire/${p.id}` + `?groupe=${groupe}${ctx.ensemble ? '&de=ensemble' : ''}`)}
                           className="cursor-pointer transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/50">
                           <td className="px-3 py-2.5 font-medium text-gray-900 dark:text-gray-100 text-center">{p.designation}</td>
                           {ctx.ensemble && <CelluleSite nom={ctx.nomDe(p.siteId)} />}
