@@ -326,11 +326,13 @@ export async function declarerAjustement(saisie: {
 export async function avancerAjustement(params: {
   dossier: DossierAjustement;
   roleSite?: string | null;
+  /** L'activité n'a qu'un compte : voir `confirmerAjustement`. */
+  seulAuCommerce?: boolean;
 }): Promise<void> {
   const d = params.dossier;
   if (d.etat === 'annule') throw new Error('Ce dossier a été annulé.');
   if (d.etat === 'confirme') throw new Error('Ce dossier est déjà confirmé.');
-  if (params.roleSite !== undefined
+  if (!params.seulAuCommerce && params.roleSite !== undefined
     && !peutTraiterAjustement(params.roleSite)) {
     throw new Error('Faire avancer revient au responsable des commandes.');
   }
@@ -348,12 +350,14 @@ export async function constaterAjustement(params: {
   /** une quantité par ligne, dans l'ordre des lignes */
   quantites: number[];
   roleSite?: string | null;
+  /** L'activité n'a personne d'autre : voir `confirmerAjustement`. */
+  seulAuCommerce?: boolean;
 }): Promise<void> {
   const d = params.dossier;
   if (d.etat !== 'en_preparation') {
     throw new Error('On ne compte qu’un dossier en préparation.');
   }
-  if (params.roleSite !== undefined
+  if (!params.seulAuCommerce && params.roleSite !== undefined
     && !peutTraiterAjustement(params.roleSite)) {
     throw new Error('Compter revient au responsable des commandes.');
   }
@@ -378,6 +382,14 @@ export async function confirmerAjustement(params: {
   utilisateurNom?: string | null;
   utilisateurFonction?: string | null;
   roleSite?: string | null;
+  /**
+   * L'activité n'a qu'un compte.
+   *
+   * La séparation des deux mains n'a alors personne à séparer : voir
+   * plus bas. Se lit avec `estSeulAuCommerce`, jamais déclaré à la
+   * main — les règles de la base le revérifient de leur côté.
+   */
+  seulAuCommerce?: boolean;
 }): Promise<{ lignes: number }> {
   const d = params.dossier;
   if (d.etat === 'annule') throw new Error('Ce dossier a été annulé.');
@@ -385,14 +397,28 @@ export async function confirmerAjustement(params: {
   if (d.etat !== 'en_preparation') {
     throw new Error('Ce dossier n’est pas encore prêt à être confirmé.');
   }
-  if (params.roleSite !== undefined
-    && !peutTraiterAjustement(params.roleSite)) {
-    throw new Error('Confirmer revient au responsable des commandes.');
-  }
-  /* Jamais celui qui a déclaré. C'est toute la raison d'être du cycle :
-     séparées, les deux mains ne peuvent pas s'entendre. */
-  if (d.parUid === params.parUid) {
-    throw new Error('On ne confirme pas le mouvement qu’on a déclaré.');
+  /* Seul au commerce, on ferme soi-même ce qu'on a ouvert.
+   *
+   * La séparation des deux mains protège un registre que plusieurs
+   * tiennent : l'un déclare, l'autre va compter, et aucun ne peut faire
+   * disparaître ce qu'il veut. Elle ne protège rien quand il n'y a
+   * qu'une main — elle empêche seulement de travailler, et il faudrait
+   * inventer un second compte pour contourner, ce qui vaudrait moins
+   * que tout.
+   *
+   * Ce qui reste, et qui suffit : le nom de qui a confirmé s'inscrit
+   * comme toujours. L'historique dit que c'est lui, et le jour où un
+   * employé arrive, la règle revient d'elle-même. */
+  if (!params.seulAuCommerce) {
+    if (params.roleSite !== undefined
+      && !peutTraiterAjustement(params.roleSite)) {
+      throw new Error('Confirmer revient au responsable des commandes.');
+    }
+    /* Jamais celui qui a déclaré. C'est toute la raison d'être du cycle :
+       séparées, les deux mains ne peuvent pas s'entendre. */
+    if (d.parUid === params.parUid) {
+      throw new Error('On ne confirme pas le mouvement qu’on a déclaré.');
+    }
   }
 
   const regle = MOTIFS_AJUSTEMENT[d.motif];

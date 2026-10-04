@@ -241,6 +241,67 @@ export async function aUnCaissier(siteId: string): Promise<boolean> {
   return p;
 }
 
+/**
+ * Personne d'autre ne peut fermer ce dossier.
+ *
+ * Le cycle d'un mouvement de stock demande deux mains : l'une déclare,
+ * l'autre compte et confirme — et la seconde est le responsable des
+ * commandes. C'est ce qui empêche qu'un seul homme fasse disparaître ce
+ * qu'il veut, et cela n'a de sens que si cette seconde main existe.
+ *
+ * Deux cas où elle n'existe pas, et c'est le même mur :
+ *
+ *   - le commerce n'a qu'un compte ;
+ *   - il en a plusieurs, mais aucun ne porte le rôle « commandes ».
+ *
+ * Dans les deux, le dossier reste ouvert pour toujours. Il faudrait
+ * inventer un compte, ou se donner un rôle qu'on n'exerce pas, pour
+ * fermer ce qu'on a soi-même ouvert — et le registre dirait alors deux
+ * personnes là où il n'y en a qu'une. Mieux vaut qu'il dise la vérité :
+ * c'est le propriétaire, seul, et son nom s'inscrit.
+ *
+ * Dès qu'un responsable des commandes est nommé, la règle revient
+ * d'elle-même, sans rien changer nulle part.
+ *
+ * La réponse se garde le temps de la session : la question se pose
+ * devant chaque bouton d'un dossier, et elle ne change pas entre deux
+ * clics.
+ */
+const seulsConnus = new Map<string, Promise<boolean>>();
+
+export async function estSeulAuCommerce(
+  siteId: string, userId: string,
+): Promise<boolean> {
+  const cle = `${siteId}:${userId}`;
+  const connu = seulsConnus.get(cle);
+  if (connu) return connu;
+
+  const p = getDocs(query(
+    collection(db, 'membres'), where('siteId', '==', siteId)))
+    .then(snap => !snap.docs.some(d => {
+      const m = d.data() as Membre;
+      /* Celui qui pourrait confirmer à ma place : un autre compte,
+         actif, et qui tient les commandes. Un membre invité mais pas
+         encore inscrit n'a pas de compte — il ne confirme rien, il ne
+         compte donc pas encore. */
+      return m.actif !== false
+        && !!m.compteUid && m.compteUid !== userId
+        && m.role === 'commandes';
+    }))
+    /* Sans réponse — hors ligne, lecture refusée — on ne desserre
+       rien : mieux vaut un bouton qui refuse qu'une confirmation
+       qu'on n'aurait pas dû pouvoir donner. */
+    .catch(() => { seulsConnus.delete(cle); return false; });
+
+  seulsConnus.set(cle, p);
+  return p;
+}
+
+/** Oublier la réponse : un membre vient d'arriver ou de partir. */
+export function oublierSeulAuCommerce(): void {
+  seulsConnus.clear();
+}
+
 /** Les onglets visibles. `null` en rôle veut dire admin : tout est ouvert. */
 export function ongletsDuRole(role: RoleSite | null, tous: string[]): string[] {
   if (!role) return tous;

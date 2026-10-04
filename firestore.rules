@@ -505,10 +505,30 @@ service cloud.firestore {
       allow create: if travailleSur(siteEnvoye())
         && request.resource.data.get('parUid', '') == monUid()
         && request.resource.data.get('etat', '') == 'declare';
+      /* Confirmer ce qu'on a soi-même déclaré est refusé : séparées, les
+         deux mains ne peuvent pas s'entendre, et c'est cette séparation
+         qui rend le registre croyable.
+
+         Elle suppose qu'une seconde main existe. Chez un commerçant qui
+         tient seul sa boutique — ou qui n'a nommé personne aux commandes
+         — le dossier resterait ouvert pour toujours : il faudrait
+         inventer un compte, ou se donner un rôle qu'on n'exerce pas,
+         pour fermer ce qu'on a ouvert. Le registre dirait alors deux
+         personnes là où il n'y en a qu'une.
+
+         Le propriétaire fait donc exception, et lui seul : son nom
+         s'inscrit en confirmation comme celui de n'importe qui, et
+         l'historique dit que c'est lui. Le jour où un responsable des
+         commandes est nommé, l'app cesse d'emprunter ce chemin.
+
+         La règle ne peut pas compter les membres — une règle ne lit pas
+         une collection. Elle borne ce qu'elle sait borner : c'est le
+         propriétaire, et personne d'autre. */
       allow update: if travailleSur(siteDuDoc())
         && request.resource.data.get('parUid', '') == resource.data.get('parUid', '')
         && (request.resource.data.get('confirmeParUid', '') == ''
-          || request.resource.data.get('confirmeParUid', '') != resource.data.get('parUid', ''));
+          || request.resource.data.get('confirmeParUid', '') != resource.data.get('parUid', '')
+          || suisProprietaire());
       /* Un mouvement annulé reste au registre : il raconte une tentative. */
       allow delete: if false;
     }

@@ -8,7 +8,7 @@ import { doc, getDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/lib/auth-context';
 import { auteurCourant } from '@/lib/auteur';
-import { roleSurSite, type RoleSite } from '@/lib/roles';
+import { roleSurSite, estSeulAuCommerce, type RoleSite } from '@/lib/roles';
 import { formatMontant } from '@/lib/format';
 import { estEnsemble, racineRetour } from '@/lib/retour';
 import { ChampNombre } from '@/components/Champs';
@@ -43,6 +43,11 @@ export default function FicheAjustementPage() {
   const [d, setD] = useState<DossierAjustement | null>(null);
   const [nomSite, setNomSite] = useState<string | null>(null);
   const [role, setRole] = useState<RoleSite | null>(null);
+  /* Personne d'autre ne peut fermer ce dossier : aucun responsable des
+     commandes, ou pas d'autre compte du tout. La séparation des deux
+     mains n'a alors personne à séparer — et sans cela le dossier
+     resterait ouvert pour toujours. */
+  const [seul, setSeul] = useState(false);
   const [loading, setLoading] = useState(true);
   const [enCours, setEnCours] = useState(false);
   const [erreur, setErreur] = useState('');
@@ -71,6 +76,16 @@ export default function FicheAjustementPage() {
     roleSurSite(user.uid, siteId, activite?.adminUid)
       .then(setRole)
       .catch(() => setRole(null));
+    /* Seul le propriétaire s'affranchit de la seconde main : un employé
+       qui se retrouverait seul un matin ne doit pas pouvoir fermer ses
+       propres dossiers. */
+    if (user.uid === activite?.adminUid) {
+      estSeulAuCommerce(siteId, user.uid)
+        .then(setSeul)
+        .catch(() => setSeul(false));
+    } else {
+      setSeul(false);
+    }
   }, [user, siteId, activite?.adminUid]);
 
   async function agir(geste: () => Promise<unknown>) {
@@ -106,11 +121,19 @@ export default function FicheAjustementPage() {
   const i = ETAPES_AJUSTEMENT.indexOf(d.etat);
   /* Le comptage n'a lieu qu'en préparation : avant, personne n'est allé
      voir ; après, le fait est inscrit. */
-  const compte = d.etat === 'en_preparation' && peutTraiterAjustement(role);
+  /* Qui peut faire avancer ce dossier. Le responsable des commandes, et
+     — quand il n'y en a pas — le propriétaire, sans quoi le dossier
+     resterait ouvert pour toujours. */
+  const traite = peutTraiterAjustement(role) || seul;
+  const compte = d.etat === 'en_preparation' && traite;
   /* Le responsable des commandes compte des sacs, pas des francs : ce
      qu'une marchandise a coûté ne regarde pas celui qui la constate. */
   const voitLArgent = role !== 'commandes';
-  const sonPropreDossier = d.parUid === user?.uid;
+  /* Confirmer ce qu'on a soi-même déclaré : refusé, sauf quand
+     personne d'autre ne le peut. La séparation des deux mains n'a alors
+     personne à séparer, et le dossier resterait ouvert pour toujours.
+     Son nom s'inscrit en confirmation comme celui de n'importe qui. */
+  const sonPropreDossier = d.parUid === user?.uid && !seul;
 
   const totalDeclare = d.lignes.reduce((n, l) => n + l.quantiteDeclaree, 0);
   const totalConstate = d.lignes.reduce(
@@ -161,14 +184,14 @@ export default function FicheAjustementPage() {
                 Fermer
               </button>
 
-              {!clos && peutTraiterAjustement(role) && (
+              {!clos && traite && (
                 d.etat === 'en_preparation' ? (
                   <button type="button"
                     onClick={() => agir(async () => {
                       await constaterAjustement({
                         dossier: d,
                         quantites: comptes,
-                        roleSite: role,
+                        roleSite: role, seulAuCommerce: seul,
                       });
                       const frais = await lireAjustement(d.id);
                       if (!frais) throw new Error('Ce mouvement n’existe plus.');
@@ -180,7 +203,7 @@ export default function FicheAjustementPage() {
                         parNom: a.utilisateurNom,
                         utilisateurNom: a.utilisateurNom,
                         utilisateurFonction: a.utilisateurFonction,
-                        roleSite: role,
+                        roleSite: role, seulAuCommerce: seul,
                       });
                     })}
                     disabled={enCours || sonPropreDossier}
@@ -194,7 +217,9 @@ export default function FicheAjustementPage() {
                 ) : (
                   <button type="button"
                     onClick={() => agir(() =>
-                      avancerAjustement({ dossier: d, roleSite: role }))}
+                      avancerAjustement({
+                        dossier: d, roleSite: role, seulAuCommerce: seul,
+                      }))}
                     disabled={enCours}
                     className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-indigo-700 disabled:opacity-40">
                     {enCours ? <Loader2 size={14} className="animate-spin" /> : <ChevronRight size={14} />}
