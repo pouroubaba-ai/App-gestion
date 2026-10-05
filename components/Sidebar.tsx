@@ -355,9 +355,22 @@ export default function Sidebar({
      `/activite`, qui le renvoyait vers `/site`, qui le ramenait à son
      onglet de départ. Trois sauts pour revenir au point de départ, ce qui
      se voyait comme un clignotement. */
-  const propreAuProprietaire = (i: NavItem) =>
-    'href' in i && (i.href === '/site' || i.href === '/parametre'
+  /* Ce qui n'appartient qu'au propriétaire se reconnaissait à l'adresse
+     de ses liens. Depuis que ce menu se replie, il porte aussi des
+     groupes — et un groupe n'a pas d'adresse : le filtre ne les voyait
+     pas, et chaque membre recevait ses propres onglets plus les trois
+     groupes du propriétaire. Un caissier ouvrait « Marchandise » et
+     « Activité », qui ne sont pas à lui.
+     Un groupe est donc jugé sur ce qu'il contient : il appartient au
+     propriétaire dès que ses entrées en viennent. */
+  const propreAuProprietaire = (i: NavItem): boolean => {
+    if (i.type === 'accordion') {
+      return i.children.every(c => c.href === '/site' || c.href === '/parametre'
+        || c.href.startsWith('/ensemble'));
+    }
+    return 'href' in i && (i.href === '/site' || i.href === '/parametre'
       || i.href.startsWith('/ensemble'));
+  };
   /* Il garde une entrée à lui : sous quelle adresse il est connecté, sur
      quel site il agit, et à quel titre. Sans elle, il faudrait le demander
      à son gérant — et la déconnexion, qui vivait dans le tiroir du menu,
