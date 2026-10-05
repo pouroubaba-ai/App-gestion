@@ -21,9 +21,10 @@ import {
   Transfert, EtatTransfert, LIBELLES_TRANSFERT,
   ecartValeur, aUnEcart, lignesEnEcart, confirmerTransfert,
   peutExpedier, peutRecevoir, peutArbitrerEcart, peutAnnulerDossier, Role,
-  libelleTransfert,
+  libelleTransfert, valeurEnvoyee,
 } from '@/lib/flux-marchandise';
-import { estEnsemble, retourHistorique } from '@/lib/retour';
+import { estEnsemble, retourHistorique, retourOnglet } from '@/lib/retour';
+import { formatMontant } from '@/lib/format';
 
 
 
@@ -70,6 +71,10 @@ export default function FicheTransfertPage() {
      `'recouvrement'` tient lieu de rôle muet — il ne peut ni expédier, ni
      recevoir, ni arbitrer. */
   const [ROLE_COURANT, setRole] = useState<Role | null>('recouvrement');
+  /* Qui répond de l'argent voit ce que le dossier déplace. Le responsable
+     des commandes fait avancer des quantités : la valeur ne lui dit rien
+     de ce qu'il a à faire, et l'écran la lui cacherait ailleurs. */
+  const montreArgent = ROLE_COURANT !== 'commandes';
 
   /* L'admin de l'activité n'est désigné par aucun membre : `roleSurSite`
      lui rend `null`, qui vaut « tout permis ». */
@@ -487,7 +492,9 @@ export default function FicheTransfertPage() {
                 if (de === 'historique' || de === 'ensemble-historique') {
                   return `${base}${retourHistorique(searchParams)}`;
                 }
-                return `${base}?onglet=transferts`;
+                /* La vue quittée revient avec nous : on avait ouvert ce
+                   dossier depuis une étape ou un statut précis. */
+                return `${base}${retourOnglet('transferts', searchParams)}`;
               })())}
                 title="Fermer"
                 className="-ml-1 shrink-0 rounded-xl p-2 text-gray-500 transition-colors hover:bg-gray-50 dark:hover:bg-gray-800 sm:hidden">
@@ -518,7 +525,7 @@ export default function FicheTransfertPage() {
               if (de === 'historique' || de === 'ensemble-historique') {
                 return `${base}${retourHistorique(searchParams)}`;
               }
-              return `${base}?onglet=transferts`;
+              return `${base}${retourOnglet('transferts', searchParams)}`;
             })())}
               className="hidden px-4 py-2 text-sm font-bold text-gray-500 hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl transition-colors sm:block">
               Fermer
@@ -835,6 +842,17 @@ export default function FicheTransfertPage() {
                   {aExpedie && (
                     <th className="text-center px-3 py-2.5 font-medium">Reçu</th>
                   )}
+                  {/* Le coût de l'unité, puis ce que la ligne déplace.
+                      La valeur seule ne se laisse pas lire : à zéro, elle
+                      ne dit pas si c'est la quantité ou le prix qui
+                      manque. Le coût unitaire tranche, et c'est lui qu'on
+                      va corriger quand il est faux. */}
+                  {montreArgent && (
+                    <th className="text-center px-3 py-2.5 font-medium">Coût unitaire</th>
+                  )}
+                  {montreArgent && (
+                    <th className="text-center px-3 py-2.5 font-medium">Valeur</th>
+                  )}
                   {/* Les boutons ont leur colonne : serrés contre un nombre,
                       ils le rendent illisible. Collée à droite, parce que
                       c'est par elle qu'on charge et qu'on compte, et que le
@@ -937,6 +955,33 @@ export default function FicheTransfertPage() {
                         </span>
                       </td>
                       )}
+                      {/* La même quantité que celle qui fait foi au total :
+                          l'expédié quand il est connu, le demandé tant que
+                          rien n'est parti. Deux façons de compter la même
+                          ligne finiraient par se contredire. */}
+                      {/* Un coût absent se signale au lieu de s'écrire
+                          zéro : la source n'a jamais payé cette
+                          marchandise — ou son prix n'a pas été repris — et
+                          « 0 FCFA » se lirait comme gratuit. */}
+                      {montreArgent && (
+                        <td className="px-3 py-2.5 text-center">
+                          {l.valeurUnitaire > 0 ? (
+                            <span className="font-medium text-gray-600 dark:text-gray-300">
+                              {formatMontant(l.valeurUnitaire)}
+                            </span>
+                          ) : (
+                            <span className="text-xs font-bold text-orange-500">
+                              Coût inconnu
+                            </span>
+                          )}
+                        </td>
+                      )}
+                      {montreArgent && (
+                        <td className="px-3 py-2.5 text-center font-medium text-gray-700 dark:text-gray-300">
+                          {formatMontant(
+                            (l.quantiteExpediee ?? l.quantiteDemandee) * l.valeurUnitaire)}
+                        </td>
+                      )}
                       {/* Une déclaration s'ajoute, elle ne s'écrase pas.
                           Fond opaque : la cellule reste lisible quand les
                           colonnes défilent dessous. */}
@@ -964,6 +1009,7 @@ export default function FicheTransfertPage() {
                     {detailLigne === i && nbDecl > 0 && (
                       <tr>
                         <td colSpan={5 + (aExpedie ? 1 : 0) + (montreStock ? 1 : 0)
+                          + (montreArgent ? 2 : 0)
                           + ((peutExpedierIci || peutRecevoirIci) ? 1 : 0)}
                           className="px-3 pb-2">
                           <div className="rounded-lg bg-gray-50 px-3 py-2 dark:bg-gray-800/50">
@@ -1005,7 +1051,10 @@ export default function FicheTransfertPage() {
 
           {/* Un transfert déplace de la marchandise entre deux sites d'une même
               activité : rien ne se vend, la valeur ne quitte jamais la maison.
-              Ce qui se compte, ce sont les lignes et les produits. */}
+              Elle se dit quand même — non comme un gain, mais comme un
+              poids : savoir qu'un camion emporte deux cent mille francs
+              décide de qui l'accompagne et de ce qu'on vérifie. Le dossier
+              le taisait, et chaque ligne le tait aussi. */}
           <div className="flex flex-col gap-1.5 pt-3 mt-3 border-t border-gray-100 dark:border-gray-800 text-sm">
             <div className="flex justify-between">
               <span className="text-gray-400">Produits</span>
@@ -1013,6 +1062,33 @@ export default function FicheTransfertPage() {
                 {transfert.lignes.length} ligne{transfert.lignes.length > 1 ? 's' : ''}
               </span>
             </div>
+            {montreArgent && (() => {
+              /* Combien de lignes pèsent sans qu'on sache ce qu'elles
+                 valent. Un total à zéro se lirait comme « rien de
+                 précieux » alors qu'il dit « on ne sait pas » : deux
+                 situations opposées, et c'est celle-là qu'il faut
+                 corriger. */
+              const sansCout = transfert.lignes.filter(l => !(l.valeurUnitaire > 0)).length;
+              return (
+                <>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Valeur</span>
+                    <span className="font-bold text-gray-900 dark:text-gray-100">
+                      {formatMontant(valeurEnvoyee(transfert.lignes))}
+                    </span>
+                  </div>
+                  {sansCout > 0 && (
+                    <p className="text-[11px] font-medium leading-snug text-gray-400">
+                      {sansCout === transfert.lignes.length
+                        ? 'Aucune ligne ne porte de coût : ce total ne vaut pas zéro, il est inconnu.'
+                        : <>Dont <span className="font-bold text-orange-500">
+                            {sansCout} ligne{sansCout > 1 ? 's' : ''}
+                          </span> sans coût connu, comptée{sansCout > 1 ? 's' : ''} pour zéro.</>}
+                    </p>
+                  )}
+                </>
+              );
+            })()}
             {transfert.lignes.some(l => l.quantiteRecue != null) && (
               <div className="flex justify-between">
                 <span className="text-gray-400">Lignes en écart</span>

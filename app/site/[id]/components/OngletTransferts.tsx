@@ -1,6 +1,7 @@
 'use client';
-import { marqueOrigine } from '@/lib/retour';
+import { marqueOrigine, marqueVue } from '@/lib/retour';
 import { useEffect, useState } from 'react';
+import { useVueUrl } from '@/lib/vue-url';
 import { hankenGrotesk } from './finance/font';
 import { useRouter } from 'next/navigation';
 import { Loader2, Plus, AlertTriangle, SlidersHorizontal } from 'lucide-react';
@@ -100,13 +101,21 @@ export default function OngletTransferts({ siteId, userId, sites, role, titre }:
    * bouge et ce qui est clos. Chaque dossier porte alors son statut sur
    * un badge, là où il sert — dans la liste.
    */
-  const [modeVue, setModeVue] = useState<'encours' | 'statut'>('encours');
+  /* Le mode de lecture reste dans l'adresse : ouvrir un dossier depuis
+     « Par statut » puis revenir rouvrait « En cours », donc une autre
+     liste que celle qu'on parcourait. */
+  const [modeVue, setModeVue] = useVueUrl<'encours' | 'statut'>(
+    'mode', 'encours', ['encours', 'statut']);
   /* Les statuts retenus. Vide = tous, l'état au repos. */
   const [filtreStatuts, setFiltreStatuts] = useState<EtatTransfert[]>([]);
   const [feuilleFiltre, setFeuilleFiltre] = useState(false);
 
-  const [sens, setSens] = useState<Sens>('transfert');
-  const [etatBrut, setEtat] = useState<EtatTransfert>('en_cours');
+  /* Envoi ou réception : c'est la question qui ouvre l'écran, et le
+     responsable qui suivait ses réceptions ne doit pas les reperdre. */
+  const [sens, setSens] = useVueUrl<Sens>(
+    'sens', 'transfert', ['transfert', 'reception']);
+  const [etatBrut, setEtat] = useVueUrl<EtatTransfert>(
+    'etape', 'en_cours', ETAPES_TRANSFERT);
   const [recherche, setRecherche] = useState('');
   const [voirEtapes, setVoirEtapes] = useState(false);
 
@@ -339,6 +348,9 @@ export default function OngletTransferts({ siteId, userId, sites, role, titre }:
             etats: ['confirme'] as EtatTransfert[] },
         ]).map(c => {
           const liste = c.etats.flatMap(e => parEtat(e));
+          /* Au coût moyen, comme les tuiles par statut : l'expédié quand
+             il est connu, le demandé tant que rien n'est parti. */
+          const valeurCarte = liste.reduce((s, t) => s + valeurEnvoyee(t.lignes), 0);
           const actif = c.cle === 'confirme' ? etat === 'confirme' : etat !== 'confirme';
           return (
             <button key={c.cle} type="button"
@@ -353,22 +365,45 @@ export default function OngletTransferts({ siteId, userId, sites, role, titre }:
               style={actif
                 ? { background: 'linear-gradient(135deg, #4f46e5 0%, #3730a3 100%)' }
                 : undefined}>
-              {/* L'emblème et le nom sur une ligne : empilés, ils poussaient
-                  le chiffre hors de la première vue. */}
-              <span className="flex items-center gap-2">
-                <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-[9px] text-[15px] ${
+              {/* Même dessin que les tuiles par statut : l'emblème à
+                  gauche, le compte en pastille à l'autre extrémité. Les
+                  deux lectures d'un même écran se ressemblaient de loin
+                  sans se ressembler de près — on relisait la carte pour
+                  savoir si le grand chiffre comptait des dossiers ou des
+                  francs. */}
+              <div className="flex items-start justify-between gap-2">
+                <span className={`flex h-8 w-8 items-center justify-center rounded-[10px] text-lg ${
                   actif ? 'bg-white/15' : 'bg-neutral-100 dark:bg-neutral-800'}`}>
                   {c.emoji}
                 </span>
-                <span className={`min-w-0 flex-1 truncate text-[11px] font-bold uppercase tracking-wide ${
-                  actif ? 'text-indigo-100' : 'text-neutral-400'}`}>
-                  {c.label}
-                </span>
-              </span>
-              <span className={`${hankenGrotesk.className} mt-1.5 block text-[19px] font-bold leading-7 tracking-tight sm:text-[26px] sm:leading-8 ${
+                {montreArgent && (
+                  <span className={`shrink-0 whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                    actif
+                      ? 'bg-white/15 text-white'
+                      : 'bg-neutral-100 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400'}`}>
+                    {liste.length} dossier{liste.length > 1 ? 's' : ''}
+                  </span>
+                )}
+              </div>
+              <p className={`mt-3 text-[11px] font-bold uppercase tracking-wide ${
+                actif ? 'text-indigo-100' : 'text-neutral-400'}`}>
+                {c.label}
+              </p>
+              {/* Ce que ces dossiers déplacent. L'écran disait combien de
+                  transferts attendaient sans jamais dire ce qu'ils
+                  valaient : deux dossiers en route peuvent peser un carton
+                  ou tout un rayon, et rien ne permettait de le savoir
+                  avant de les ouvrir un par un. */}
+              <p className={`${hankenGrotesk.className} mt-0.5 whitespace-nowrap text-[19px] font-bold leading-7 tracking-tight sm:text-[26px] sm:leading-8 ${
                 actif ? 'text-white' : 'text-neutral-900 dark:text-white'}`}>
-                {liste.length}
-              </span>
+                {montreArgent ? formatMontant(valeurCarte) : liste.length}
+              </p>
+              {!montreArgent && (
+                <p className={`text-[11px] font-medium ${
+                  actif ? 'text-indigo-100' : 'text-neutral-400'}`}>
+                  dossier{liste.length > 1 ? 's' : ''}
+                </p>
+              )}
             </button>
           );
         })}
@@ -517,8 +552,17 @@ export default function OngletTransferts({ siteId, userId, sites, role, titre }:
               dossiers={affiches}
               cleDe={t => t.id}
               compte={`${affiches.length} transfert${affiches.length > 1 ? 's' : ''}`}
-              onOuvrir={t => router.push(
-                `/site/${ctx.ensemble ? t.siteSourceId : siteId}/transferts/${t.id}${ctx.ensemble ? '?de=ensemble' : ''}`)}
+              /* Le dossier emporte la vue d'où on l'ouvre : sans elle, le
+                 refermer ramenait sur « En cours », même si l'on venait
+                 des confirmés ou d'une étape précise. */
+              onOuvrir={t => router.push((() => {
+                const base = `/site/${ctx.ensemble ? t.siteSourceId : siteId}/transferts/${t.id}`;
+                const vue = marqueVue(new URLSearchParams(window.location.search));
+                /* `marqueVue` rend un suffixe en `&…` : il lui faut un
+                   premier paramètre devant, que `de` fournit ou non. */
+                if (ctx.ensemble) return `${base}?de=ensemble${vue}`;
+                return vue ? `${base}?${vue.slice(1)}` : base;
+              })())}
               colonnes={[
                 { cle: 'reference', label: 'Référence', rang: 'titre',
                   rendu: t => (
@@ -567,6 +611,18 @@ export default function OngletTransferts({ siteId, userId, sites, role, titre }:
                   rendu: t => <span className="text-gray-500">{formatDate(t.dateInitiation)}</span> },
                 { cle: 'produits', label: 'Produits', rang: 'corps',
                   rendu: t => t.lignes.length },
+                /* Ce que la ligne déplace. Le nombre de produits ne dit
+                   pas le poids d'un dossier : une référence peut valoir
+                   plus que dix. Pas pour qui ne répond pas de l'argent —
+                   lui fait avancer des dossiers. */
+                ...(montreArgent ? [{
+                  cle: 'valeur', label: 'Valeur', rang: 'corps' as const,
+                  rendu: (t: Transfert) => (
+                    <span className="font-bold text-gray-700 dark:text-gray-300">
+                      {formatMontant(valeurEnvoyee(t.lignes))}
+                    </span>
+                  ),
+                }] : []),
                 ...(compteVue ? [{
                   cle: 'ecart', label: 'Écart', rang: 'corps' as const,
                   rendu: (t: Transfert) => {
