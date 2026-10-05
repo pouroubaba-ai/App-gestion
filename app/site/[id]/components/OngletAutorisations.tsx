@@ -19,6 +19,7 @@
  */
 
 import { useEffect, useState, useRef } from 'react';
+import { useVueUrl } from '@/lib/vue-url';
 import { formatMontant } from '@/lib/format';
 import { useAuth } from '@/lib/auth-context';
 import { Loader2, ShieldCheck } from 'lucide-react';
@@ -53,11 +54,13 @@ export default function OngletAutorisations({
   const [loading, setLoading] = useState(true);
   /* Quel sens on traite. Les entrées d'abord : c'est ce qui attend le plus
      souvent, et faire entrer l'argent prime sur le faire sortir. */
-  const [sens, setSens] = useState<'entree' | 'sortie'>('entree');
+  const [sens, setSens] = useVueUrl<'entree' | 'sortie'>(
+    'sens', 'entree', ['entree', 'sortie']);
   /* Par mouvement ou par auteur. Un porteur remet ce qu'il a collecté en
      une fois : la vue par auteur épouse ce geste. Par mouvement d'abord,
      parce qu'on vient d'abord voir ce qui attend. */
-  const [vue, setVue] = useState<'mouvements' | 'auteurs'>('mouvements');
+  const [vue, setVue] = useVueUrl<'mouvements' | 'auteurs'>(
+    'axe', 'mouvements', ['mouvements', 'auteurs']);
   /* Un mouvement sorti de son lot, pour le compter seul. */
   const [aCompter, setACompter] = useState<MouvementAttente | null>(null);
   const [version, setVersion] = useState(0);

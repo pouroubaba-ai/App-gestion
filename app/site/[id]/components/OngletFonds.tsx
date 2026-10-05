@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useState, useRef } from 'react';
+import { useVueUrl } from '@/lib/vue-url';
 import { formatMontant } from '@/lib/format';
 import { useAuth } from '@/lib/auth-context';
 import {
@@ -108,14 +109,19 @@ export default function OngletFonds({ siteId, userId, sites, titre }: Props) {
      s'imposent pas. */
   const [periode, setPeriode] = useState<Periode>('jour');
   /* les cartes servent d'onglets : la carte active décide de ce qui s'affiche dessous */
-  const [vue, setVue] = useState<'fonds' | 'entree' | 'sortie' | 'attente'>('fonds');
+  /* La carte choisie vit dans l'adresse : ouvrir un mouvement depuis
+     « Sorties » puis revenir rouvrait « Fonds », et le rechargement
+     reposait la question qu'on avait déjà tranchée. */
+  const [vue, setVue] = useVueUrl<'fonds' | 'entree' | 'sortie' | 'attente'>(
+    'rubrique', 'fonds', ['fonds', 'entree', 'sortie', 'attente']);
   /* Dans la vue « À confirmer », quel sens on regarde. Entrées d'abord :
      c'est ce qui attend le plus souvent. */
-  const [sensAttente, setSensAttente] = useState<'entree' | 'sortie'>('entree');
+  const [sensAttente, setSensAttente] = useVueUrl<'entree' | 'sortie'>(
+    'sens', 'entree', ['entree', 'sortie']);
   /* Par mouvement ou par auteur : savoir qui porte combien vaut autant que
      savoir ce qui attend, et le gérant lit d'abord des personnes. */
-  const [vueAttente, setVueAttente] =
-    useState<'mouvements' | 'auteurs'>('mouvements');
+  const [vueAttente, setVueAttente] = useVueUrl<'mouvements' | 'auteurs'>(
+    'axe', 'mouvements', ['mouvements', 'auteurs']);
   /* Qui regarde : le caissier ne déclare pas de mouvement, il n'a donc pas
      le bouton de saisie sous le registre. */
   const [roleSite, setRoleSite] = useState<RoleSite | null>(null);

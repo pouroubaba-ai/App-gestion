@@ -1,4 +1,5 @@
 'use client';
+import { useVueUrl } from '@/lib/vue-url';
 import { marqueOrigine } from '@/lib/retour';
 import { useEffect, useState } from 'react';
 import { formatMontant } from '@/lib/format';
@@ -90,9 +91,11 @@ export default function OngletCycleVente({ siteId, userId, role, sites, titre }:
   const [ventes, setVentes] = useState<Vente[]>([]);
   const [loading, setLoading] = useState(true);
   /* La carte active transite par l'URL : sans ça, revenir d'un devis
-     retombait sur la carte Commande, jamais sur celle qu'on avait quittée. */
-  const [vueBrute, setVue] = useState<Vue>(
-    (searchParams.get('carte') as Vue) ?? 'commande');
+     retombait sur la carte Commande, jamais sur celle qu'on avait quittée.
+     Elle ne faisait que s'y lire — le clic ne la réécrivait pas, donc
+     l'adresse gardait la carte d'arrivée et le rechargement y ramenait. */
+  const [vueBrute, setVue] = useVueUrl<Vue>('carte', 'commande',
+    ['devis', 'commande', 'preparation', 'pret', 'livre', 'annule']);
 
   /**
    * Deux façons de choisir ce qu'on regarde.
@@ -104,7 +107,8 @@ export default function OngletCycleVente({ siteId, userId, role, sites, titre }:
    *
    * « Statut » garde l'autre lecture, pour qui cherche une étape précise.
    */
-  const [modeVue, setModeVue] = useState<'encours' | 'statut'>('encours');
+  const [modeVue, setModeVue] = useVueUrl<'encours' | 'statut'>(
+    'mode', 'encours', ['encours', 'statut']);
 
   /* Les statuts retenus dans la liste. Vide = tous, l'etat au repos.
      Il ne sert qu'en vue « en cours » : ailleurs, la carte active a deja

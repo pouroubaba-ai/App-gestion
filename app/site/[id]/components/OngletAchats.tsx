@@ -1,4 +1,5 @@
 'use client';
+import { useVueUrl } from '@/lib/vue-url';
 import { marqueOrigine } from '@/lib/retour';
 import { useEffect, useState } from 'react';
 import { formatMontant } from '@/lib/format';
@@ -113,7 +114,11 @@ export default function OngletAchats({ siteId, userId, role, sites, titre }: Pro
    * bouge et ce qui est clos. Chaque dossier porte alors son statut sur
    * un badge, là où il sert — dans la liste.
    */
-  const [modeVue, setModeVue] = useState<'encours' | 'statut'>('encours');
+  /* Le mode de lecture suit les cartes dans l'adresse : elles y étaient
+     déjà, lui non — revenir d'un dossier ouvert depuis « Par statut »
+     rouvrait « En cours », donc une autre liste que celle parcourue. */
+  const [modeVue, setModeVue] = useVueUrl<'encours' | 'statut'>(
+    'mode', 'encours', ['encours', 'statut']);
   /* Les statuts retenus. Vide = tous, l'état au repos. */
   const [filtreStatuts, setFiltreStatuts] = useState<EtatAchat[]>([]);
   const [feuilleFiltre, setFeuilleFiltre] = useState(false);

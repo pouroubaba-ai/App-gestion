@@ -1,4 +1,5 @@
 'use client';
+import { useVueUrl } from '@/lib/vue-url';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Loader2, Plus, ArrowDownLeft, ArrowUpRight, Download } from 'lucide-react';
@@ -59,7 +60,8 @@ export default function ListeMouvementsStock({
      marchandise » — trois cartons cassés et deux cents ne se lisent pas
      dans une liste de références. Le responsable des commandes n'a que
      les dossiers : c'est eux qu'il va compter. */
-  const [vue, setVue] = useState<'dossiers' | 'motifs'>('dossiers');
+  const [vue, setVue] = useVueUrl<'dossiers' | 'motifs'>(
+    'axe', 'dossiers', ['dossiers', 'motifs']);
   const [recherche, setRecherche] = useState('');
   /* Échafaudage d'essai : déclarer d'un coup le stock de départ d'un
      catalogue qu'on vient de charger. Part avec le test. */

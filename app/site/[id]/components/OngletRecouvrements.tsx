@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
+import { useVueUrl } from '@/lib/vue-url';
 import {
   collection, query, where, getDocs, addDoc, updateDoc, deleteDoc, doc, serverTimestamp,
 } from 'firebase/firestore';
@@ -249,7 +250,8 @@ export default function OngletRecouvrements({ siteId, userId, onCount, sites, ti
   /* Ce entre quoi on avance. Une tournée se fait par personne : on appelle
      Ibrahim une fois, quelles que soient ses trois échéances. Mais parfois
      c'est un dossier précis qu'on suit — d'où l'interrupteur. */
-  const [parQui, setParQui] = useState<'partenaire' | 'echeance'>('partenaire');
+  const [parQui, setParQui] = useVueUrl<'partenaire' | 'echeance'>(
+    'axe', 'partenaire', ['partenaire', 'echeance']);
   /* Le détail des échéances du partenaire, déplié à la demande : on
      s'engage sur un total, on veut pouvoir voir de quoi il est fait. */
   const [voirDetail, setVoirDetail] = useState(false);

@@ -13,6 +13,7 @@
  */
 
 import { useEffect, useState } from 'react';
+import { useVueUrl } from '@/lib/vue-url';
 import { formatMontant } from '@/lib/format';
 import { hankenGrotesk } from './finance/font';
 import {
@@ -58,10 +59,23 @@ export default function OngletRemises({ siteId, sites, userId, titre }: Props) {
    *
    * Les deux cartes annonçaient des chiffres que rien ne dépliait : on
    * lisait « 3 000 en attente » au-dessus d'une liste où tout se
-   * mélangeait, et il fallait chercher à l'œil lesquelles. Cliquer la
-   * carte montre ce qu'elle compte. Recliquer revient à tout.
+   * mélangeait, et il fallait chercher à l'œil lesquelles. Chaque carte
+   * déplie désormais ce qu'elle compte.
+   *
+   * Deux états, pas trois. Un troisième — « tout » — existait, atteint
+   * en recliquant la carte active : les deux cartes s'éteignaient et la
+   * liste remontrait le mélange que ces cartes servaient précisément à
+   * défaire. Il ne répondait à aucune question, et son total ne
+   * correspondait à aucune des deux sommes affichées au-dessus.
+   *
+   * On arrive sur l'attente : c'est elle qui appelle un geste — l'argent
+   * déclaré que la caisse n'a pas encore confirmé ; le passé n'est
+   * qu'une trace qu'on consulte.
    */
-  const [vu, setVu] = useState<'tout' | 'en_attente' | 'autorise'>('tout');
+  /* Ce qu'on regardait survit au rechargement : rouvrir sur l'attente
+     quand on consultait le passé reposait une question déjà tranchée. */
+  const [vu, setVu] = useVueUrl<'en_attente' | 'autorise'>(
+    'rubrique', 'en_attente', ['en_attente', 'autorise']);
   const [loading, setLoading] = useState(true);
 
   /* Aller retirer de l'argent se fait à un tiroir précis : les missions
@@ -99,6 +113,10 @@ export default function OngletRemises({ siteId, sites, userId, titre }: Props) {
   const remises = liste.filter(m => m.sens === 'entree');
 
   const t = totauxEnAttente(remises);
+  /* Chaque carte dit si c'est elle qu'on regarde — pas si c'est l'autre.
+     La formuler par la négative les faisait mentir sur « tout », où
+     aucune des deux n'est choisie. */
+  const attenteChoisie = vu === 'en_attente';
   const autorises = remises.filter(m => m.etat === 'autorise');
   /* Ce que la caisse a réellement passé : le compté, pas le déclaré. */
   const passe = autorises.reduce(
@@ -107,11 +125,23 @@ export default function OngletRemises({ siteId, sites, userId, titre }: Props) {
      souvent — et c'est bien qu'il se voie quand ce n'est pas le cas. */
   const ecarts = autorises.reduce(
     (n, m) => n + Math.abs(m.montant - (m.montantAutorise ?? m.montant)), 0);
-  const refuses = remises.filter(m => m.etat === 'refuse').length;
+  /* Les refus, en entier et non comptés.
+   *
+   * Un refus d'entrée dit qu'une somme déclarée remise n'est pas arrivée
+   * au tiroir. Pour celui qui l'a déclarée, c'est la chose la plus
+   * importante de cet écran — et elle n'y tenait qu'en un chiffre, sous
+   * une carte qui parle d'autre chose. On la sort, avec son motif et le
+   * nom de qui a refusé : sans eux, il reste à deviner ce qui s'est
+   * passé. */
+  const lignesRefusees = remises.filter(m => m.etat === 'refuse');
+  const refuses = lignesRefusees.length;
+  const montantRefuse = lignesRefusees
+    .filter(m => m.sens === 'entree')
+    .reduce((n, m) => n + m.montant, 0);
 
   /* Ce qu'on déroule sous les cartes. Un refus n'appartient à aucune des
      deux : il reste visible dans la vue complète. */
-  const affichees = vu === 'tout' ? remises : remises.filter(m => m.etat === vu);
+  const affichees = remises.filter(m => m.etat === vu);
 
   return (
     <div>
@@ -183,6 +213,12 @@ export default function OngletRemises({ siteId, sites, userId, titre }: Props) {
           aller voir le caissier — le second n'est qu'une trace.
           Côte à côte même sur un téléphone : empilées, deux chiffres
           prenaient la moitié de l'écran. */}
+      {/* La carte ne se peint que si son filtre est actif. Elle se peignait
+          par la négative — tout ce qui n'était pas « autorisé » — et
+          arrivait donc bleue sans que rien ne soit filtré : on lisait
+          « En attente » en couleur au-dessus d'une liste qui montrait
+          tout, et il fallait cliquer pour obtenir ce qu'on croyait déjà
+          voir. */}
       <div className="grid grid-cols-2 gap-2.5 sm:gap-3">
         {/* Le dégradé se déplace sur la carte choisie : c'est lui qui dit ce
             qu'on regarde. Un anneau autour se lisait comme une décoration ;
@@ -190,50 +226,51 @@ export default function OngletRemises({ siteId, sites, userId, titre }: Props) {
             Sans choix, il reste sur l'attente — c'est elle qui appelle un
             geste, l'autre n'est qu'une trace. */}
         <button type="button"
-          onClick={() => setVu(v => v === 'en_attente' ? 'tout' : 'en_attente')}
+          onClick={() => setVu('en_attente')}
           className={`rounded-2xl p-4 text-left shadow-sm transition-all sm:p-5 ${
-            vu === 'autorise'
-              ? 'border border-black/[0.06] bg-white dark:border-white/10 dark:bg-neutral-900'
-              : 'text-white'}`}
-          style={vu === 'autorise' ? undefined
-            : { background: 'linear-gradient(135deg, #4f46e5 0%, #3730a3 100%)' }}>
+            attenteChoisie
+              ? 'text-white'
+              : 'border border-black/[0.06] bg-white dark:border-white/10 dark:bg-neutral-900'}`}
+          style={attenteChoisie
+            ? { background: 'linear-gradient(135deg, #4f46e5 0%, #3730a3 100%)' }
+            : undefined}>
           <div className="flex items-start justify-between gap-3">
             <span className={`flex h-8 w-8 items-center justify-center rounded-[10px] ${
-              vu === 'autorise'
-                ? 'bg-neutral-100 dark:bg-neutral-800'
-                : 'bg-white/15'}`}>
+              attenteChoisie
+                ? 'bg-white/15'
+                : 'bg-neutral-100 dark:bg-neutral-800'}`}>
               <HandCoins size={16}
-                className={vu === 'autorise' ? 'text-indigo-600' : undefined} />
+                className={attenteChoisie ? undefined : 'text-indigo-600'} />
             </span>
             {/* La pastille s'efface en demi-largeur : elle écraserait
                 l'icône, et le compte se relit dans la liste. */}
             {t.nb > 0 && (
               <span className={`hidden shrink-0 rounded-lg px-2.5 py-1 text-xs font-bold sm:inline ${
-                vu === 'autorise'
-                  ? 'bg-neutral-100 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400'
-                  : 'bg-white/15 text-indigo-100'}`}>
+                attenteChoisie
+                  ? 'bg-white/15 text-indigo-100'
+                  : 'bg-neutral-100 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400'}`}>
                 {t.nb} mouvement{t.nb > 1 ? 's' : ''}
               </span>
             )}
           </div>
           <p className={`mt-3 text-[11px] font-bold uppercase tracking-wide ${
-            vu === 'autorise' ? 'text-neutral-400' : 'text-indigo-100'}`}>
+            attenteChoisie ? 'text-indigo-100' : 'text-neutral-400'}`}>
             En attente
           </p>
           <p className={`${hankenGrotesk.className} mt-0.5 text-[19px] font-bold leading-7 tracking-tight sm:text-[26px] sm:leading-8 ${
-            vu === 'autorise' ? 'text-neutral-900 dark:text-white' : ''}`}>
+            attenteChoisie ? '' : 'text-neutral-900 dark:text-white'}`}>
             {formatMontant(t.entrees + t.sorties)}
           </p>
           {/* La phrase se raccourcit au téléphone : en demi-largeur, la
               version longue faisait quatre lignes sous le chiffre. */}
           <p className={`mt-1 text-[11px] ${
-            vu === 'autorise' ? 'text-gray-400' : 'text-indigo-100'}`}>
+            attenteChoisie ? 'text-indigo-100' : 'text-gray-400'}`}>
             {t.nb > 0 ? (
               <>
                 <span className="sm:hidden">{t.nb} à faire confirmer</span>
                 <span className="hidden sm:inline">
-                  {vu === 'en_attente'
-                    ? 'Voici ce qui attend la caisse. Recliquez pour tout revoir.'
+                  {attenteChoisie
+                    ? 'Voici ce qui attend la caisse.'
                     : 'Déclaré, en attente de confirmation par la caisse.'}
                 </span>
               </>
@@ -242,7 +279,7 @@ export default function OngletRemises({ siteId, sites, userId, titre }: Props) {
         </button>
 
         <button type="button"
-          onClick={() => setVu(v => v === 'autorise' ? 'tout' : 'autorise')}
+          onClick={() => setVu('autorise')}
           className={`rounded-2xl p-4 text-left shadow-sm transition-all sm:p-5 ${
             vu === 'autorise'
               ? 'text-white'
@@ -285,20 +322,56 @@ export default function OngletRemises({ siteId, sites, userId, titre }: Props) {
         </button>
       </div>
 
+      {/* Ce que la caisse a refusé. Au-dessus de la liste, pas dedans :
+          une somme déclarée remise et jamais arrivée au tiroir ne se
+          range pas à sa date entre deux lignes ordinaires. */}
+      {refuses > 0 && (
+        <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 p-4 dark:border-red-900/50 dark:bg-red-900/15">
+          <p className="flex items-center gap-1.5 text-xs font-bold uppercase text-red-700 dark:text-red-400">
+            <AlertTriangle size={13} className="shrink-0" />
+            {refuses === 1 ? 'Une remise refusée' : `${refuses} remises refusées`}
+            {montantRefuse > 0 && ` · ${formatMontant(montantRefuse)}`}
+          </p>
+          <div className="mt-2.5 space-y-2">
+            {lignesRefusees.map(m => (
+              <div key={m.id} className="text-xs text-red-900 dark:text-red-200">
+                <span className="font-bold">{formatMontant(m.montant)}</span>
+                {' · '}{m.detail || LIBELLES_MOTIF_CAISSE[m.motif]}
+                {' · '}{new Date(m.date).toLocaleDateString('fr-FR')}
+                {m.autoriseParNom && (
+                  <span className="text-red-700/80 dark:text-red-300/80">
+                    {' — refusé par '}{m.autoriseParNom}
+                  </span>
+                )}
+                {m.constat && (
+                  <p className="mt-0.5 italic text-red-700/80 dark:text-red-300/80">
+                    « {m.constat} »
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+          {montantRefuse > 0 && (
+            <p className="mt-2.5 text-[11px] text-red-700/80 dark:text-red-300/80">
+              Un écart a été ouvert sur le site : il porte les deux
+              déclarations et attend d’être tranché.
+            </p>
+          )}
+        </div>
+      )}
+
       <div className="mt-4 rounded-2xl border border-gray-100 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-gray-900">
         <p className="mb-4 text-sm font-bold text-gray-900 dark:text-gray-100">
           {/* Le titre dit ce qu'on regarde : sans lui, une liste filtrée
               ressemble à une liste courte. */}
-          {vu === 'en_attente' ? 'En attente de la caisse'
-            : vu === 'autorise' ? 'Passé en caisse'
-            : 'Mes remises'}
+          {vu === 'en_attente' ? 'En attente de la caisse' : 'Passé en caisse'}
         </p>
 
         {affichees.length === 0 ? (
           <p className="py-8 text-center text-xs text-gray-400">
-            {vu === 'en_attente' ? 'Rien n’attend la caisse.'
-              : vu === 'autorise' ? 'Rien n’est encore passé en caisse.'
-              : 'Aucune remise. Ce que vous encaissez apparaîtra ici jusqu’à ce que la caisse le confirme.'}
+            {vu === 'en_attente'
+              ? 'Rien n’attend la caisse. Ce que vous encaissez apparaîtra ici jusqu’à ce qu’elle le confirme.'
+              : 'Rien n’est encore passé en caisse.'}
           </p>
         ) : (
           <>

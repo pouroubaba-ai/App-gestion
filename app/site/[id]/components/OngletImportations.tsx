@@ -1,4 +1,5 @@
 'use client';
+import { useVueUrl } from '@/lib/vue-url';
 import { useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Loader2, Plus, ArrowUpDown } from 'lucide-react';
@@ -74,12 +75,16 @@ export default function OngletImportations({
   const [recherche, setRecherche] = useState('');
 
   /* La carte ouverte transite par l'URL : sans ça, revenir d'une fiche
-     retombait sur la carte par défaut. */
-  const [modeVue, setModeVue] = useState<'encours' | 'statut'>('encours');
+     retombait sur la carte par défaut. Le mode de lecture, lui, ne la
+     suivait pas — on revenait sur « En cours » en ayant quitté « Par
+     statut ». */
+  const [modeVue, setModeVue] = useVueUrl<'encours' | 'statut'>(
+    'mode', 'encours', ['encours', 'statut']);
   /* Deux façons de juger. Par document : où en est ce dossier-là. Par
      fournisseur : ce que vaut ce partenaire sur la durée — un retard
      isolé est un incident, répété c'est un comportement. */
-  const [axe, setAxe] = useState<'document' | 'fournisseur'>('document');
+  const [axe, setAxe] = useVueUrl<'document' | 'fournisseur'>(
+    'axe', 'document', ['document', 'fournisseur']);
 
   /* Le tri est propre à chaque axe : on ne classe pas des dossiers et des
      fournisseurs sur les mêmes colonnes. */

@@ -44,6 +44,47 @@ export function retourHistorique(params: URLSearchParams | {
 }
 
 /**
+ * Les sous-onglets a emporter dans un document, puis a rendre au retour.
+ *
+ * Un ecran retient dans l'adresse ce qu'on y regardait — le mode de
+ * lecture, l'etape, le sens. Ouvrir un dossier quittait cette adresse
+ * pour celle du document, et la refermer reconstruisait un `?onglet=`
+ * nu : on revenait sur la vue par defaut. Le travail etait perdu sans
+ * que rien ne le dise — on avait ouvert un dossier confirme, on
+ * revenait sur les dossiers en cours.
+ *
+ * `retourHistorique` resolvait deja le meme probleme pour l'historique,
+ * avec ses propres cles. Celle-ci sert les autres onglets, qui portent
+ * tous les memes.
+ */
+const CLES_VUE = ['mode', 'etape', 'sens', 'carte', 'axe', 'rubrique', 'groupe'];
+
+/** Ce qu'il faut coller au lien d'un document pour qu'il sache d'ou il vient. */
+export function marqueVue(params: URLSearchParams | {
+  get(cle: string): string | null;
+}): string {
+  const q = new URLSearchParams();
+  for (const cle of CLES_VUE) {
+    const v = params.get(cle);
+    if (v) q.set(cle, v);
+  }
+  const suite = q.toString();
+  return suite ? `&${suite}` : '';
+}
+
+/** La query pour revenir a un onglet dans l'etat quitte. */
+export function retourOnglet(onglet: string, params: URLSearchParams | {
+  get(cle: string): string | null;
+}): string {
+  const q = new URLSearchParams({ onglet });
+  for (const cle of CLES_VUE) {
+    const v = params.get(cle);
+    if (v) q.set(cle, v);
+  }
+  return `?${q.toString()}`;
+}
+
+/**
  * Le suffixe qui dit d'ou l'on vient, a coller sur un lien de creation.
  *
  * Creer un dossier depuis la vue d'ensemble passe par un ecran de site —
