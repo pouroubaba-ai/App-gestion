@@ -1,5 +1,7 @@
 'use client';
-import { produitsDuSite } from '@/lib/produits-site';
+import { produitsDuSite, sitesDeLActivite } from '@/lib/produits-site';
+import { creerProduitRapide, creerGammeRapide } from '@/lib/produit-rapide';
+import ModalGammeProduit from '../../components/ModalGammeProduit';
 import { estEnsemble, marqueOrigine, racineRetour } from '@/lib/retour';
 import { useEffect, useState } from 'react';
 import { useBrouillon, cleBrouillon, oublierBrouillon } from '@/lib/brouillon';
@@ -10,7 +12,7 @@ import { useAuth } from '@/lib/auth-context';
 import { roleSurSite, type RoleSite } from '@/lib/roles';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { formatMontant } from '@/lib/format';
-import { auteurEtape } from '@/lib/auteur';
+import { auteurCourant, auteurEtape } from '@/lib/auteur';
 import { Loader2, Check, FileText, ClipboardList } from 'lucide-react';
 import SelecteurProduits, { ProduitChoisissable } from '../../components/SelecteurProduits';
 import PanneauMontants from '../../components/PanneauMontants';
@@ -61,6 +63,13 @@ export default function NouvelleVentePage() {
 
   const [clients, setClients] = useState<ClientBref[]>([]);
   const [produits, setProduits] = useState<ProduitChoisissable[]>([]);
+  /* Ceux nés pendant cette saisie : une pastille les signale sur leur
+     ligne, pour qu'on relève avant d'enregistrer le doublon d'une
+     référence mal orthographiée. */
+  const [produitsNeufs, setProduitsNeufs] = useState<Set<string>>(new Set());
+  /* Le formulaire de gamme, ouvert sur le nom qu'on cherchait. `null`
+     quand il est fermé. */
+  const [gamme, setGamme] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   /* Le bouton caché n'empêche pas d'ouvrir l'adresse : la page se garde
      elle-même. `null` en rôle vaut « aucune restriction », d'où le drapeau. */
@@ -124,6 +133,213 @@ export default function NouvelleVentePage() {
       setLoading(false);
     })();
   }, [siteId, user]);
+
+  /**
+   * Créer la marchandise qu'on ne trouve pas, et l'ajouter au bon.
+   *
+   * Une commande promet ce qu'on n'a pas encore : c'est déjà vrai des
+   * quantités, qui ne sont bornées nulle part ici — on vend cent tôles
+   * en n'en ayant vingt, et l'on se réapprovisionne avant de livrer. Ce
+   * qui vaut pour la quantité vaut pour la référence : un client
+   * commande ce qu'on ne tient pas encore, et le refuser obligeait à
+   * quitter l'écran, créer ailleurs, revenir, et retrouver un bon perdu.
+   *
+   * Elle naît à zéro, sans stock ni coût — exactement l'état d'une ligne
+   * commandée qu'on n'a pas. Rien ne s'en trouve faussé : le stock ne
+   * bouge qu'à la livraison, et la préparation ne laisse sortir que ce
+   * qu'on détient réellement. Il faudra donc l'avoir acheté d'ici là,
+   * et c'est l'achat qui lui donnera son coût.
+   */
+  async function creerEtAjouter(designation: string) {
+    if (!user) return;
+    setErreur('');
+    try {
+      const siteIds = activite?.id
+        ? await sitesDeLActivite(activite.id)
+        : [siteId];
+      const neuf = await creerProduitRapide({
+        activiteId: activite?.id ?? null,
+        userId: user.uid,
+        designation,
+        unite: 'pièce',
+        siteIds: siteIds.length > 0 ? siteIds : [siteId],
+        siteOrigine: siteId,
+      });
+
+      /* Il rejoint la liste sans qu'on relise tout : la relecture
+         coûterait une attente pour un produit qu'on vient d'écrire. */
+      const ajout = {
+        id: neuf.id, siteId,
+        designation: neuf.designation, unite: neuf.unite,
+        codeBarre: null, categorie: null,
+        emballages: [], caracteristiques: [], variantes: [],
+        actif: true, stock: 0, coutMoyen: 0, prixVente: 0,
+        seuilAlerte: null,
+      } as unknown as ProduitChoisissable;
+      setProduits(p => [...p, ajout]);
+      setProduitsNeufs(n => new Set(n).add(neuf.id));
+
+      /* Et il entre dans le bon : c'est pour cela qu'on l'a créé. Le
+         prix reste à saisir — un produit neuf n'en a pas, et une ligne
+         sans prix empêche d'enregistrer, ce qui le rappellera. */
+      setLignes(l => [...l, {
+        produitId: neuf.id,
+        designation: neuf.designation,
+        unite: neuf.unite,
+        varianteCle: null,
+        varianteLibelle: null,
+        emballage: null,
+        quantiteDemandee: 1,
+        quantiteRecue: null,
+        valeurUnitaire: 0,
+        prixVente: 0,
+      } as any]);
+    } catch (e: any) {
+      setErreur(e?.message ?? 'Le produit n’a pas pu être créé.');
+    }
+  }
+
+  /**
+   * Créer une gamme entière, et l'ajouter au bon.
+   *
+   * Le client ne commande pas « une ampoule », il commande les 15 W et
+   * les 25 W. Elles entrent toutes : on vient de les décrire, c'est
+   * qu'on les lui promet. Ce qu'il ne prend pas se retire d'une ligne,
+   * et se retrouve par la recherche puisque le produit existe désormais.
+   */
+  async function creerGammeEtAjouter(saisie: {
+    designation: string;
+    unite: string;
+    categorie: string | null;
+    emballages: any[];
+    caracteristiques: any[];
+    declinaisons: { selection: Record<string, string> }[];
+    cout: number;
+    prix: number;
+  }) {
+    if (!user) return;
+    setErreur('');
+    const siteIds = activite?.id
+      ? await sitesDeLActivite(activite.id)
+      : [siteId];
+    const neuf = await creerGammeRapide({
+      activiteId: activite?.id ?? null,
+      userId: user.uid,
+      designation: saisie.designation,
+      unite: saisie.unite,
+      categorie: saisie.categorie,
+      emballages: saisie.emballages,
+      caracteristiques: saisie.caracteristiques,
+      declinaisons: saisie.declinaisons,
+      /* Le coût ne s'écrit pas d'ici. Le formulaire de gamme le demande
+         parce qu'il sert aussi à l'achat, où le fournisseur l'annonce ;
+         ici personne ne l'a constaté, et l'inscrire poserait un coût
+         deviné que la marge prendrait ensuite pour argent comptant. Il
+         viendra du premier achat, qui seul le connaît. */
+      coutProduit: 0,
+      prixProduit: saisie.prix,
+      siteIds: siteIds.length > 0 ? siteIds : [siteId],
+      siteOrigine: siteId,
+    });
+
+    /* Il rejoint la liste sans qu'on relise tout : la relecture coûterait
+       une attente pour un produit qu'on vient d'écrire. */
+    const ajout = {
+      id: neuf.id, siteId,
+      designation: neuf.designation, unite: neuf.unite,
+      codeBarre: null, categorie: saisie.categorie,
+      emballages: saisie.emballages,
+      caracteristiques: saisie.caracteristiques,
+      variantes: neuf.variantes.map(v => ({
+        ...v, stock: 0, coutMoyen: 0, prixVente: v.prixVente ?? saisie.prix,
+      })),
+      actif: true, stock: 0, coutMoyen: 0, prixVente: saisie.prix,
+      seuilAlerte: null,
+    } as unknown as ProduitChoisissable;
+    setProduits(p => [...p, ajout]);
+    setProduitsNeufs(n => new Set(n).add(neuf.id));
+
+    /* Une ligne par déclinaison. Sans déclinaison, une seule ligne : le
+       produit nu. Le coût reste à zéro — c'est l'achat qui le pose, pas
+       la vente ; seul le prix part de ce qu'on vient de décrire. */
+    const nouvelles = neuf.variantes.length > 0
+      ? neuf.variantes.map(v => ({
+          produitId: neuf.id,
+          designation: neuf.designation,
+          unite: neuf.unite,
+          varianteCle: v.cle,
+          varianteLibelle: v.cle,
+          emballage: null,
+          quantiteDemandee: 1,
+          quantiteRecue: null,
+          valeurUnitaire: 0,
+          prixVente: v.prixVente ?? saisie.prix,
+        }))
+      : [{
+          produitId: neuf.id,
+          designation: neuf.designation,
+          unite: neuf.unite,
+          varianteCle: null,
+          varianteLibelle: null,
+          emballage: null,
+          quantiteDemandee: 1,
+          quantiteRecue: null,
+          valeurUnitaire: 0,
+          prixVente: saisie.prix,
+        }];
+    setLignes(l => [...l, ...(nouvelles as any[])]);
+    setGamme(null);
+  }
+
+  /* Créer un client sans quitter le bon de commande.
+   *
+   * Un client qui n'a pas encore de fiche arrivait au pire moment : il
+   * fallait ouvrir les partenaires, créer, revenir, et retrouver les
+   * lignes déjà saisies. La fiche naît ici, avec le nom tapé dans la
+   * recherche, et le bon continue.
+   *
+   * Elle naît cliente, et rien d'autre : ici on ne sait qu'une chose,
+   * c'est que cette personne achète.
+   */
+  async function creerClient(nom: string): Promise<string | null> {
+    const propre = nom.trim();
+    if (!propre || !user) return null;
+
+    /* Deux fiches du même nom deviendraient deux historiques pour une
+       seule personne, et la créance se lirait à moitié. On rend celle
+       qui existe plutôt que d'en ouvrir une autre. */
+    const cle = (x: string) => x.trim().toLowerCase().normalize('NFD')
+      .replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ');
+    const deja = clients.find(c => cle(c.nom) === cle(propre));
+    if (deja) {
+      setErreur(`« ${deja.nom} » existe déjà.`);
+      return deja.id;
+    }
+
+    try {
+      const ref = await addDoc(collection(db, 'partenaires'), {
+        userId: user.uid,
+        siteId,
+        nom: propre,
+        contact: '',
+        rolesFournisseur: false,
+        rolesClient: true,
+        categoriesFournisseur: [],
+        categoriesClient: [],
+        prochainRecouvrement: null,
+        ...(await auteurCourant(siteId, user.uid, user.displayName)),
+        apporteur: null,
+        createdAt: serverTimestamp(),
+      });
+      setClients(l => [...l, { id: ref.id, nom: propre }]
+        .sort((a, b) => a.nom.localeCompare(b.nom)));
+      setErreur('');
+      return ref.id;
+    } catch (e: unknown) {
+      setErreur(e instanceof Error ? e.message : 'Création impossible.');
+      return null;
+    }
+  }
 
   /* Une vente se totalise au prix obtenu, jamais au coût : le coût sert
      à figer la marge, pas à dire ce que le client doit. */
@@ -280,7 +496,8 @@ export default function NouvelleVentePage() {
               <label className="text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5 block">Client</label>
               <SelectCherchable valeur={clientId} onChange={setClientId}
                 options={clients.map(c => ({ valeur: c.id, label: c.nom }))}
-                vide="Aucun client" />
+                vide="Aucun client" effacable
+                surCreer={creerClient} creerLibelle="Nouveau client" />
             </div>
 
             <div>
@@ -363,9 +580,19 @@ export default function NouvelleVentePage() {
             const t = l.reduce((s, x) => s + x.quantiteDemandee * (x.prixVente ?? 0), 0);
             setVerse(v => Math.min(v, t));
           }}
+          onCreerProduit={creerEtAjouter}
+          onCreerGamme={setGamme}
+          produitsNeufs={produitsNeufs}
           coutEditable={false} montrerStock labelCout="Coût" vente futur
           partsFrais={null}
         />
+
+        {gamme !== null && (
+          <ModalGammeProduit
+            designationInitiale={gamme}
+            onAnnuler={() => setGamme(null)}
+            onCreer={creerGammeEtAjouter} />
+        )}
 
         {lignes.length > 0 && (
           <PanneauMontants

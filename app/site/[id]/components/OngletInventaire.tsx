@@ -1,6 +1,6 @@
 'use client';
 import { useAuth } from '@/lib/auth-context';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   collection, query, where, getDocs, addDoc, doc, updateDoc, serverTimestamp,
 } from 'firebase/firestore';
@@ -365,7 +365,10 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
   const [triRenta, setTriRenta] = useState<TriRenta>(null);
   const [sensTri, setSensTri] = useState<'asc' | 'desc'>('desc');
   const [filtreStock, setFiltreStock] = useState<FiltreStock>('tous');
-  const [vue, setVue] = useState<'stock' | 'rentabilite'>('stock');
+  /* Stock ou Rentabilité : deux lectures de la même marchandise, et
+     celle qu'on regardait doit survivre au rafraîchissement. */
+  const [vue, setVueEtat] = useState<'stock' | 'rentabilite'>(
+    searchParams.get('rubrique') === 'rentabilite' ? 'rentabilite' : 'stock');
   /* Comment on regarde le rayon.
    *
    * Par produit : la liste, une ligne par référence. Par déclinaison :
@@ -387,8 +390,46 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
     groupeInitial);
   /* La catégorie ouverte, quand on veut voir ce qu'elle contient. */
   const [categorieOuverte, setCategorieOuverte] = useState<string | null>(null);
+
+  /* L'état mène le rendu, l'adresse le conserve.
+   *
+   * `replaceState` plutôt que le routeur : changer d'onglet n'est pas une
+   * navigation — on ne veut ni rechargement, ni une entrée d'historique
+   * par clic, qui obligerait à appuyer dix fois sur Retour pour sortir de
+   * la page. Et `replaceState` ne prévient pas React : c'est l'état local
+   * qui rend, l'adresse ne fait que s'en souvenir.
+   *
+   * Une valeur par défaut ne s'écrit pas : une adresse nue vaut déjà
+   * « Stock » et « Produits ». */
+  const inscrireDansUrl = useCallback((cle: string, valeur: string | null) => {
+    const q = new URLSearchParams(window.location.search);
+    if (valeur) q.set(cle, valeur); else q.delete(cle);
+    const suite = q.toString();
+    window.history.replaceState(null, '',
+      suite ? `${window.location.pathname}?${suite}` : window.location.pathname);
+  }, []);
+
+  const setVue = useCallback((v: 'stock' | 'rentabilite') => {
+    setVueEtat(v);
+    inscrireDansUrl('rubrique', v === 'rentabilite' ? v : null);
+  }, [inscrireDansUrl]);
+
+  const choisirGroupe = useCallback((g: 'produit' | 'variante' | 'categorie') => {
+    setGroupe(g);
+    /* Changer de regroupement referme la catégorie ouverte : elle
+       n'appartenait qu'à l'ancienne vue. */
+    setCategorieOuverte(null);
+    inscrireDansUrl('groupe', g === 'produit' ? null : g);
+  }, [inscrireDansUrl]);
   /* par produit : ce qui est entré, ce qui est sorti, et quand pour la dernière fois */
-  const [bilans, setBilans] = useState<Record<string, { entrees: number; sorties: number; derniereEntree?: string; derniereSortie?: string }>>({});
+  /* Chaque sens porte la part dont le coût était inconnu.
+     À l'entrée : de la marchandise reçue sans qu'on sache ce qu'elle a
+     coûté — elle gonfle la quantité sans gonfler la valeur.
+     À la sortie : vendue depuis un rayon au coût inconnu — l'argent
+     rentre, mais aucune entrée ne lui répond.
+     Sans les nommer, les deux chiffres se lisent de travers : l'un
+     paraît trop petit, l'autre trop rentable. */
+  const [bilans, setBilans] = useState<Record<string, { entrees: number; qteEntreeSansCout: number; sorties: number; sortiesSansCout: number; derniereEntree?: string; derniereSortie?: string }>>({});
 
   /* modal nouveau produit */
   const [modalOuvert, setModalOuvert] = useState(false);
@@ -401,6 +442,9 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
      dépend pas de nous et qui diffère d'un endroit à l'autre. */
   const [prixMarche, setPrixMarche] =
     useState<Record<string, { siteId: string; prix: number }[]>>({});
+  /* Les détentions, gardées telles quelles : ce sont elles qui
+     nomment leur site, et les cartes par site en ont besoin. */
+  const [detentions, setDetentions] = useState<ProduitSite[]>([]);
   const [prixVente, setPrixVente] = useState('');
   /* Ce qui se pratique autour, quand on le connaît. Facultatif : un
      produit neuf n'a pas encore de marché. */
@@ -462,22 +506,33 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
     ]);
 
     /* un transfert ne réalise rien : il ne compte ni en entrée ni en sortie de rentabilité */
-    const agg: Record<string, { entrees: number; sorties: number; derniereEntree?: string; derniereSortie?: string }> = {};
+    const agg: Record<string, { entrees: number; qteEntreeSansCout: number; sorties: number; sortiesSansCout: number; derniereEntree?: string; derniereSortie?: string }> = {};
     mvSnap.forEach(d => {
       const m = d.data();
       if (m.motif === 'transfert') return;
-      const b = agg[m.produitId] ?? { entrees: 0, sorties: 0 };
+      const b = agg[m.produitId]
+        ?? { entrees: 0, qteEntreeSansCout: 0, sorties: 0, sortiesSansCout: 0 };
+      /* Les deux drapeaux sont posés à l'écriture du mouvement, pas
+         devinés ici : `coutInconnu` sur une entrée reçue sans valeur,
+         `margeInconnue` sur une sortie prise à un rayon qui n'en avait
+         pas. On ne fait que les additionner. */
       if (m.sens === 'entree') {
         b.entrees += m.valeurTotale ?? 0;
+        /* Une entrée sans coût vaut zéro — c'est précisément ce qu'on
+           lui reproche. L'additionner en valeur ne dirait rien ; c'est
+           sa quantité qui témoigne de ce qui est entré sans prix. */
+        if (m.coutInconnu) b.qteEntreeSansCout += m.quantiteUnites ?? m.quantite ?? 0;
         if (!b.derniereEntree || m.date > b.derniereEntree) b.derniereEntree = m.date;
       }
       else {
         b.sorties += m.valeurTotale ?? 0;
+        if (m.margeInconnue) b.sortiesSansCout += m.valeurTotale ?? 0;
         if (m.motif === 'vente' && (!b.derniereSortie || m.date > b.derniereSortie)) b.derniereSortie = m.date;
       }
       agg[m.produitId] = b;
     });
     setBilans(agg);
+    setDetentions(dets);
 
     /* Le coût moyen se déduit des entrées, il ne se lit pas : stocké, il
        part du stock courant, et une sortie pas encore écrite le fausse
@@ -859,27 +914,132 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
   /* Ce que pèse le stock d'un site : sa valeur au coût, ce qu'il
      rapporterait, et l'état de ses rayons. Un total dit combien vaut la
      maison, jamais quelle boutique est en rupture. */
+  /* Ce que porte un site, lu sur ses détentions.
+   *
+   * On filtrait les produits sur leur `siteId` — un champ qui ne vaut que
+   * pour les produits détenus sur un seul site, et qui reste vide dès
+   * qu'il y en a deux. Un dépôt plein s'affichait alors « Aucune activité
+   * sur la période » : ses produits existaient, aucun ne lui était
+   * rattaché.
+   *
+   * La détention, elle, nomme toujours son site. C'est elle qui porte le
+   * stock, le coût moyen et le prix de ce rayon-là : deux boutiques ne
+   * détiennent pas le même stock du même produit, et leurs cartes ne
+   * doivent pas afficher le même chiffre. */
   function chiffresDuSite(id: string) {
-    const siens = produits.filter(x => x.siteId === id);
-    const dispo = siens.filter(x => stockTotal(x) > 0);
-    const cout = dispo.reduce((n, x) => n + valeurCout(x), 0);
-    const vente = dispo.reduce((n, x) => n + valeurVenteProduit(x), 0);
+    const siennes = detentions.filter(x => x.siteId === id);
+    const parProduit = new Map(produits.map(p => [p.id, p]));
+
+    let cout = 0;
+    let vente = 0;
+    /* Ce qui est en rayon sans qu'on sache ce qu'il a coûté, compté au
+       prix recommandé. */
+    let sansCout = 0;
+    let nbSansCout = 0;
+    let enStock = 0;
+    let ruptures = 0;
+    let alertes = 0;
+
+    for (const det of siennes) {
+      const p = parProduit.get(det.produitId);
+      if (!p) continue;
+      /* Le stock du site, variantes comprises : la détention les porte
+         séparément quand le produit en a. */
+      const st = (det.variantes ?? []).length > 0
+        ? (det.variantes ?? []).reduce((n, v) => n + (v.stock ?? 0), 0)
+        : (det.stock ?? 0);
+
+      if (st > 0) {
+        enStock += 1;
+        const prix = det.prixVente ?? p.prixVente ?? 0;
+        const c = det.coutMoyen ?? 0;
+        /* Un rayon qui ignore ce qu'il a payé vaut quand même quelque
+           chose : il est plein. Faute de coût, on le compte au prix
+           recommandé — c'est le seul chiffre dont on dispose, et le
+           laisser à zéro faisait disparaître du stock bien réel de la
+           valeur totale. La part ainsi comptée se dit en dessous : on ne
+           la confond pas avec ce qu'on a mesuré. */
+        if (c > 0) {
+          cout += st * c;
+          /* Seules les ventes adossées à un coût entrent dans le
+             bénéfice : mêler les autres rendrait leur prix de vente
+             entier comme gain. */
+          vente += st * prix;
+        } else {
+          sansCout += st * prix;
+          nbSansCout += 1;
+        }
+      } else {
+        ruptures += 1;
+      }
+      const seuil = det.seuilAlerte ?? p.seuilAlerte;
+      if (st > 0 && seuil != null && st <= seuil) alertes += 1;
+    }
+
+    /* La valeur du stock : ce qu'on a mesuré, plus ce qu'on estime.
+       Les deux s'additionnent — le rayon est plein des deux côtés — mais
+       la carte dit laquelle est estimée. */
+    const valeur = cout + sansCout;
     return {
-      produits: siens.length,
+      produits: siennes.length,
+      valeur,
+      sansCout,
+      nbSansCout,
       cout,
       benefice: vente - cout,
       marge: cout > 0 ? Math.round(((vente - cout) / cout) * 100) : 0,
-      enStock: dispo.length,
-      ruptures: siens.filter(x => stockTotal(x) <= 0).length,
-      alertes: siens.filter(x => statutStock(x).label === 'Alerte').length,
+      vente,
+      enStock,
+      ruptures,
+      alertes,
     };
   }
 
   const totalEntrees = Object.values(bilans).reduce((s, b) => s + b.entrees, 0);
   const totalSorties = Object.values(bilans).reduce((s, b) => s + b.sorties, 0);
-  const resultatReel = totalSorties - totalEntrees;
+  /* Ce dont le coût manquait, de chaque côté. La différence n'en est pas
+     corrigée — elle reste ce qu'elle est — mais sans ces chiffres, des
+     entrées maigres face à des sorties massives se lisent comme une marge
+     entière, là où c'est seulement le coût qui manque. */
+  const qteEntreeSansCout = Object.values(bilans).reduce((s, b) => s + b.qteEntreeSansCout, 0);
+  const nbProduitsSansCout = Object.values(bilans).filter(b => b.qteEntreeSansCout > 0).length;
+  const sortiesSansCout = Object.values(bilans).reduce((s, b) => s + b.sortiesSansCout, 0);
+
+  /* Ce que vaut ce qui est entré sans coût, pris au prix de vente.
+   *
+   * Un stock initial entre en quantité sans valeur : la somme des
+   * mouvements le compte pour zéro, et la carte restait à « 0 FCFA »
+   * sous 80 000 unités bien présentes. Le prix de vente est le seul
+   * chiffre qu'on ait sur cette marchandise — il surestime le coût,
+   * puisqu'il porte la marge, mais il dit un ordre de grandeur là où
+   * zéro ne disait rien du tout.
+   *
+   * Il reste séparé du coût constaté, et n'entre pas dans la
+   * différence : mêler un prix à des coûts ferait un total que rien ne
+   * vérifie. La carte additionne les deux pour l'œil, et dit sous le
+   * chiffre quelle part est estimée. */
+  const parProduitPrix = new Map(produits.map(p => [p.id, p.prixVente ?? 0]));
+  const entreesEstimees = Object.entries(bilans).reduce((s, [id, b]) =>
+    s + b.qteEntreeSansCout * (parProduitPrix.get(id) ?? 0), 0);
+  /* Ce que la carte montre : le coût réellement constaté, plus
+     l'estimation de ce qui n'en avait pas. */
+  const entreesAffichees = totalEntrees + entreesEstimees;
+
+  /* La différence se prend sur ce que la carte des entrées affiche.
+   *
+   * Elle se calculait sur le seul coût constaté, ce qui se tenait tant
+   * que les entrées montraient zéro : les deux chiffres disaient la même
+   * ignorance. Maintenant que la carte valorise ce qui n'avait pas de
+   * coût, garder l'ancien calcul donnait deux cartes voisines qui se
+   * contredisent — des entrées à plusieurs millions, et une différence
+   * qui les compte encore pour rien, donc entièrement bénéficiaire.
+   *
+   * Elle vaut donc ce qu'on voit : sorties moins entrées affichées. Le
+   * résultat porte l'approximation de son estimé, et la carte des
+   * entrées dit laquelle. */
+  const resultatReel = totalSorties - entreesAffichees;
   const statuts = produits.map(p => {
-    const b = bilans[p.id] ?? { entrees: 0, sorties: 0 };
+    const b = bilans[p.id] ?? { entrees: 0, qteEntreeSansCout: 0, sorties: 0, sortiesSansCout: 0 };
     return statutRentabilite(b.entrees, b.sorties).label;
   });
   const nbBeneficiaires = statuts.filter(l => l === 'Bénéficiaire').length;
@@ -1068,7 +1228,7 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
 
   const produitsRenta = triRenta === null ? produitsAffiches : [...produitsAffiches].sort((a, b) => {
     const v = (x: Produit) => {
-      const bl = bilans[x.id] ?? { entrees: 0, sorties: 0 };
+      const bl = bilans[x.id] ?? { entrees: 0, qteEntreeSansCout: 0, sorties: 0, sortiesSansCout: 0 };
       return triRenta === 'entrees' ? bl.entrees
         : triRenta === 'sorties' ? bl.sorties
         : triRenta === 'difference' ? bl.sorties - bl.entrees
@@ -1122,7 +1282,14 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
           const c = chiffresDuSite(id);
           return {
             titre: 'Valeur du stock',
-            valeur: formatMontant(c.cout),
+            valeur: formatMontant(c.valeur),
+            /* Sous la valeur elle-même, et non dans les lignes : c'est ce
+               nombre-là qu'elle corrige. */
+            mention: c.sansCout > 0
+              ? (<>Dont <span className="font-bold text-orange-500">
+                  {formatMontant(c.sansCout)}
+                </span> au coût inconnu</>)
+              : null,
             dort: c.produits === 0,
             badge: c.produits > 0
               ? {
@@ -1131,9 +1298,12 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
                 }
               : null,
             lignes: [
-              { label: `Bénéfice estimé · ${c.marge} %`,
-                valeur: formatMontant(c.benefice),
-                vide: c.benefice === 0, ton: 'text-green-600' },
+              /* Sans coût connu, aucun bénéfice ne se mesure : un tiret
+                 le dit, là où un montant mentirait. */
+              { label: c.cout > 0 ? `Bénéfice estimé · ${c.marge} %` : 'Bénéfice estimé',
+                valeur: c.cout > 0 ? formatMontant(c.benefice) : '—',
+                vide: c.cout === 0 || c.benefice === 0,
+                ton: c.cout > 0 ? 'text-green-600' : undefined },
               { label: 'En stock', valeur: String(c.enStock), vide: c.enStock === 0 },
               { label: 'Alerte', valeur: String(c.alertes),
                 vide: c.alertes === 0, ton: 'text-orange-500' },
@@ -1213,16 +1383,36 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
       ) : (
       <div className="mb-4 grid grid-cols-2 gap-4 sm:grid-cols-4">
         {([
-          { emoji: '📥', label: 'Entrées', montant: formatMontant(totalEntrees),
-            note: 'Coût investi', classe: 'text-neutral-900 dark:text-white' },
+          { emoji: '📥', label: 'Entrées', montant: formatMontant(entreesAffichees),
+            note: 'Coût investi', classe: 'text-neutral-900 dark:text-white',
+            /* Quelle part du chiffre est estimée. Le total mêle un coût
+               constaté et un prix de vente pris faute de mieux : sans le
+               dire, on lirait le tout comme du coût vérifié. */
+            mention: entreesEstimees > 0
+              ? (<>Dont <span className="font-bold text-orange-500">
+                  {formatMontant(entreesEstimees)}
+                </span> estimé{nbProduitsSansCout > 1 ? 's' : ''} au prix de vente,
+                  coût inconnu</>)
+              : null },
           { emoji: '📤', label: 'Sorties', montant: formatMontant(totalSorties),
-            note: 'Récupéré', classe: 'text-neutral-900 dark:text-white' },
+            note: 'Récupéré', classe: 'text-neutral-900 dark:text-white',
+            /* Ce qui est parti d'un rayon dont on ignorait le coût :
+               l'argent est bien rentré, mais aucune entrée ne lui
+               répond. Le dire ici évite qu'une sortie massive sans
+               contrepartie passe pour une marge. */
+            mention: sortiesSansCout > 0
+              ? (<>Dont <span className="font-bold text-orange-500">
+                  {formatMontant(sortiesSansCout)}
+                </span> au coût inconnu</>)
+              : null },
           { emoji: '⚖️', label: 'Différence',
             montant: `${resultatReel >= 0 ? '+' : '−'}${formatMontant(Math.abs(resultatReel))}`,
             note: `${nbBeneficiaires} rentable${nbBeneficiaires > 1 ? 's' : ''}`,
-            classe: resultatReel >= 0 ? 'text-green-600' : 'text-red-500' },
+            classe: resultatReel >= 0 ? 'text-green-600' : 'text-red-500',
+            mention: null },
           { emoji: '📦', label: 'Valeur du stock', montant: formatMontant(valeurStock),
-            note: `${enStock.length} en stock`, classe: 'text-neutral-900 dark:text-white' },
+            note: `${enStock.length} en stock`, classe: 'text-neutral-900 dark:text-white',
+            mention: null },
         ]).map(c => (
           <div key={c.label}
             className="rounded-2xl border border-black/[0.06] bg-white p-5 shadow-sm dark:border-white/10 dark:bg-neutral-900">
@@ -1236,6 +1426,11 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
               {c.montant}
             </p>
             <p className="mt-1 text-[11px] font-medium text-neutral-400">{c.note}</p>
+            {c.mention && (
+              <p className="mt-0.5 text-[11px] font-medium leading-snug text-neutral-400">
+                {c.mention}
+              </p>
+            )}
           </div>
         ))}
       </div>
@@ -1259,7 +1454,7 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
                 { key: 'variante' as const,  label: 'Déclinaisons' },
                 { key: 'categorie' as const, label: 'Catégories' },
               ]).map(g => (
-                <button key={g.key} onClick={() => { setGroupe(g.key); setCategorieOuverte(null); }}
+                <button key={g.key} onClick={() => choisirGroupe(g.key)}
                   className={`whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-medium transition-all ${groupe === g.key
                     ? 'bg-white text-indigo-600 shadow-sm dark:bg-gray-700 dark:text-indigo-400'
                     : 'text-gray-400 hover:text-gray-600 dark:text-gray-500'}`}>
@@ -1711,7 +1906,7 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
                   </thead>
                   <tbody className="divide-y divide-gray-50 dark:divide-gray-800">
                     {produitsRenta.map(p => {
-                      const b = bilans[p.id] ?? { entrees: 0, sorties: 0 };
+                      const b = bilans[p.id] ?? { entrees: 0, qteEntreeSansCout: 0, sorties: 0, sortiesSansCout: 0 };
                       const diff = b.sorties - b.entrees;
                       const enStock = valeurCout(p);
                       const st = statutRentabilite(b.entrees, b.sorties);

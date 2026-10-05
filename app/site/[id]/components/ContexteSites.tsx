@@ -7,8 +7,8 @@
  * afficher sur chaque ligne, et le droit d'écrire — on n'enregistre pas un
  * versement dans une vue qui n'en désigne aucun.
  */
-import { useMemo, useState } from 'react';
-import { usePathname } from 'next/navigation';
+import { useCallback, useMemo, useState } from 'react';
+import { usePathname, useSearchParams } from 'next/navigation';
 import { sitesDe, siteUnique, type Portee } from '@/lib/portee';
 import FiltreDeroulant from '@/components/FiltreDeroulant';
 
@@ -69,8 +69,34 @@ export function useSites(siteId: Portee, sites?: SiteConnu[]) {
   const [filtre, setFiltre] = useState<string>('');
 
   /* Ce qu'on regarde : tout mêlé, ou site par site. La vue par site
-     répartit ce qui est déjà chargé — elle ne relit rien. */
-  const [vue, setVue] = useState<'ensemble' | 'sites'>('ensemble');
+   * répartit ce qui est déjà chargé — elle ne relit rien.
+   *
+   * Le choix vit dans l'adresse, pas seulement dans la page. Il ne tenait
+   * qu'en mémoire : actualiser renvoyait à la vue d'ensemble, et sur un
+   * téléphone — où recharger est le seul moyen de rafraîchir — on
+   * reperdait la répartition à chaque fois. Dans l'URL, il survit au
+   * rechargement, au retour arrière, et se partage avec le lien. */
+  const params = useSearchParams();
+  /* L'état mène le rendu, l'adresse le conserve. `replaceState` ne
+     prévient pas React : sans cet état, le clic changerait l'URL sans
+     redessiner l'écran. */
+  const [vue, setVueEtat] = useState<'ensemble' | 'sites'>(
+    params.get('vue') === 'sites' ? 'sites' : 'ensemble');
+
+  const setVue = useCallback((v: 'ensemble' | 'sites') => {
+    setVueEtat(v);
+    const q = new URLSearchParams(window.location.search);
+    /* L'ensemble est l'état ordinaire : on ne l'écrit pas dans l'adresse,
+       qui resterait encombrée d'un paramètre qui ne dit rien. */
+    if (v === 'sites') q.set('vue', 'sites');
+    else q.delete('vue');
+    const suite = q.toString();
+    /* `replaceState` plutôt que le routeur : la bascule ne change pas de
+       page, et l'empiler dans l'historique ferait du bouton Retour un
+       bouton « vue précédente ». */
+    window.history.replaceState(null, '',
+      suite ? `${window.location.pathname}?${suite}` : window.location.pathname);
+  }, []);
 
   /* Ce que les lectures doivent couvrir : la portée, réduite au site choisi
      quand il y en a un. Stable elle aussi : c'est elle que les `useEffect`
@@ -164,6 +190,18 @@ export function CartesParSite({ sites, contenu, onChoisir }: {
     valeur: string;
     /** Ce qui le détaille, en dessous. */
     lignes: LigneCarte[];
+    /**
+     * Une précision sur le chiffre lui-même, collée sous lui.
+     *
+     * Ce qui qualifie le montant — la part qui n'est qu'estimée, ce qu'il
+     * recouvre — appartient au chiffre, pas à la liste qui le détaille :
+     * rangée plus bas entre deux lignes, elle se lit comme un poste de
+     * plus et non comme ce qui le nuance.
+     *
+     * Un nœud React plutôt qu'un texte : la part qu'on signale se colore,
+     * et une chaîne ne sait pas porter cette distinction.
+     */
+    mention?: React.ReactNode;
     /** Vrai quand le site n'a rien à montrer sur la période. */
     dort?: boolean;
     /** Une mention à droite du nom : marge, compte, alerte. */
@@ -216,6 +254,9 @@ export function CartesParSite({ sites, contenu, onChoisir }: {
                 <p className="text-2xl font-bold leading-tight text-gray-900 dark:text-gray-100">
                   {c.valeur}
                 </p>
+                {c.mention && (
+                  <p className="mt-1 text-[11px] text-gray-400">{c.mention}</p>
+                )}
 
                 {c.lignes.length > 0 && (
                   <div className="mt-4 space-y-2 border-t border-gray-100 pt-3 dark:border-gray-800">

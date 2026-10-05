@@ -136,6 +136,56 @@ export default function NouvelAchatPage() {
   /* Ce qu'on doit au fournisseur : la marchandise et ce qui l'a amenée.
      Il livre et facture ensemble — omettre le transport afficherait une
      dette inférieure à la réalité. */
+  /* Créer un fournisseur sans quitter la commande.
+   *
+   * Un fournisseur qu'on découvre au moment d'enregistrer son premier
+   * achat obligeait à quitter l'écran, ouvrir les partenaires, créer,
+   * revenir, et retrouver les lignes déjà saisies. La fiche naît ici,
+   * avec le nom tapé dans la recherche, et la commande continue.
+   *
+   * Elle naît fournisseur, et rien d'autre : ici on ne sait qu'une
+   * chose, c'est que cette personne nous vend.
+   */
+  async function creerFournisseur(nom: string): Promise<string | null> {
+    const propre = nom.trim();
+    if (!propre || !user) return null;
+
+    /* Deux fiches du même nom deviendraient deux historiques pour un
+       seul fournisseur, et la dette se lirait à moitié. On rend celle
+       qui existe plutôt que d'en ouvrir une autre. */
+    const cle = (s: string) => s.trim().toLowerCase().normalize('NFD')
+      .replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ');
+    const deja = fournisseurs.find(f => cle(f.nom) === cle(propre));
+    if (deja) {
+      setErreur(`« ${deja.nom} » existe déjà.`);
+      return deja.id;
+    }
+
+    try {
+      const ref = await addDoc(collection(db, 'partenaires'), {
+        userId: user.uid,
+        siteId,
+        nom: propre,
+        contact: '',
+        rolesFournisseur: true,
+        rolesClient: false,
+        categoriesFournisseur: [],
+        categoriesClient: [],
+        prochainRecouvrement: null,
+        ...(await auteurCourant(siteId, user.uid, user.displayName)),
+        apporteur: null,
+        createdAt: serverTimestamp(),
+      });
+      setFournisseurs(l => [...l, { id: ref.id, nom: propre }]
+        .sort((a, b) => a.nom.localeCompare(b.nom)));
+      setErreur('');
+      return ref.id;
+    } catch (e: unknown) {
+      setErreur(e instanceof Error ? e.message : 'Création impossible.');
+      return null;
+    }
+  }
+
   /**
    * Créer la marchandise qu'on ne trouve pas, et l'ajouter au bon.
    *
@@ -468,7 +518,8 @@ export default function NouvelAchatPage() {
               <label className="text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5 block">Fournisseur</label>
               <SelectCherchable valeur={fournisseurId} onChange={setFournisseurId}
                 options={fournisseurs.map(f => ({ valeur: f.id, label: f.nom }))}
-                vide="Aucun fournisseur" />
+                vide="Aucun fournisseur" effacable
+                surCreer={creerFournisseur} creerLibelle="Nouveau fournisseur" />
             </div>
 
             <div>

@@ -145,6 +145,25 @@ export default function FichePartenairePage() {
       ? { ...prev, dette: f.reste, creance: c.reste } : prev);
   }
 
+  /* Ouvrir la saisie d'un compte ancien. La date part d'aujourd'hui et
+     se change librement : c'est le commerçant qui sait de quand date ce
+     qu'il reporte.
+
+     Le formulaire repart vide à chaque ouverture. Seul l'enregistrement
+     réussi le vidait : une saisie abandonnée restait donc à l'écran, et
+     rouvrir le modal remontrait un montant et une note qu'on venait
+     précisément de renoncer à poser — qu'un clic sur « Poser » aurait
+     alors inscrits sans qu'on les ait voulus. Ce qu'on annule ne doit
+     rien laisser derrière lui. */
+  function ouvrirOuverture(role: 'fournisseur' | 'client') {
+    setOuvMontant(0);
+    setOuvNote('');
+    setOuvDate(new Date().toISOString().slice(0, 10));
+    setRoleOuverture(role);
+    setOuvErreur('');
+    setModalOuv(true);
+  }
+
   async function poserOuverture() {
     if (!user || !partenaire) return;
     setOuvEnCours(true); setOuvErreur('');
@@ -479,7 +498,7 @@ export default function FichePartenairePage() {
                       total ne s'expliquerait pas par les dossiers. */}
                   <LigneOuverture role="client" ouverture={ouvClient}
                     possible borne={borneOuverture.client}
-                    onPoser={() => { setRoleOuverture('client'); setModalOuv(true); }} />
+                    onPoser={() => ouvrirOuverture('client')} />
                 </div>
               </div>
             );
@@ -509,7 +528,7 @@ export default function FichePartenairePage() {
                   </p>
                   <LigneOuverture role="fournisseur" ouverture={ouvFournisseur}
                     possible borne={borneOuverture.fournisseur}
-                    onPoser={() => { setRoleOuverture('fournisseur'); setModalOuv(true); }} />
+                    onPoser={() => ouvrirOuverture('fournisseur')} />
                 </div>
               </div>
             );
@@ -787,18 +806,22 @@ export default function FichePartenairePage() {
       {modalOuv && (() => {
         const borneRole = borneOuverture[roleOuverture];
         const dejaUn = roleOuverture === 'fournisseur' ? ouvFournisseur : ouvClient;
-        const secondCompte = dejaUn.length > 0;
+        /* Un compte de plus, et non le premier : dès qu'une histoire
+           existe — une ouverture posée, ou une transaction — ce qu'on
+           ajoute vient s'ajouter à elle. La note devient alors exigée,
+           pour dire d'où sort ce compte-là. */
+        const secondCompte = dejaUn.length > 0 || !!borneRole;
         /* Le report se date avant ce qu'il reporte, et jamais dans le
            futur : la borne est la plus proche des deux. */
-        const aujourdhui = new Date().toISOString().slice(0, 10);
-        const maxOuverture = borneRole && borneRole < aujourdhui
-          ? borneRole : aujourdhui;
+        /* Rien ne borne la date, sinon le présent : on ne reporte pas un
+           compte depuis l'avenir. */
+        const maxOuverture = new Date().toISOString().slice(0, 10);
         return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
           <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-xl dark:bg-gray-900">
             <div className="mb-1 flex items-start justify-between gap-3">
               <p className="text-sm font-bold text-gray-900 dark:text-gray-100">
-                Solde d’ouverture ·{' '}
+                {secondCompte ? 'Autre compte' : 'Solde d’ouverture'} ·{' '}
                 {roleOuverture === 'fournisseur' ? 'ce qu’on lui devait' : 'ce qu’il nous devait'}
               </p>
               <button onClick={() => setModalOuv(false)}
@@ -807,10 +830,8 @@ export default function FichePartenairePage() {
               </button>
             </div>
             <p className="mb-4 text-xs leading-snug text-gray-400">
-              Ce compte existait avant l’app. Rien n’entre au stock : on
-              reporte seulement ce qui restait dû. Une fois posé, il ne se
-              modifie plus.
-              {secondCompte && ' Ce partenaire en porte déjà un : dites en note d’où vient celui-ci.'}
+              Ce qui restait dû avant l’app. Rien n’entre au stock, et
+              une fois posé il ne se modifie plus.
             </p>
 
             <label className="mb-1 block text-xs font-bold uppercase text-gray-400">Montant</label>
@@ -824,16 +845,17 @@ export default function FichePartenairePage() {
                 peut pas être postérieur à ce qu'il reporte. */}
             <input type="date" value={ouvDate} max={maxOuverture}
               onChange={e => setOuvDate(e.target.value)}
-              className="mb-1 w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm text-gray-900 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100" />
-            {borneRole && (
-              <p className="mb-3 text-[11px] text-gray-400">
-                Première opération le {formatDate(borneRole)} : le report se
-                date avant.
-              </p>
-            )}
+              className="mb-3 w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm text-gray-900 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100" />
+
 
             <label className="mb-1 block text-xs font-bold uppercase text-gray-400">
               Note
+              {/* Exigée, donc annoncée comme telle : le placeholder gris
+                  se lit comme une indication facultative, et le bouton
+                  restait mort sans que rien ne dise pourquoi. */}
+              {secondCompte && (
+                <span className="ml-1 font-bold text-red-500">· requise</span>
+              )}
             </label>
             <input type="text" value={ouvNote}
               placeholder={secondCompte
@@ -841,6 +863,16 @@ export default function FichePartenairePage() {
                 : 'Facultatif — d’où vient ce montant'}
               onChange={e => setOuvNote(e.target.value)}
               className="w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm text-gray-900 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100" />
+
+            {/* Pourquoi cette note-là : ce partenaire a déjà une histoire,
+                et deux lignes du même nom ne se reliront plus dans six
+                mois. On le dit ici plutôt que de laisser chercher. */}
+            {secondCompte && !ouvNote.trim() && (
+              <p className="mt-2 text-xs leading-snug text-gray-400">
+                Ce partenaire a déjà un compte reporté : dites d’où vient
+                celui-ci pour qu’on puisse les distinguer plus tard.
+              </p>
+            )}
 
             {ouvErreur && <p className="mt-3 text-xs text-red-500">{ouvErreur}</p>}
 
@@ -902,11 +934,13 @@ function LigneOuverture({ ouverture, possible, borne, onPoser }: {
       {possible && (
         <button type="button"
           onClick={e => { e.stopPropagation(); onPoser(); }}
-          title={borne
-            ? `À dater au plus tard du ${formatDate(borne)}`
-            : undefined}
           className="text-xs font-bold text-indigo-500 transition-colors hover:text-indigo-700">
-          {ouverture.length > 0 ? '+ Autre compte' : '+ Solde d’ouverture'}
+          {/* « Ouverture » n'a de sens qu'avant toute histoire. Dès qu'il
+              existe un dossier — une ouverture déjà posée, ou une
+              transaction — ce qu'on ajoute est un compte de plus, et le
+              bouton doit le dire : sinon on croit rouvrir ce qui est
+              déjà ouvert. */}
+          {ouverture.length > 0 || borne ? '+ Autre compte' : '+ Solde d’ouverture'}
         </button>
       )}
     </div>
