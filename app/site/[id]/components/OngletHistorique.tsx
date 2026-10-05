@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
+import { useAuth } from '@/lib/auth-context';
 import { formatMontant } from '@/lib/format';
 import { hankenGrotesk } from './finance/font';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -159,6 +160,9 @@ export default function OngletHistorique({ siteId, userId, sites, titre }: Props
      ouvrant l'écran. Les périodes plus larges se demandent, elles ne
      s'imposent pas. */
   const [periode, setPeriode] = useState<Periode>('jour');
+  /* L'activité, pour borner la lecture du catalogue à ce qui est à
+     nous. */
+  const { activite } = useAuth();
   const [recherche, setRecherche] = useState('');
   const [filtreMotif, setFiltreMotif] = useState<string>('tous');
 
@@ -171,10 +175,14 @@ export default function OngletHistorique({ siteId, userId, sites, titre }: Props
     setLoading(true);
     /* Le produit appartient à l'activité : le filtrer par site priverait
        de son nom un mouvement venu d'ailleurs — un transfert reçu, par
-       exemple, dont la fiche est née sur le site expéditeur. */
+       exemple, dont la fiche est née sur le site expéditeur. Il se borne
+       donc à l'activité, et non à rien : sans ce filtre, l'écran lisait
+       le catalogue de toutes les activités de la base pour nommer ses
+       propres lignes. */
     const [mvSnap, prodSnap] = await Promise.all([
       lireParSite('mouvements', ctx.portee),
-      getDocs(collection(db, 'produits')),
+      getDocs(query(collection(db, 'produits'),
+        where('activiteId', '==', activite?.id ?? '__aucune__'))),
     ]);
 
     /* le mouvement ne porte que l'id du produit : son nom et son unité

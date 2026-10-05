@@ -312,7 +312,20 @@ export default function Sidebar({
       .then(a => { if (vivant) setAttente(a); })
       .catch(() => { if (vivant) setAttente(AUCUNE_ATTENTE); });
     return () => { vivant = false; };
-  }, [clePortee, pathname, relire, porteurUid, user?.uid]);
+  /* Pas `pathname` ici.
+   *
+   * Compter ce qui attend lit huit collections entières — achats,
+   * transferts des deux côtés, ventes, journal de recouvrement, file de
+   * caisse, missions, retours. Avec le chemin en dépendance, ces huit
+   * lectures repartaient à chaque changement d'adresse : chaque clic
+   * d'onglet, chaque fiche ouverte, chaque retour arrière. Des milliers
+   * de documents par geste, pour un chiffre sur une pastille.
+   *
+   * Rien ne s'en trouvait plus juste : une pastille ne change que
+   * lorsqu'un dossier avance, et c'est `SIGNAL_ATTENTE` qui le dit
+   * — émis par les écritures elles-mêmes, qui seules savent quand le
+   * compte a bougé. Naviguer ne fait avancer aucun dossier. */
+  }, [clePortee, relire, porteurUid, user?.uid]);
 
   /* Quel onglet porte quel compte. Un badge ne vaut que là où le geste se
      fait : le poser ailleurs enverrait chercher au mauvais endroit. */

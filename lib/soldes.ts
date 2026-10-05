@@ -173,26 +173,68 @@ export async function soldesDuSite(siteId: Portee): Promise<SoldesParRole> {
 /**
  * Ce qu'un retour a imputé sur chaque dossier.
  *
- * Le versement porte le motif `retour_marchandise` : c'est lui qui
- * distingue une dette éteinte par de la marchandise d'une dette éteinte
- * par de l'argent. Sans cette lecture, les deux se ressemblent dans
- * `avanceVersee` et l'écran annonce un encaissement qui n'a pas eu lieu.
+ * La marchandise rendue éteint une dette sans qu'un franc ne circule.
+ * Il faut donc la distinguer d'un paiement : confondues, l'une se lit
+ * comme l'autre et l'écran annonce un encaissement qui n'a pas eu lieu.
+ *
+ * Elle se lisait dans les `versements`, sur le motif
+ * `retour_marchandise`. Mais le retour s'écrit dans `retours_dossiers`,
+ * et il n'y a pas toujours de versement en face — un retour réglé en
+ * déduction n'en produit aucun, puisque rien n'est payé. Le dossier
+ * restait donc dû en entier : on réclamait son argent à un client qui
+ * avait rendu sa marchandise, et le « à encaisser » comptait une somme
+ * que plus personne ne devait.
+ *
+ * On lit donc le retour là où il vit, et le versement reste consulté
+ * pour ce qui n'aurait été inscrit que là.
  */
 async function retoursParDossier(siteId: Portee): Promise<Map<string, number>> {
   const parDossier = new Map<string, number>();
+  const ajouter = (cle: string | null | undefined, montant: number) => {
+    if (!cle || !(montant > 0)) return;
+    parDossier.set(cle, (parDossier.get(cle) ?? 0) + montant);
+  };
+
+  try {
+    const docs = await lireParSite('retours_dossiers', siteId);
+    for (const d of docs) {
+      const r = d.data() as any;
+      /* Un retour annoncé n'a rien éteint : tant qu'il n'est pas reçu,
+         la marchandise peut ne jamais revenir, et la dette tient. */
+      if (r.etat !== 'recu' && r.etat !== 'livre' && r.etat !== 'traite') continue;
+      /* `deduit` est ce que la marchandise a effacé de la dette ; ce qui
+         a été remboursé en argent n'entre pas ici — ce versement-là est
+         un vrai paiement, et il est déjà compté comme tel. */
+      ajouter(r.venteId ?? r.achatId, r.deduit ?? 0);
+    }
+  } catch {
+    /* Sans les retours on ne sait pas séparer : mieux vaut une dette
+       trop large qu'un écran vide — on ne réclame jamais moins qu'on ne
+       doit, on réclame seulement trop longtemps. */
+  }
+
+  /* Les retours inscrits en versement et nulle part ailleurs : une
+     imputation posée à la main, ou un dossier d'avant cette écriture.
+     Le dédoublonnage se fait par dossier — on garde le plus grand des
+     deux plutôt que de les additionner, deux lectures du même retour
+     éteindraient la dette deux fois. */
   try {
     const docs = await lireParSite('versements', siteId);
+    const parVersement = new Map<string, number>();
     for (const d of docs) {
       const v = d.data() as any;
       if (v.motif !== 'retour_marchandise') continue;
       const cle = v.achatId ?? v.venteId;
       if (!cle) continue;
-      parDossier.set(cle, (parDossier.get(cle) ?? 0) + (v.montant ?? 0));
+      parVersement.set(cle, (parVersement.get(cle) ?? 0) + (v.montant ?? 0));
+    }
+    for (const [cle, montant] of parVersement) {
+      if (montant > (parDossier.get(cle) ?? 0)) parDossier.set(cle, montant);
     }
   } catch {
-    /* Sans les versements on ne sait pas séparer : mieux vaut un versé
-       trop large qu'un écran vide. Le reste dû, lui, reste juste. */
+    /* rien de plus à ajouter : le dossier de retour fait déjà foi */
   }
+
   return parDossier;
 }
 

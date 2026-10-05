@@ -497,10 +497,15 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
 
   async function charger() {
     setLoading(true);
-    /* Le produit appartient à l'activité : il se lit en entier, et c'est
-       la détention qui le rattache à la portée regardée. */
+    /* Le produit appartient à l'activité : il se lit en entier pour
+       elle, et c'est la détention qui le rattache à la portée regardée.
+       « En entier » voulait dire la collection sans filtre — donc les
+       produits de toutes les activités de la base, pas seulement ceux
+       d'ici. Deux torts d'un coup : on payait la lecture du catalogue
+       des autres, et on le laissait entrer dans cet écran. */
     const [snapProd, mvSnap, dets] = await Promise.all([
-      getDocs(query(collection(db, 'produits'))),
+      getDocs(query(collection(db, 'produits'),
+        where('activiteId', '==', activite?.id ?? '__aucune__'))),
       lireParSite('mouvements', ctx.portee),
       detentionsDe(ctx.portee),
     ]);
