@@ -6,9 +6,10 @@ import { roleSurSite, type RoleSite } from '@/lib/roles';
 import AppLayout from '@/components/AppLayout';
 import { useAuth } from '@/lib/auth-context';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
-import { ArrowLeft, Loader2, ShoppingCart } from 'lucide-react';
+import { ArrowLeft, Loader2, ShoppingCart, ChevronDown } from 'lucide-react';
 import {
   ONGLETS_SITE as onglets, ongletsVisibles as calculerOnglets, navDuSite,
+  ongletsGroupes,
   type Onglet,
 } from '@/lib/onglets-site';
 import { chargerMissions } from '@/lib/missions';
@@ -84,6 +85,18 @@ export default function SiteFichePage() {
     /* La vue ne vaut que pour les partenaires : la traîner ailleurs
        encombrerait l'adresse sans rien désigner. */
     if (o !== 'partenaires') params.delete('vue');
+    /* Les sous-onglets ne traversent pas le changement d'onglet.
+     *
+     * Chaque onglet retient le sien dans l'adresse, et plusieurs se
+     * nomment pareil faute d'un meilleur mot : `axe` sépare les
+     * mouvements des auteurs dans la file, les dossiers des motifs dans
+     * les mouvements de stock. Les garder en changeant d'onglet les
+     * ferait lire par un écran à qui ils ne s'adressaient pas — on
+     * ouvrirait « Recouvrements » rangé par échéance pour avoir regardé
+     * la file par auteur. */
+    for (const cle of ['rubrique', 'mode', 'axe', 'sens', 'etape', 'carte', 'groupe']) {
+      params.delete(cle);
+    }
     router.replace(`?${params.toString()}`, { scroll: false });
   }
   /* L'état ne se lit qu'au montage : un lien du sidebar change l'adresse sans
@@ -91,9 +104,20 @@ export default function SiteFichePage() {
   useEffect(() => {
     const voulu = (searchParams.get('onglet') as Onglet) ?? 'dashboard';
     setOngletBrut(prev => (prev === voulu ? prev : voulu));
+    /* Le panneau se referme sur le changement d'onglet, d'où qu'il
+       vienne — le menu latéral mène aux mêmes écrans, et le laisser
+       ouvert posait une liste par-dessus ce qu'on venait de demander. */
+    setPlusOuvert(false);
   }, [searchParams]);
 
   const [countRecouvrements, setCountRecouvrements] = useState(0);
+  /* Le panneau « Plus » de la barre du haut. Il ne se retient pas d'un
+     écran à l'autre : on l'ouvre pour choisir, le choix le referme. */
+  const [plusOuvert, setPlusOuvert] = useState(false);
+  /* Où poser le panneau. Il se place en `fixed` pour échapper au
+     débordement de la rangée, donc il ne peut plus se caler tout seul
+     sous son bouton : c'est le clic qui relève la position. */
+  const [posPlus, setPosPlus] = useState<{ x: number; y: number } | null>(null);
   /* `null` veut dire aucune restriction : l'admin de l'activité, ou un compte
      qu'aucun membre ne désigne. On ne ferme jamais une porte par accident. */
   const [role, setRole] = useState<RoleSite | null>(null);
@@ -171,26 +195,42 @@ export default function SiteFichePage() {
   const ongletCourant = clesVisibles.includes(onglet)
     ? onglet : (clesVisibles[0] as Onglet | undefined) ?? onglet;
 
+  /* Le même partage que dans le menu latéral : ce qui s'ouvre tous les
+     jours, et ce qui se range. Les deux le demandent au même endroit —
+     chacun le décidant de son côté, le même onglet aurait fini devant
+     ici et caché là. Un rôle qui a peu d'onglets les garde tous devant,
+     et « Plus » ne paraît pas. */
+  const { devant: ongletsDevant, groupes: ongletsRanges } = ongletsGroupes(role);
+
   /* Un membre n'a pas de liste de sites : ses onglets vivent dans le sidebar,
      accessibles au burger sur mobile. Le propriétaire garde la barre du haut,
      puisqu'il navigue d'abord entre ses sites. */
   const membre = profile?.role === 'membre';
   const navSite = membre
-    ? [
-        ...navDuSite(siteId, role),
+    ? (() => {
+        const entrees = navDuSite(siteId, role);
         /* Le comptoir est une page, pas un onglet : sa vente naît livrée et
            ne traverse aucun des états que les cartes du cycle représentent.
            Il encaisse, donc il appartient à qui répond du site — pas à qui
            saisit les commandes. */
-        ...(role === 'gerant'
-          ? [{
-              type: 'link' as const,
-              label: 'Comptoir',
-              href: `/site/${siteId}/comptoir`,
-              icon: ShoppingCart,
-            }]
-          : []),
-      ]
+        if (role !== 'gerant') return entrees;
+        const comptoir = {
+          type: 'link' as const,
+          label: 'Comptoir',
+          href: `/site/${siteId}/comptoir`,
+          icon: ShoppingCart,
+        };
+        /* Il se range avec ce qui s'ouvre tous les jours, non derrière les
+           groupes repliés : le mettre en queue l'aurait posé sous trois
+           menus fermés, alors que le gérant y vend toute la journée. */
+        const premierGroupe = entrees.findIndex(e => e.type === 'accordion');
+        if (premierGroupe < 0) return [...entrees, comptoir];
+        return [
+          ...entrees.slice(0, premierGroupe),
+          comptoir,
+          ...entrees.slice(premierGroupe),
+        ];
+      })()
     : undefined;
 
   if (loading) return (
@@ -264,10 +304,15 @@ export default function SiteFichePage() {
         </div>
 
         {/* Onglets. Un membre les a dans son sidebar : les répéter en haut
-            occuperait la largeur sans rien ajouter. */}
+            occuperait la largeur sans rien ajouter.
+            Ce qui s'ouvre tous les jours reste en ligne ; le reste passe
+            sous « Plus ». Les dix-sept tenaient sur la rangée en la
+            faisant défiler — donc les derniers n'existaient que pour qui
+            pensait à pousser la barre vers la droite. Un onglet qu'il
+            faut chercher pour savoir qu'il est là ne se trouve pas. */}
         <div className={`items-center gap-1 overflow-x-auto pb-1 mb-5 border-b border-gray-100 dark:border-gray-800 ${
           membre ? 'hidden' : 'flex'}`}>
-          {ongletsVisibles.map(o => {
+          {ongletsDevant.map(o => {
             const Icon = o.icon;
             const actif = ongletCourant === o.key;
             return (
@@ -281,6 +326,72 @@ export default function SiteFichePage() {
               </button>
             );
           })}
+
+          {ongletsRanges.length > 0 && (
+            <div className="relative shrink-0">
+              {/* Le bouton se marque quand l'onglet ouvert est rangé
+                  dessous : sans cela, on lirait une barre où rien n'est
+                  actif en regardant pourtant un écran. */}
+              <button type="button" onClick={e => {
+                  const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                  setPosPlus({ x: r.left, y: r.bottom + 4 });
+                  setPlusOuvert(v => !v);
+                }}
+                className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-all
+                  ${ongletsRanges.some(g => g.enfants.some(o => o.key === ongletCourant))
+                    ? 'bg-indigo-600 text-white'
+                    : 'border border-indigo-200 dark:border-indigo-800 text-gray-500 dark:text-gray-400 hover:border-indigo-400 hover:text-indigo-600 dark:hover:text-indigo-300'}`}>
+                Plus
+                <ChevronDown size={14}
+                  className={`transition-transform ${plusOuvert ? 'rotate-180' : ''}`} />
+              </button>
+
+              {plusOuvert && posPlus && (
+                <>
+                  {/* Un clic hors du panneau le referme : sans cette
+                      surface, il restait ouvert sur l'écran qu'on venait
+                      de demander. */}
+                  {/* Fermer au défilement plutôt que suivre : posé en
+                      `fixed`, le panneau resterait sur place pendant que
+                      son bouton s'en va, et flotterait seul au milieu de
+                      l'écran. */}
+                  <div className="fixed inset-0 z-30"
+                    onClick={() => setPlusOuvert(false)}
+                    onWheel={() => setPlusOuvert(false)}
+                    onTouchMove={() => setPlusOuvert(false)} />
+                  {/* Posé en `fixed`, hors du flux : la rangée d'onglets
+                      défile horizontalement, et tout ce qui s'y ancre est
+                      coupé par ce débordement — le panneau s'ouvrait
+                      vraiment, invisible sous le bord de la barre. */}
+                  <div style={{ position: 'fixed', left: posPlus.x, top: posPlus.y }}
+                    className="z-40 min-w-[200px] rounded-xl border border-gray-200 bg-white py-1.5 shadow-xl dark:border-gray-700 dark:bg-gray-800">
+                    {ongletsRanges.map(g => (
+                      <div key={g.label}>
+                        <p className="px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-gray-400">
+                          {g.label}
+                        </p>
+                        {g.enfants.map(o => {
+                          const Icon = o.icon;
+                          const actif = ongletCourant === o.key;
+                          return (
+                            <button key={o.key} type="button"
+                              onClick={() => { setOnglet(o.key); setPlusOuvert(false); }}
+                              className={`flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm font-medium transition-colors
+                                ${actif
+                                  ? 'bg-indigo-600 text-white'
+                                  : 'text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700'}`}>
+                              <Icon size={15} className="shrink-0" />
+                              {o.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Contenu */}

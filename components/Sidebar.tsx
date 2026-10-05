@@ -33,34 +33,58 @@ type NavItem =
    Les sites ferment la marche : depuis que ces onglets embrassent
    l'activité, on n'ouvre plus la liste pour travailler, mais pour
    administrer. */
+/* Quatre entrées devant, le reste replié.
+ *
+ * Les quinze tenaient dans la colonne sans y tenir vraiment : on les
+ * lisait toutes pour en trouver une, et celles de tous les jours — ce
+ * qu'on a vendu, ce qu'il y a en caisse, qui doit encore, ce qu'on a
+ * remis — se retrouvaient entre un inventaire qu'on ouvre le lundi et
+ * un paramètre qu'on ouvre deux fois l'an. Ranger ce qui est rare n'est
+ * pas le cacher : c'est cesser de le faire porter par la lecture
+ * quotidienne.
+ *
+ * Ce qui reste devant est ce qu'on ouvre tous les jours. Le reste se
+ * groupe par ce qu'on y fait, non par l'ordre du cycle : on ne déplie
+ * pas un menu pour suivre une marchandise d'un bout à l'autre, on le
+ * déplie pour trouver un écran. */
 const nav: NavItem[] = [
-  /* Constater */
+  /* La journée : ce qu'on a fait, ce qu'il y a en caisse, qui doit
+     encore, et ce qu'on a soi-même remis. */
   { type: 'link', label: 'Tableau de bord', href: '/ensemble?onglet=dashboard', icon: LayoutDashboard },
   { type: 'link', label: 'Fonds disponible', href: '/ensemble?onglet=fonds', icon: Wallet },
-
-  /* Agir, dans l'ordre du cycle : l'argent entre, l'argent sort, la
-     marchandise circule, et ce qui reste se compte. */
-  { type: 'link', label: 'Cycle de vente', href: '/ensemble?onglet=cycle-vente', icon: RefreshCw },
-  { type: 'link', label: 'Achats', href: '/ensemble?onglet=achats', icon: ShoppingCart },
-  /* L'import suit l'achat : c'est le même geste, avec le voyage en plus. */
-  { type: 'link', label: 'Importations', href: '/ensemble?onglet=importations', icon: Ship },
-  { type: 'link', label: 'Transferts', href: '/ensemble?onglet=transferts', icon: ArrowLeftRight },
-  { type: 'link', label: 'Retours', href: '/ensemble?onglet=retours', icon: Undo2 },
-  { type: 'link', label: 'Inventaire', href: '/ensemble?onglet=inventaire', icon: Package },
-
-  /* Ceux à qui l'on doit, ceux qui nous doivent. Le recouvrement suit les
-     partenaires : il ne porte que sur ce qu'eux-mêmes ont laissé. */
-  { type: 'link', label: 'Partenaires', href: '/ensemble?onglet=partenaires', icon: Handshake },
   { type: 'link', label: 'Recouvrements', href: '/ensemble?onglet=recouvrements', icon: CalendarClock },
   /* Le propriétaire vend comme ses gérants : sans cet écran, il ne savait
      pas ce que la caisse avait fait de ses propres ventes. */
   { type: 'link', label: 'Mes remises', href: '/ensemble?onglet=remises', icon: HandCoins },
-  { type: 'link', label: 'Employés', href: '/ensemble?onglet=employes', icon: Users },
 
-  /* Consulter, puis administrer */
-  { type: 'link', label: 'Historique', href: '/ensemble?onglet=historique', icon: History },
-  { type: 'link', label: 'Sites', href: '/site', icon: MapPin },
-  { type: 'link', label: 'Paramètre', href: '/parametre', icon: Settings },
+  /* Tout ce qui fait bouger de la marchandise, dans l'ordre du cycle :
+     elle se vend, elle s'achète, elle voyage, elle revient, et ce qui
+     reste se compte. */
+  { type: 'accordion', label: 'Marchandise', icon: Package, children: [
+    { label: 'Cycle de vente', href: '/ensemble?onglet=cycle-vente', icon: RefreshCw },
+    { label: 'Achats', href: '/ensemble?onglet=achats', icon: ShoppingCart },
+    /* L'import suit l'achat : c'est le même geste, avec le voyage en plus. */
+    { label: 'Importations', href: '/ensemble?onglet=importations', icon: Ship },
+    { label: 'Transferts', href: '/ensemble?onglet=transferts', icon: ArrowLeftRight },
+    { label: 'Retours', href: '/ensemble?onglet=retours', icon: Undo2 },
+    { label: 'Inventaire', href: '/ensemble?onglet=inventaire', icon: Package },
+  ] },
+
+  /* Les personnes : celles qui doivent ou à qui l'on doit, et celles qui
+     travaillent. On les ouvre pour une fiche, pas pour la journée — le
+     recouvrement, lui, est resté devant, puisqu'il se fait chaque jour. */
+  { type: 'accordion', label: 'Comptes', icon: Handshake, children: [
+    { label: 'Partenaires', href: '/ensemble?onglet=partenaires', icon: Handshake },
+    { label: 'Employés', href: '/ensemble?onglet=employes', icon: Users },
+  ] },
+
+  /* Ce qui ne concerne pas la journée mais la structure : ce qui s'est
+     passé, où l'on travaille, comment c'est réglé. */
+  { type: 'accordion', label: 'Activité', icon: Settings, children: [
+    { label: 'Historique', href: '/ensemble?onglet=historique', icon: History },
+    { label: 'Sites', href: '/site', icon: MapPin },
+    { label: 'Paramètre', href: '/parametre', icon: Settings },
+  ] },
 ];
 
 /* -
@@ -72,9 +96,17 @@ type PopupState =
   | { kind: 'flyout'; label: string; children: NavChild[]; y: number }
   | null;
 
-function FixedPopup({ popup, pathname, onMouseEnter, onMouseLeave }: {
+function FixedPopup({ popup, estActif, enAttenteDe, onMouseEnter, onMouseLeave }: {
   popup: PopupState;
-  pathname: string;
+  /* Le même test que partout ailleurs : ces entrées portent un
+     `?onglet=`, que la seule comparaison des chemins ignore. */
+  estActif: (href: string) => boolean;
+  /* L'icône du groupe dit qu'il reste quelque chose ; le panneau doit
+     dire quoi. Sans ses pastilles, on l'ouvrait pour découvrir un compte
+     sans savoir laquelle des six lignes le portait — il fallait les
+     parcourir une à une, ce que la pastille existe précisément pour
+     éviter. */
+  enAttenteDe: (href: string) => number;
   onMouseEnter: () => void;
   onMouseLeave: () => void;
 }) {
@@ -109,7 +141,7 @@ function FixedPopup({ popup, pathname, onMouseEnter, onMouseLeave }: {
         </p>
         {popup.children.map(child => {
           const ChildIcon = child.icon;
-          const active = pathname === child.href;
+          const active = estActif(child.href);
           return (
             <Link
               key={child.href}
@@ -118,7 +150,8 @@ function FixedPopup({ popup, pathname, onMouseEnter, onMouseLeave }: {
                 ${active ? 'bg-indigo-600 text-white' : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'}`}
             >
               <ChildIcon size={15} className="shrink-0" />
-              {child.label}
+              <span className="flex-1">{child.label}</span>
+              <Badge n={enAttenteDe(child.href)} actif={active} />
             </Link>
           );
         })}
@@ -130,13 +163,26 @@ function FixedPopup({ popup, pathname, onMouseEnter, onMouseLeave }: {
 /* -
    Accordéon (menu déplié)
 - */
-function AccordionItem({ item, pathname, open, onToggle }: {
+function AccordionItem({ item, estActif, open, onToggle, enAttenteDe }: {
   item: Extract<NavItem, { type: 'accordion' }>;
-  pathname: string;
+  /* Le même test que les liens de premier rang. Il comparait l'adresse
+     entière au chemin, alors que ces entrées portent toutes un
+     `?onglet=` : l'égalité ne tombait jamais, et ni le groupe ni sa
+     ligne ne se seraient marqués comme actifs. */
+  estActif: (href: string) => boolean;
   open: boolean;
   onToggle: () => void;
+  enAttenteDe: (href: string) => number;
 }) {
-  const isChildActive = item.children.some(c => pathname === c.href);
+  const isChildActive = item.children.some(c => estActif(c.href));
+  /* Ce qui attend là-dedans, quand c'est fermé.
+   *
+   * Les pastilles vivaient sur les lignes ; replier les lignes aurait
+   * replié les pastilles avec, et un compte enfermé dans un menu fermé
+   * ne prévient personne — c'est pourtant tout ce qu'on lui demande.
+   * Le groupe porte donc la somme de ce qu'il cache, et la rend à ses
+   * lignes dès qu'on l'ouvre. */
+  const attente = item.children.reduce((s, c) => s + enAttenteDe(c.href), 0);
   const Icon = item.icon;
   return (
     <div>
@@ -147,13 +193,14 @@ function AccordionItem({ item, pathname, open, onToggle }: {
       >
         <Icon size={18} className="shrink-0" />
         <span className="flex-1 text-left">{item.label}</span>
+        {!open && <Badge n={attente} actif={false} />}
         <ChevronDown size={15} className={`text-gray-400 dark:text-gray-500 transition-transform duration-200 ${open ? 'rotate-180' : ''}`} />
       </button>
       {open && (
         <div className="ml-4 mt-0.5 pl-3 border-l border-gray-200 dark:border-gray-700 space-y-0.5">
           {item.children.map(child => {
             const ChildIcon = child.icon;
-            const active = pathname === child.href;
+            const active = estActif(child.href);
             return (
               <Link
                 key={child.href}
@@ -162,7 +209,8 @@ function AccordionItem({ item, pathname, open, onToggle }: {
                   ${active ? 'bg-indigo-600 text-white' : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700/50'}`}
               >
                 <ChildIcon size={15} className="shrink-0" />
-                {child.label}
+                <span className="flex-1">{child.label}</span>
+                <Badge n={enAttenteDe(child.href)} actif={active} />
               </Link>
             );
           })}
@@ -335,8 +383,15 @@ export default function Sidebar({
   }
   const { theme, toggle } = useTheme();
 
-  // Fermer le drawer mobile à chaque changement de route
-  useEffect(() => { onMobileClose(); }, [pathname]);
+  /* Fermer le tiroir dès qu'on a choisi.
+   *
+   * Il ne se fermait que sur le chemin, et les onglets ne changent que la
+   * query : cliquer « Achats » depuis « Ventes » laissait le tiroir
+   * ouvert sur l'écran qu'on venait de demander, et il fallait un second
+   * geste — fermer soi-même ce qu'on croyait avoir quitté. Les deux se
+   * surveillent donc, le chemin et l'onglet. */
+  useEffect(() => { onMobileClose(); }, [pathname, ongletCourant]);
+
 
   const [collapsed, setCollapsed] = useState(() => {
     if (typeof window === 'undefined') return false;
@@ -350,6 +405,27 @@ export default function Sidebar({
   });
 
   const [popup, setPopup] = useState<PopupState>(null);
+  /* Le menu du bureau se replie aussi, une fois le choix fait.
+   *
+   * Déplié, il prend une colonne entière pour lister ce qu'on ne va plus
+   * relire : on l'a ouvert pour choisir, et le choix est fait. Il restait
+   * pourtant là, large, à côté de l'écran qu'on venait de demander —
+   * donc un second geste pour récupérer la place, à chaque fois.
+   *
+   * Replié, il garde ses icônes et ses pastilles : rien ne disparaît, et
+   * le survol rend les libellés. Le premier rendu ne compte pas — c'est
+   * l'arrivée sur l'app, pas un choix de navigation, et replier alors
+   * déferait la position qu'on avait laissée. */
+  const premierRendu = useRef(true);
+  useEffect(() => {
+    if (premierRendu.current) { premierRendu.current = false; return; }
+    setCollapsed(prev => {
+      if (prev) return prev;
+      localStorage.setItem('sidebar-collapsed', 'true');
+      return true;
+    });
+    setPopup(null);
+  }, [pathname, ongletCourant]);
   const [confirmLogout, setConfirmLogout] = useState(false);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -399,7 +475,8 @@ export default function Sidebar({
             <AccordionItem
               key={i}
               item={item}
-              pathname={pathname}
+              estActif={estActif}
+              enAttenteDe={enAttenteDe}
               open={!!accordionOpen[item.label]}
               onToggle={() => toggleAccordion(item.label)}
             />
@@ -428,8 +505,13 @@ export default function Sidebar({
      reprend la main. */
   const onglets = navVisible.filter(i => 'href' in i) as Extract<NavItem, { href: string }>[];
   /* Seule une page qui apporte ses propres onglets y a droit : ailleurs, la
-     navigation complète ne tiendrait pas sur une rangée. */
-  const barreBasse = !!items && onglets.length > 0 && onglets.length <= 5;
+     navigation complète ne tiendrait pas sur une rangée.
+     Et seulement si elle n'en replie aucun : la rangée ne sait porter que
+     des liens, donc un menu groupé y perdrait ses groupes en silence —
+     on croirait voir toute sa navigation en n'en voyant qu'un morceau. */
+  const aDesGroupes = navVisible.some(i => i.type === 'accordion');
+  const barreBasse = !!items && !aDesGroupes
+    && onglets.length > 0 && onglets.length <= 5;
 
   return (
     <>
@@ -524,15 +606,26 @@ export default function Sidebar({
           {navVisible.map((item, i) => {
             if (item.type === 'accordion') {
               if (collapsed) {
-                const isChildActive = item.children.some(c => pathname === c.href);
+                const isChildActive = item.children.some(c => estActif(c.href));
+                /* Replié, le groupe ne montre qu'une icône : ce qui
+                   attend dedans doit s'y voir, sinon la colonne étroite
+                   devient le seul endroit de l'app qui ne prévient de
+                   rien. */
+                const attente = item.children.reduce(
+                  (n, c) => n + enAttenteDe(c.href), 0);
                 const Icon = item.icon;
                 return (
                   <div key={i}
                     onMouseEnter={e => showPopup(e, { kind: 'flyout', label: item.label, children: item.children, y: 0 })}
                     onMouseLeave={hidePopup}>
-                    <button className={`flex items-center justify-center w-full px-3 py-2.5 rounded-lg transition-colors
+                    <button className={`relative flex items-center justify-center w-full px-3 py-2.5 rounded-lg transition-colors
                       ${isChildActive ? 'bg-indigo-100 text-indigo-600 dark:bg-indigo-900/40 dark:text-indigo-400' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700/50'}`}>
                       <Icon size={18} />
+                      {attente > 0 && (
+                        <span className="absolute right-1.5 top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold leading-none text-white ring-2 ring-white tabular-nums dark:ring-gray-900">
+                          {attente > 9 ? '9+' : attente}
+                        </span>
+                      )}
                     </button>
                   </div>
                 );
@@ -541,7 +634,8 @@ export default function Sidebar({
                 <AccordionItem
                   key={i}
                   item={item}
-                  pathname={pathname}
+                  estActif={estActif}
+                  enAttenteDe={enAttenteDe}
                   open={!!accordionOpen[item.label]}
                   onToggle={() => toggleAccordion(item.label)}
                 />
@@ -598,7 +692,8 @@ export default function Sidebar({
       {collapsed && (
         <FixedPopup
           popup={popup}
-          pathname={pathname}
+          estActif={estActif}
+          enAttenteDe={enAttenteDe}
           onMouseEnter={keepPopup}
           onMouseLeave={hidePopup}
         />

@@ -95,12 +95,97 @@ export function aLOnglet(role: RoleSite | null, onglet: Onglet): boolean {
   return ongletsVisibles(role).some(o => o.key === onglet);
 }
 
+/**
+ * Ce qui reste devant, pour qui en a trop.
+ *
+ * Le gérant ouvre quatorze onglets là où sa journée en demande quatre :
+ * ce qu'il a vendu, ce qu'il y a en caisse, qui doit encore, ce qu'il a
+ * remis. Le reste existe et doit rester atteignable — mais le lire
+ * chaque fois pour trouver l'un des quatre coûtait un parcours entier.
+ *
+ * Les groupes ne valent que pour qui en a assez pour s'y perdre. Le
+ * caissier en a trois, le responsable des commandes cinq : les replier
+ * ajouterait un geste pour cacher ce qui tenait déjà sous les yeux.
+ */
+const QUOTIDIEN: Onglet[] = [
+  'dashboard', 'fonds', 'mouvements', 'autorisations',
+  'recouvrements', 'remises',
+];
+
+const GROUPES: { label: string; cles: Onglet[] }[] = [
+  { label: 'Marchandise',
+    cles: ['cycle-vente', 'achats', 'transferts', 'retours',
+      'inventaire', 'mouvements-stock'] },
+  { label: 'Comptes', cles: ['partenaires', 'employes'] },
+  { label: 'Activité', cles: ['historique', 'audit', 'configuration'] },
+];
+
+/** En deçà, une liste plate se lit d'un coup d'œil : rien à replier. */
+const SEUIL_GROUPES = 8;
+
+/**
+ * Les onglets d'un rôle, séparés en ce qui reste devant et ce qui se range.
+ *
+ * Le menu latéral et la barre du haut montrent les mêmes onglets et ne les
+ * montrent pas pareil — l'un replie des accordéons, l'autre n'a qu'une
+ * ligne et pousse le reste sous un bouton. Mais ce qui mérite de rester
+ * devant ne dépend pas de la forme du menu : si les deux en décidaient
+ * chacun de son côté, le même onglet finirait visible ici et caché là.
+ */
+export function ongletsGroupes(role: RoleSite | null) {
+  const visibles = ongletsVisibles(role);
+  if (visibles.length < SEUIL_GROUPES) {
+    return { devant: visibles, groupes: [] as
+      { label: string; enfants: typeof visibles }[] };
+  }
+  const range = new Set<Onglet>([
+    ...QUOTIDIEN, ...GROUPES.flatMap(g => g.cles),
+  ]);
+  return {
+    /* Ce qu'aucun groupe ne réclame reste devant plutôt que de
+       disparaître : un onglet ajouté demain n'a pas à attendre qu'on
+       pense à le ranger pour exister. */
+    devant: visibles.filter(
+      o => QUOTIDIEN.includes(o.key) || !range.has(o.key)),
+    groupes: GROUPES
+      .map(g => ({
+        label: g.label,
+        enfants: visibles.filter(o => g.cles.includes(o.key)),
+      }))
+      .filter(g => g.enfants.length > 0),
+  };
+}
+
 /** Ces mêmes onglets en entrées de menu, pour le site donné. */
 export function navDuSite(siteId: string, role: RoleSite | null) {
-  return ongletsVisibles(role).map(o => ({
+  const visibles = ongletsVisibles(role);
+  const lien = (o: typeof visibles[number]) => ({
     type: 'link' as const,
     label: o.label,
     href: `/site/${siteId}?onglet=${o.key}`,
     icon: o.icon,
-  }));
+  });
+
+  const { devant, groupes } = ongletsGroupes(role);
+  if (groupes.length === 0) return visibles.map(lien);
+
+  /* L'ordre de la barre est conservé à l'intérieur de chaque groupe :
+     un menu qui réorganise ce que l'écran range autrement obligerait à
+     réapprendre deux fois la même app. */
+  return [
+    ...devant.map(lien),
+    ...groupes.map(g => ({
+      type: 'accordion' as const,
+      label: g.label,
+      /* L'emblème du groupe est celui de sa première entrée : il n'a pas
+         d'icône à lui, et en inventer une de plus ferait un symbole que
+         rien n'explique ailleurs. */
+      icon: g.enfants[0].icon,
+      children: g.enfants.map(o => ({
+        label: o.label,
+        href: `/site/${siteId}?onglet=${o.key}`,
+        icon: o.icon,
+      })),
+    })),
+  ];
 }
