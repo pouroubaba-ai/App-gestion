@@ -13,6 +13,8 @@ import { LigneFlux, referenceFlux, peutInitierTransfert, type Role } from '@/lib
 import { roleSurSite, type RoleSite } from '@/lib/roles';
 import { SelectCherchable } from '@/components/Champs';
 import { estEnsemble, marqueOrigine, racineRetour } from '@/lib/retour';
+import { creerOrdreTransfert } from '@/lib/ordre-transfert';
+import { auteurEtape } from '@/lib/auteur';
 
 interface SiteBref { id: string; nom: string }
 
@@ -54,6 +56,11 @@ export default function NouveauTransfertPage() {
   const cleDraft = cleBrouillon('transfert', siteId);
   const [lignes, setLignes] = useBrouillon<LigneFlux[]>(cleDraft, []);
   const [date, setDate] = useState(aujourdhui());
+  /* Le client du site destinataire, quand ce transfert sert une commande.
+     Vide presque toujours : un transfert ordinaire réapprovisionne un
+     rayon et ne concerne personne. */
+  const [clientDestId, setClientDestId] = useState('');
+  const [clientsDest, setClientsDest] = useState<{ id: string; nom: string }[]>([]);
   const [note, setNote] = useState('');
   const [enCours, setEnCours] = useState(false);
   const [erreur, setErreur] = useState('');
@@ -92,6 +99,27 @@ export default function NouveauTransfertPage() {
       setLoading(false);
     })();
   }, [siteId, user]);
+
+  /* Les clients de la destination. C'est chez elle qu'ils ont leur
+     compte, et c'est elle qui les facturera : la source n'en connaît
+     aucun, et lui en proposer un des siens créerait la créance au
+     mauvais endroit. Le choix se vide quand on change de destination,
+     sinon il désignerait le client d'un autre site. */
+  useEffect(() => {
+    setClientDestId('');
+    if (!destId) { setClientsDest([]); return; }
+    let vivant = true;
+    getDocs(query(collection(db, 'partenaires'),
+      where('siteId', '==', destId), where('rolesClient', '==', true)))
+      .then(snap => {
+        if (!vivant) return;
+        setClientsDest(snap.docs
+          .map(d => ({ id: d.id, nom: (d.data().nom ?? '—') as string }))
+          .sort((a, b) => a.nom.localeCompare(b.nom)));
+      })
+      .catch(() => { if (vivant) setClientsDest([]); });
+    return () => { vivant = false; };
+  }, [destId]);
 
   /* La destination change : on relit ce qu'elle détient. Rien tant
      qu'aucune n'est choisie — il n'y a rien à confronter. */
@@ -136,6 +164,32 @@ export default function NouveauTransfertPage() {
     try {
       const dest = autres.find(s => s.id === destId)!;
       const source = sites.find(s => s.id === siteId);
+
+      /* Un client désigné fait de ce transfert un ordre : trois dossiers
+         naissent ensemble au lieu d'un. Le détail est dans
+         `lib/ordre-transfert.ts` — ici on se contente de choisir la
+         porte. */
+      if (clientDestId) {
+        const cl = clientsDest.find(c => c.id === clientDestId)!;
+        const lien = await creerOrdreTransfert({
+          siteSourceId: siteId,
+          siteSourceNom: source?.nom ?? '—',
+          siteDestId: destId,
+          siteDestNom: dest.nom,
+          partenaireId: clientDestId,
+          partenaireNom: cl.nom,
+          lignes,
+          date,
+          note,
+          userId: user!.uid,
+          auteur: await auteurEtape(siteId, user!.uid, user!.displayName),
+        });
+        oublierBrouillon(cleDraft);
+        router.push(
+          `/site/${siteId}/transferts/${lien.transfertId}${marqueOrigine(vientEnsemble)}`);
+        return;
+      }
+
       const ref = await addDoc(collection(db, 'transferts'), {
         reference: referenceFlux('TR', date),
         siteSourceId: siteId,
@@ -248,6 +302,38 @@ export default function NouveauTransfertPage() {
                   onChange={e => setDate(e.target.value)}
                   className="w-full px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
               </div>
+            </div>
+          )}
+
+          {/* Pour qui, s'il y a un pour qui.
+              Le champ reste vide dans presque tous les cas : un transfert
+              réapprovisionne un rayon et ne concerne personne. Mais quand
+              une commande est arrivée ici pour un client de là-bas, le
+              dire maintenant évite de le redire au téléphone — et
+              surtout évite que l'autre site resaisisse les mêmes lignes
+              aux mêmes prix, qui est l'endroit où l'on se trompe. */}
+          {destId && (
+            <div className="mt-3 border-t border-gray-100 pt-3 dark:border-gray-800">
+              <label className="mb-1.5 block text-xs font-bold text-gray-500 dark:text-gray-400">
+                À facturer au client
+                <span className="ml-1 font-medium normal-case text-gray-400">
+                  · facultatif
+                </span>
+              </label>
+              <SelectCherchable valeur={clientDestId} onChange={setClientDestId}
+                options={clientsDest.map(c => ({ valeur: c.id, label: c.nom }))}
+                vide={`Aucun client chez ${autres.find(a => a.id === destId)?.nom ?? 'ce site'}`}
+                effacable />
+              {clientDestId && (
+                <p className="mt-2 text-[11px] font-medium leading-snug text-gray-500 dark:text-gray-400">
+                  Trois dossiers seront créés : un bon de commande ici, ce
+                  transfert, et la commande du client chez{' '}
+                  <span className="font-bold">
+                    {autres.find(a => a.id === destId)?.nom}
+                  </span>
+                  . La facture et le règlement restent chez lui.
+                </p>
+              )}
             </div>
           )}
         </div>

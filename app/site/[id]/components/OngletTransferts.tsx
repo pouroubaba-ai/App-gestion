@@ -568,6 +568,16 @@ export default function OngletTransferts({ siteId, userId, sites, role, titre }:
                   rendu: t => (
                     <span className="inline-flex items-center gap-2">
                       <span className="font-medium text-gray-900 dark:text-gray-100">{t.reference}</span>
+                      {/* Un ordre n'est pas né d'ici : une commande reçue
+                          ailleurs l'a appelé. Sans cette marque, le
+                          responsable lit un transfert ordinaire et
+                          cherche à quoi il correspond. */}
+                      {(t as any).ordre && (
+                        <span title={`À remettre à ${(t as any).ordrePartenaireNom ?? 'un client'}`}
+                          className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white">
+                          O
+                        </span>
+                      )}
                       {/* Le statut colle à la référence : en vue « en cours »,
                           la liste mêle les étapes et les tuiles qui le
                           disaient ne sont plus à l'écran. */}

@@ -695,6 +695,16 @@ export default function OngletCycleVente({ siteId, userId, role, sites, titre }:
                 rendu: v => (
                   <span className="inline-flex items-center gap-2">
                     <span className="font-medium text-gray-900 dark:text-gray-100">{v.reference}</span>
+                    {/* Un bon de commande né d'un ordre : la marchandise
+                        sort d'ici, mais la facture est à l'autre site.
+                        Le dire sur la ligne évite qu'on aille réclamer
+                        son argent à quelqu'un qui ne doit rien ici. */}
+                    {(v as any).ordre && (
+                      <span title={`À remettre à ${(v as any).ordrePartenaireNom ?? 'un client'} — facturé par l'autre site`}
+                        className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white">
+                        O
+                      </span>
+                    )}
                     {/* Le statut colle a la reference : en colonne propre,
                         il portait un libelle « Statut » qui n'apprenait
                         rien, et le badge disait deja ce qu'il etait. */}

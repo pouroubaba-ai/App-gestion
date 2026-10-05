@@ -1061,7 +1061,22 @@ export async function confirmerTransfert(params: {
   const { transfert } = params;
   /* Un dossier en traitement est un dossier reçu dont les comptes divergent :
      c'est justement celui-là que la confirmation vient clore. */
-  if (transfert.etat !== 'recu' && transfert.etat !== 'traitement'
+  /* Un ordre ne passe pas par là.
+   *
+   * « Expédié », « reçu », « en traitement » décrivent une marchandise
+   * qui voyage et qu'on compte à l'arrivée. Sur un ordre, elle ne voyage
+   * pas : le client l'emporte depuis la source, et le site qui facture
+   * ne verra jamais le colis. Lui demander de confirmer une réception
+   * serait lui demander d'attester ce qu'il n'a pas vu.
+   *
+   * Le transfert se clôt donc depuis `preparation`, au moment où la
+   * source remet la marchandise — et c'est bien cette remise, un geste
+   * réel et constaté, qui autorise l'écriture des mouvements. */
+  const estOrdre = (transfert as any).ordre === true;
+  const depuisPreparation = estOrdre
+    && (transfert.etat === 'preparation' || transfert.etat === 'en_cours');
+  if (!depuisPreparation
+    && transfert.etat !== 'recu' && transfert.etat !== 'traitement'
     && transfert.etat !== 'a_confirmer') {
     throw new Error('Seul un transfert reçu peut être confirmé.');
   }

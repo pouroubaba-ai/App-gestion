@@ -39,6 +39,8 @@ import {
 import {
   estEnsemble, retourHistorique, marqueOrigine, racineRetour,
 } from '@/lib/retour';
+import { propagerEtapeOrdre, remettreOrdre } from '@/lib/ordre-transfert';
+import { confirmerTransfert } from '@/lib/flux-marchandise';
 import ModalPlanification from '../../components/ModalPlanification';
 import {
   appliquerPlanification, lireChoix, type Planification,
@@ -430,9 +432,43 @@ export default function FicheVentePage() {
     setEnCours(true);
     setErreur('');
     try {
+      /* Le bon de commande d'un ordre ne livre pas comme une vente.
+       *
+       * Sa marchandise part par le transfert, qui la sort d'ici et la
+       * fait entrer là-bas ; la vente du site qui facture l'en fera
+       * ressortir. Le livrer ici écrirait une seconde sortie pour un
+       * seul ventilateur remis. Il n'a pas de créance non plus : elle
+       * appartient au dossier d'en face. */
+      const lienOrdre = (vente as any).ordreLien;
+      const estSourceOrdre = !!lienOrdre && (vente as any).ordre === true;
+
+      if (suivant === 'livre' && estSourceOrdre) {
+        const auteur = await auteurCourant(
+          vente.siteId, user!.uid, user!.displayName);
+        await remettreOrdre({
+          lien: lienOrdre,
+          lignes: vente.lignes,
+          userId: user!.uid,
+          date: aujourdhui(),
+          utilisateurNom: auteur.utilisateurNom,
+          utilisateurFonction: auteur.utilisateurFonction,
+        });
+        /* Le transfert a maintenant ses quantités : il peut écrire les
+           mouvements et se clore. C'est lui, et lui seul, qui touche au
+           stock des deux sites. */
+        const tSnap = await getDoc(doc(db, 'transferts', lienOrdre.transfertId));
+        if (tSnap.exists()) {
+          await confirmerTransfert({
+            transfert: { id: tSnap.id, ...tSnap.data() } as any,
+            userId: user!.uid, par: user!.uid,
+            utilisateurNom: auteur.utilisateurNom,
+            utilisateurFonction: auteur.utilisateurFonction,
+          });
+        }
+
       /* La livraison n'est pas un simple changement d'état : c'est là que le
          stock sort et que la créance naît. */
-      if (suivant === 'livre') {
+      } else if (suivant === 'livre') {
         const r = await livrerVente({
           vente, userId: user!.uid, par: user!.uid,
           ...(await auteurCourant(vente.siteId, user!.uid, user!.displayName)),
@@ -449,6 +485,22 @@ export default function FicheVentePage() {
             ? { parPreparation: user!.uid,
                 auteurPreparation: await auteurEtape(vente.siteId, user!.uid) }
             : {}),
+        });
+      }
+
+      /* Un bon de commande né d'un ordre entraîne les deux autres
+         dossiers : le gérant d'en face n'a rien à pousser, et le
+         transfert se clôt au moment où la marchandise est remise. */
+      if (lienOrdre && estSourceOrdre
+        && (suivant === 'preparation' || suivant === 'pret'
+          || suivant === 'livre')) {
+        await propagerEtapeOrdre({
+          lien: lienOrdre, etat: suivant, userId: user!.uid,
+          date: aujourdhui(),
+          /* À la remise, le transfert est déjà clos par
+             `confirmerTransfert` : le repousser le ferait repasser par
+             un état qu'il a franchi. */
+          transfertDejaClos: suivant === 'livre',
         });
       }
       await charger();
