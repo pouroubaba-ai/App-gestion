@@ -243,27 +243,26 @@ export async function verserAuTiers(params: {
     partenaireId,
   }, userId, params.adminUid ?? null, {
     forcerAttente: params.parRemise,
-    /* Si le mouvement attend, les versements attendent avec lui. */
-    versementsEnAttente: aEcrire,
   });
 
-  /* Une dette ne s'éteint pas avant que l'argent soit là.
+  /* La dette tombe quand le client paie, pas quand la caisse compte.
    *
-   * Quand la caisse a un responsable, le mouvement part en file et rien
-   * n'est encore entré au tiroir. Écrire les versements à cet instant
-   * soldait les échéances et faisait passer le document à « payé » : le
-   * registre disait qu'on avait payé avec un argent qui n'était pas là.
-   * Les lignes voyagent donc avec la ligne d'attente, et c'est
-   * l'autorisation qui les écrit.
+   * Ce sont deux faits distincts et ils n'ont pas le même sujet. Le
+   * client a payé : sa dette est éteinte, l'échéance est soldée, et rien
+   * de ce qui suit ne le concerne plus. L'argent, lui, est en route vers
+   * le tiroir — c'est l'affaire de celui qui le porte et du caissier qui
+   * le recevra.
    *
-   * Quand l'argent entre directement — pas de caissier, ou c'est lui qui
-   * agit — rien ne change : on écrit ici, avec le mouvement en référence. */
-  if (ecriture.applique) {
-    /* Les lignes ne se disputent plus rien : elles partent ensemble. */
-    await Promise.all(aEcrire.map(v => enregistrerVersement({
-      ...v, mouvementCaisseId: ecriture.id,
-    })));
-  }
+   * Les faire dépendre l'un de l'autre laissait un client réclamé pour
+   * une somme qu'il avait réglée, parce qu'un caissier n'avait pas encore
+   * ouvert son écran. La créance n'est pas une question de caisse.
+   *
+   * Ce qui attend, c'est le mouvement de caisse — et lui seul. Le
+   * versement porte `mouvementCaisseId` quand l'argent est entré, `null`
+   * tant qu'il attend : c'est là que se lit la différence. */
+  await Promise.all(aEcrire.map(v => enregistrerVersement({
+    ...v, mouvementCaisseId: ecriture.applique ? ecriture.id : null,
+  })));
 
   /* La dette n'est plus écrite sur le partenaire : elle se déduit des
      dossiers non soldés, et tombe d'elle-même quand ils sont réglés. */

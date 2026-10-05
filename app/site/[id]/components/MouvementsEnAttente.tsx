@@ -315,8 +315,27 @@ export default function MouvementsEnAttente({
               </div>
             )}
 
+            {/* Ce qu'un refus engage, dit avant de le faire.
+                Refuser une entrée, c'est affirmer qu'une somme déclarée
+                remise n'est pas arrivée. Cela ne clôt rien : l'écart
+                part au propriétaire, qui tranchera. Le caissier doit le
+                savoir en cliquant, pas le découvrir après. */}
+            {ouvert.sens === 'entree' && (
+              <div className="mt-3 rounded-xl bg-red-50 px-3 py-2.5 dark:bg-red-900/15">
+                <p className="text-[11px] text-red-700 dark:text-red-300">
+                  Refuser cette entrée ouvre un écart de
+                  {' '}{formatMontant(ouvert.montant)} au nom des deux
+                  déclarations. Le propriétaire le tranchera ; la somme ne
+                  disparaît pas.
+                </p>
+              </div>
+            )}
+
             <label className="mb-1.5 mt-3 block text-xs font-bold text-gray-500 dark:text-gray-400">
-              Constat {ecart === 0 && <span className="font-normal text-gray-400">(facultatif)</span>}
+              Constat {ecart === 0 && ouvert.sens !== 'entree'
+                && <span className="font-normal text-gray-400">(facultatif)</span>}
+              {ouvert.sens === 'entree'
+                && <span className="font-normal text-gray-400"> (requis pour refuser)</span>}
             </label>
             <input type="text" value={constat} onChange={e => setConstat(e.target.value)}
               placeholder="Ce que vous avez constaté…"

@@ -27,7 +27,7 @@ import {
   recuParLigne, type Reception,
 } from '@/lib/receptions';
 import { ChampNombre } from '@/components/Champs';
-import { roleSurSite, type RoleSite } from '@/lib/roles';
+import { peutDisposerDuCapital, roleSurSite, type RoleSite } from '@/lib/roles';
 import {
   ArrowLeft, Loader2, CheckCheck, Check, ArrowDownLeft, Clock, Wallet, X, Info, Plus } from 'lucide-react';
 import {
@@ -446,7 +446,12 @@ export default function FicheAchatPage() {
      versements, pour qu'un montant et son détail ne divergent jamais. */
   const depasseCaisse = soldeCaisseSite != null && nouveauVersement > soldeCaisseSite;
   const manqueCaisse = depasseCaisse ? nouveauVersement - (soldeCaisseSite ?? 0) : 0;
-  const apportSuffit = !depasseCaisse || (avecApport && apport >= manqueCaisse);
+  /* Un apport dispose du capital : le propriétaire seul en déclare un.
+     Proposer la case à qui ne peut pas la suivre ferait échouer le
+     règlement au dernier moment, après la saisie. */
+  const apportInterdit = depasseCaisse && !peutDisposerDuCapital(role);
+  const apportSuffit = !depasseCaisse
+    || (!apportInterdit && avecApport && apport >= manqueCaisse);
 
   /**
    * Complète une ligne, ou toutes.
@@ -539,7 +544,9 @@ export default function FicheAchatPage() {
     try {
       /* L'apport d'abord : sans lui la caisse passerait en négatif entre les
          deux écritures, et chaque mouvement garde son solde. */
-      if (depasseCaisse && avecApport && apport > 0) {
+      /* La garde tient aussi ici : masquer la case ne ferme pas
+         l'écriture qu'elle déclenche. */
+      if (depasseCaisse && !apportInterdit && avecApport && apport > 0) {
         const auteur = await auteurCourant(achat!.siteId, user!.uid);
         await ecrireEnCaisse({
           siteId: achat!.siteId, sens: 'entree', motif: 'apport',
@@ -1469,6 +1476,17 @@ export default function FicheAchatPage() {
                   <p className="mb-2 text-xs font-bold text-red-600 dark:text-red-400">
                     Manque {formatMontant(manqueCaisse)}
                   </p>
+                  {apportInterdit ? (
+                    /* Dire pourquoi, et à qui le demander : un règlement
+                       qui échoue au dernier moment se lit comme une
+                       panne. */
+                    <p className="text-xs text-amber-800 dark:text-amber-400">
+                      Un apport dispose du capital : seul le propriétaire
+                      peut en déclarer un. Demandez-lui de compléter la
+                      caisse, puis revenez régler.
+                    </p>
+                  ) : (
+                  <>
                   <label className="flex cursor-pointer items-center gap-2">
                     <input type="checkbox" checked={avecApport}
                       onChange={e => { setAvecApport(e.target.checked); if (e.target.checked) setApport(manqueCaisse); }}
@@ -1492,6 +1510,8 @@ export default function FicheAchatPage() {
                         placeholder="Détail"
                         className="mt-2 w-full rounded-lg border border-amber-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-amber-600/50 dark:border-amber-800 dark:bg-gray-800 dark:text-gray-100" />
                     </div>
+                  )}
+                  </>
                   )}
                 </div>
               )}

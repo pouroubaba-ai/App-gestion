@@ -320,25 +320,32 @@ export async function autoriser(params: {
       })
     : null;
 
-  /* Les versements que ce mouvement portait s'écrivent maintenant.
+  /* Les versements que ce mouvement portait se rattachent à lui.
    *
-   * Ils attendaient avec lui : une dette ne s'éteint pas avant que
-   * l'argent soit au tiroir. Il y est, et le mouvement qui l'y a fait
-   * entrer leur sert de référence.
+   * Ils sont déjà écrits : une dette s'éteint quand le partenaire paie,
+   * pas quand la caisse compte. Ce qui manquait, c'était le lien vers la
+   * ligne de registre — tant que l'argent n'était pas au tiroir, il n'y
+   * avait rien à désigner.
+   *
+   * On le pose maintenant. Sans lui, un versement resterait sans
+   * mouvement alors que l'argent est entré, et plus rien ne dirait par
+   * quelle écriture il est passé.
    *
    * L'import se fait ici, pas en tête de fichier : `versements-collection`
-   * passe par `ecrire-caisse`, qui revient à ce module — le cycle casserait
-   * le chargement.
-   *
-   * Si l'écriture échoue, la ligne reste en attente et le mouvement de
-   * caisse est déjà passé : on le dit plutôt que de marquer autorisé un
-   * règlement qui ne s'est pas inscrit. */
-  const enReserve = (m.versementsEnAttente ?? []) as Record<string, unknown>[];
-  if (enReserve.length > 0 && mouvementCaisseId) {
-    const { enregistrerVersement } = await import('./versements-collection');
-    await Promise.all(enReserve.map(v => enregistrerVersement({
-      ...v, mouvementCaisseId,
-    } as Parameters<typeof enregistrerVersement>[0])));
+   * passe par `ecrire-caisse`, qui revient à ce module — le cycle
+   * casserait le chargement. */
+  if (mouvementCaisseId && m.partenaireId) {
+    const aLier = await getDocs(query(
+      collection(db, 'versements'),
+      where('siteId', '==', m.siteId),
+      where('partenaireId', '==', m.partenaireId),
+      where('mouvementCaisseId', '==', null)));
+    await Promise.all(aLier.docs.map(d =>
+      updateDoc(d.ref, { mouvementCaisseId }).catch(() => {
+        /* Un rattachement raté ne doit pas défaire une autorisation :
+           l'argent est au tiroir, le registre le porte. Le lien se
+           retrouve par le partenaire et la date. */
+      })));
   }
 
   await updateDoc(doc(db, 'mouvements_attente', m.id), {
@@ -415,12 +422,60 @@ export async function refuser(params: {
   parNom?: string | null;
 }): Promise<void> {
   if (params.mouvement.etat !== 'en_attente') return;
-  await updateDoc(doc(db, 'mouvements_attente', params.mouvement.id), {
+  const m = params.mouvement;
+  if (!params.constat.trim()) {
+    throw new Error('Un refus se motive : dites ce que vous avez constaté.');
+  }
+
+  /* Un refus d'entrée laisse une question ouverte, pas un dossier clos.
+   *
+   * L'argent a été encaissé dehors — la vente est faite, le client a
+   * payé. Si le caissier dit ne pas l'avoir reçu, l'un des deux se
+   * trompe, ou pire. Refuser sans rien laisser derrière effaçait la
+   * somme de partout : le registre ne la portait pas, l'écran de celui
+   * qui l'avait déclarée la perdait, et personne n'avait à répondre de
+   * la différence.
+   *
+   * On inscrit donc un écart, au nom des deux : celui qui déclare avoir
+   * remis, celui qui déclare n'avoir rien reçu. Il reste ouvert jusqu'à
+   * ce que quelqu'un le tranche.
+   *
+   * Une sortie refusée ne pose pas ce problème : l'argent n'a pas bougé,
+   * rien n'est à retrouver. */
+  /* L'écart s'écrit avant le refus, et le refus n'a pas lieu sans lui.
+   *
+   * Dans l'autre ordre, une écriture ratée laissait le mouvement refusé
+   * sans sa contrepartie — la somme disparaissait, ce que ce code existe
+   * justement pour empêcher. Mieux vaut un refus qui échoue et qu'on
+   * reprend qu'un refus qui passe sans trace. */
+  if (m.sens === 'entree') {
+    const { declarerEcart } = await import('./ecarts-caisse');
+    await declarerEcart({
+      siteId: m.siteId,
+      sens: 'manque',
+      montant: m.montant,
+      detail: `Entrée refusée · ${m.detail ?? ''} — `
+        + `${m.utilisateurNom ?? 'un auteur'} déclare avoir remis `
+        + `${m.montant.toLocaleString('fr-FR')} FCFA, `
+        + `${params.parNom ?? 'le caissier'} déclare ne pas l'avoir reçu : `
+        + params.constat.trim(),
+      parUid: params.parUid,
+      parNom: params.parNom ?? null,
+      parRoleSite: 'caissier',
+      /* Pas de plafond ici : l'écart ne sort rien du tiroir, il nomme une
+         somme qui n'y est jamais entrée. Le borner au solde empêcherait
+         de constater un manque plus grand que ce qui reste — exactement
+         le cas qui compte. */
+    });
+  }
+
+  await updateDoc(doc(db, 'mouvements_attente', m.id), {
     etat: 'refuse' as EtatAttente,
     autorisePar: params.parUid,
     autoriseParNom: params.parNom ?? null,
     dateAutorisation: aujourdhui(),
     constat: params.constat.trim() || null,
   });
+
   signalerAttente();
 }

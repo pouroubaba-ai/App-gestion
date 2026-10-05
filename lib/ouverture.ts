@@ -88,17 +88,17 @@ export async function creerOuverture(params: {
       + 'vient ce second compte.');
   }
 
-  /* Un solde d'ouverture reporte ce qui était dû avant l'app : il se date
-     donc avant la première opération. Posé après, il ne reporterait plus
-     rien — il gonflerait une dette déjà constituée. */
-  const premier = await premierDossier(
-    params.siteId, params.role, params.partenaireId);
-  if (premier && params.date > premier) {
-    throw new Error(
-      `Un solde d’ouverture reporte ce qui était dû avant l’app : datez-le `
-      + `au plus tard du ${new Date(premier).toLocaleDateString('fr-FR')}, `
-      + `jour de la première opération avec ce partenaire.`);
-  }
+  /* Aucune borne sur la date.
+   *
+   * Un report avait été borné à la veille de la première opération : il
+   * précède ce qu'il reporte, donc il se date avant. L'idée se tient en
+   * théorie et ne tient pas au comptoir — les comptes anciens se
+   * retrouvent longtemps après, et c'est le commerçant qui sait de quand
+   * ils datent, pas le logiciel. Lui refuser sa propre date revenait à
+   * lui dire qu'il se trompe sur ce qu'il a vécu.
+   *
+   * Ce qui reste : la date est écrite, elle est visible, et le dossier
+   * porte le nom de celui qui l'a posée. */
 
   const estFourn = params.role === 'fournisseur';
   const ref = await addDoc(collection(db, collectionDe(params.role)), {

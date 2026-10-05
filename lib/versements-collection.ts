@@ -197,24 +197,16 @@ export async function enregistrerVersement(saisie: SaisieVersement): Promise<Ver
     /* La même saisie, rejouée à l'autorisation — mais sans repasser par
        la caisse : le mouvement sera déjà écrit, et c'est lui qu'on
        rattachera. */
-    versementsEnAttente: [{ ...saisie, sansCaisse: true }],
   });
 
-  /* En attente, rien ne s'écrit ici : ni le versement, ni le total du
-     dossier. L'appelant reçoit la ligne telle qu'elle sera, pour que
-     l'écran puisse l'afficher, mais la base ne la porte pas encore. */
-  if (ecriture && !ecriture.applique) {
-    return {
-      id: ecriture.id,
-      ...saisie,
-      heure,
-      mouvementCaisseId: null,
-      enAttente: true,
-    } as unknown as Versement;
-  }
+  /* Le versement s'écrit dans tous les cas : c'est un fait entre le
+     partenaire et nous, et il ne dépend pas du tiroir. Ce qui attend,
+     c'est le mouvement de caisse.
 
-  /* Le versement ne porte le mouvement que si l'argent a bougé : en
-     attente, la ligne de registre naîtra à l'autorisation. */
+     Le versement ne porte donc le mouvement que si l'argent a bougé : en
+     attente, `mouvementCaisseId` reste nul et la ligne de registre naîtra
+     à l'autorisation. C'est là, et nulle part ailleurs, que se lit la
+     différence entre « il a payé » et « c'est dans la caisse ». */
   const mouvementCaisseId = saisie.sansCaisse
     ? (saisie.mouvementCaisseId ?? null)
     : (ecriture?.applique ? ecriture.id : null);

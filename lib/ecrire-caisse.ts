@@ -20,7 +20,7 @@ import {
   enregistrerMouvementCaisse, type SaisieCaisse,
 } from './caisse';
 import { mettreEnAttente } from './attente-caisse';
-import { aUnCaissier, roleSurSite } from './roles';
+import { aUnCaissier, peutDisposerDuCapital, roleSurSite } from './roles';
 
 export interface ResultatEcriture {
   /** L'identifiant du mouvement écrit, ou de la demande en attente. */
@@ -73,6 +73,32 @@ export async function ecrireEnCaisse(
       : Promise.resolve(null),
     aUnCaissier(saisie.siteId).catch(() => false),
   ]);
+
+  /* Le capital n'attend personne.
+   *
+   * Un apport et un retrait n'appartiennent qu'au propriétaire — c'est
+   * `peutDisposerDuCapital` qui le dit, et lui seul passe cette porte.
+   * Le faire attendre l'autorisation du caissier reviendrait à demander
+   * à un employé de valider que le patron peut toucher à son propre
+   * argent. L'argent bouge quand il le décide ; la trace dit que c'est
+   * lui.
+   *
+   * Les autres motifs, eux, suivent la règle commune : le caissier ouvre
+   * le tiroir. */
+  /* La garde tient à l'écriture, pas seulement à l'écran : masquer un
+     motif ne ferme pas la porte par laquelle il s'écrit. */
+  const toucheAuCapital = saisie.motif === 'apport' || saisie.motif === 'retrait';
+  if (toucheAuCapital && !peutDisposerDuCapital(role)) {
+    throw new Error(
+      'Un apport ou un retrait dispose du capital : seul le propriétaire '
+      + 'peut en déclarer un.');
+  }
+
+  const capital = toucheAuCapital && peutDisposerDuCapital(role);
+  if (!options?.forcerAttente && capital) {
+    const id = await enregistrerMouvementCaisse(saisie);
+    return { id, applique: true };
+  }
 
   /* Le caissier écrit directement : il est le tiroir. Sans caissier sur le
      site, tout le monde écrit — sinon plus rien ne rentrerait.

@@ -10,7 +10,9 @@ import {
 import { hankenGrotesk } from './finance/font';
 import { ecrireEnCaisse } from '@/lib/ecrire-caisse';
 import { chargerDisponible } from '@/lib/attente-caisse';
-import { aUnCaissier, peutReglerFournisseur, type RoleSite } from '@/lib/roles';
+import {
+  aUnCaissier, peutDisposerDuCapital, peutReglerFournisseur, type RoleSite,
+} from '@/lib/roles';
 import DisponibleCaisse from './DisponibleCaisse';
 import { useAuth } from '@/lib/auth-context';
 import {
@@ -185,7 +187,12 @@ export default function ModalVersementTiers({
    * écritures dans une file qui ne sait pas les tenir ensemble. On refuse
    * le raccourci : le complément se demande d'abord, le versement se fait
    * ensuite, quand l'argent est réellement dans le tiroir. */
-  const apportImpossible = depasseCaisse && caissierTiers;
+  /* Deux raisons de ne pas pouvoir compléter ici, et elles ne disent pas
+     la même chose : ou bien la caisse a un gardien et l'apport doit entrer
+     au tiroir avant le règlement, ou bien celui qui agit n'a pas le droit
+     de disposer du capital. */
+  const sansDroitCapital = depasseCaisse && !peutDisposerDuCapital(roleSite);
+  const apportImpossible = depasseCaisse && (caissierTiers || sansDroitCapital);
 
   const apportSuffit = !depasseCaisse
     || (!apportImpossible && avecApport && apport >= manque);
@@ -340,10 +347,15 @@ export default function ModalVersementTiers({
                        raison laisse chercher une panne là où il y a une
                        règle. */
                     <p className="text-xs text-amber-800 dark:text-amber-400">
-                      La caisse a un responsable : l’apport doit lui être
-                      demandé et entrer au tiroir avant ce règlement.
-                      Passez par <span className="font-bold">Fonds
-                      disponible</span> pour le déclarer, puis revenez ici.
+                      {sansDroitCapital
+                        ? <>Un apport dispose du capital : seul le
+                          propriétaire peut en déclarer un. Demandez-lui de
+                          compléter la caisse, puis revenez régler.</>
+                        : <>La caisse a un responsable : l’apport doit lui
+                          être demandé et entrer au tiroir avant ce
+                          règlement. Passez par <span className="font-bold">
+                          Fonds disponible</span> pour le déclarer, puis
+                          revenez ici.</>}
                     </p>
                   ) : (
                   <>

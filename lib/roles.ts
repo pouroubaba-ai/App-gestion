@@ -170,7 +170,17 @@ export function peutReglerFournisseur(role: RoleSite | null): boolean {
  * frais payés en espèces, et les écarts qu'il constate en comptant.
  */
 export function peutDisposerDuCapital(role: RoleSite | null): boolean {
-  return role === null || role === 'gerant';
+  /* Le propriétaire seul, pas le gérant.
+   *
+   * Un apport et un retrait ne sont pas des gestes d'exploitation : ils
+   * font entrer ou sortir le capital de l'activité. Celui qui dirige un
+   * site en répond devant celui à qui cet argent appartient — lui laisser
+   * sortir des fonds, c'est lui laisser décider de ce qui n'est pas à
+   * lui.
+   *
+   * La trace suit le droit : un retrait porte le nom du propriétaire
+   * parce que lui seul a pu le faire. */
+  return role === null;
 }
 
 /**
