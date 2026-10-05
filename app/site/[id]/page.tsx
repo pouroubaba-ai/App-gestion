@@ -208,6 +208,15 @@ export default function SiteFichePage() {
   const membre = profile?.role === 'membre';
   const navSite = membre
     ? (() => {
+        /* Rien tant que le rôle n'est pas lu.
+         *
+         * `role` vaut `null` au premier rendu comme il vaut `null` pour
+         * qui n'a aucune restriction : le menu se construisait donc avec
+         * tous les onglets le temps que la réponse arrive. On voyait le
+         * responsable des commandes ouvrir la caisse et la configuration
+         * pendant ce battement, et le menu se rétractait ensuite — ce
+         * qui donnait l'écran de quelqu'un d'autre, puis le sien. */
+        if (!roleLu) return [];
         const entrees = navDuSite(siteId, role);
         /* Le comptoir est une page, pas un onglet : sa vente naît livrée et
            ne traverse aucun des états que les cartes du cycle représentent.
