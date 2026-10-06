@@ -123,20 +123,38 @@ export default function NouveauRetourPage() {
 
   useEffect(() => {
     if (!user) return;
-    const col = type === 'client' ? 'ventes' : 'achats';
-    const champ = type === 'client' ? 'clientId' : 'fournisseurId';
-    const nomChamp = type === 'client' ? 'clientNom' : 'fournisseurNom';
+    /* Trois types, pas deux.
+     *
+       Ces choix s'ecrivaient « client ? ventes : achats » — et un retour
+       de TRANSFERT tombait dans le second cas. Il cherchait ses dossiers
+       dans les achats, filtrait sur un fournisseur qu'il n'a pas, et sur
+       le motif « achat » : la liste restait vide, sans rien dire. Un
+       transfert a sa propre collection et son propre motif. */
+    const col = type === 'client' ? 'ventes'
+      : type === 'transfert' ? 'transferts' : 'achats';
+    const champ = type === 'client' ? 'clientId'
+      : type === 'transfert' ? 'siteDestId' : 'fournisseurId';
+    const nomChamp = type === 'client' ? 'clientNom'
+      : type === 'transfert' ? 'siteDestNom' : 'fournisseurNom';
 
     /* On lit les dossiers et les mouvements qu'ils ont produits.
        Le bon dit ce qui était convenu, le mouvement ce qui est
        réellement passé : c'est le second qu'on rend, et lui seul porte
        l'identifiant auquel un retour peut se rattacher. */
-    const champDossier = type === 'client' ? 'venteId' : 'achatId';
+    const champDossier = type === 'client' ? 'venteId'
+      : type === 'transfert' ? 'documentId' : 'achatId';
     Promise.all([
-      getDocs(query(collection(db, col), where('siteId', '==', siteId))),
+      /* Un transfert n'a pas de `siteId` : il porte les deux bouts du
+         trajet, `siteSourceId` et `siteDestId`. On cherche donc par
+         celui qui a recu — c'est lui qui peut rendre. Interroger
+         `siteId` ne ramenait rien, et la liste restait vide sans rien
+         expliquer. */
+      getDocs(query(collection(db, col),
+        where(type === 'transfert' ? 'siteDestId' : 'siteId', '==', siteId))),
       getDocs(query(collection(db, 'mouvements'),
         where('siteId', '==', siteId),
-        where('motif', '==', type === 'client' ? 'vente' : 'achat'))),
+        where('motif', '==', type === 'client' ? 'vente'
+          : type === 'transfert' ? 'transfert' : 'achat'))),
     ])
       .then(([snap, snapMvt]) => {
         /* Les mouvements rangés par dossier : une passe, pas une requête
@@ -146,6 +164,11 @@ export default function NouveauRetourPage() {
           const x = m.data() as any;
           const cle = x[champDossier];
           if (!cle) continue;
+          /* Un transfert ecrit DEUX mouvements : la sortie chez celui qui
+             envoie, l'entree chez celui qui recoit. On ne rend que ce
+             qu'on a recu — garder les deux proposerait de renvoyer une
+             marchandise qui n'est jamais venue ici. */
+          if (type === 'transfert' && x.sens !== 'entree') continue;
           const liste = parDossier.get(cle) ?? [];
           liste.push({ id: m.id, d: x });
           parDossier.set(cle, liste);
