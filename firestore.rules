@@ -551,7 +551,38 @@ service cloud.firestore {
       allow list: if aUneActivite();
       allow create: if travailleSur(siteEnvoye())
         && request.resource.data.get('userId', '') == monUid();
-      allow update: if travailleSur(siteDuDoc());
+      /**
+       * Seul le caissier tranche, et seulement ce qui attend encore.
+       *
+       * La règle disait `travailleSur(siteDuDoc())` : le gérant qui
+       * déclare un mouvement pouvait, de la même main, le passer à
+       * `autorise`. Toute la séparation entre décider une dépense et
+       * ouvrir le tiroir tenait alors au fait qu'aucun bouton ne le
+       * proposait — et un bouton caché n'est pas une permission.
+       *
+       * Trois gardes :
+       *
+       * le rôle — `caissier`, ou le propriétaire, qui est partout chez
+       * lui et reste caissier quand le site n'en a pas ;
+       *
+       * l'état de départ — on ne tranche que ce qui attend. Sans cela un
+       * refus se rouvrait en autorisation, et l'écart déjà constaté
+       * restait sur les comptes ;
+       *
+       * les champs — la demande elle-même ne se réécrit pas. Son
+       * montant, son motif et son auteur sont ce que le caissier doit
+       * juger : les laisser modifiables permettait d'autoriser autre
+       * chose que ce qui avait été déclaré.
+       */
+      allow update: if travailleSur(siteDuDoc())
+        && (monRoleSur(siteDuDoc()) == 'caissier' || suisProprietaire())
+        && resource.data.get('etat', '') == 'en_attente'
+        && request.resource.data.get('etat', '') in ['autorise', 'refuse']
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'etat', 'montantAutorise', 'autorisePar', 'autoriseParNom',
+            'dateAutorisation', 'constat',
+            'mouvementCaisseId', 'mouvementEcartId',
+          ]);
       allow delete: if false;
     }
 
@@ -604,23 +635,44 @@ service cloud.firestore {
      */
     match /caisse_compteurs/{id} {
       /**
-       * Un outil, pas une donnée.
+       * Un outil, pas une donnée — mais un outil qui tient le solde.
        *
-       * Personne n'appelle ces documents à la main : ils naissent dans la
-       * transaction qui écrit au registre, pour donner un numéro et tenir
-       * le solde. Les protéger par le site demanderait de découper leur nom
-       * — `{siteId}_2026` — ce que le langage des règles fait mal, et une
-       * règle qu'on n'est pas sûr de lire juste vaut moins qu'une règle
-       * simple dont on connaît la portée.
+       * Ces documents naissent dans la transaction qui écrit au registre,
+       * pour donner un numéro et garder le solde courant. Personne ne les
+       * appelle à la main.
        *
-       * Ce qu'elle laisse : un compte de la maison peut fausser un
-       * compteur. Ce qu'elle empêche : qu'un étranger le fasse, et qu'on
-       * l'efface — un compteur remis à zéro ferait porter le même numéro
-       * à deux écritures, et le registre cesserait de prouver sa
-       * continuité. Le solde, lui, se revérifie depuis les mouvements, qui
-       * ne se réécrivent jamais.
+       * La règle disait `aUneActivite()` : tout compte inscrit, de
+       * n'importe quelle maison, pouvait réécrire le solde de caisse d'un
+       * autre commerçant. Le commentaire s'en excusait en expliquant
+       * qu'on ne savait pas retrouver le site — il fallait découper
+       * `{siteId}_2026`, ce que le langage des règles fait mal.
+       *
+       * Mais le document porte `siteId` en clair : il n'y a rien à
+       * découper, il suffit de le lire. La borne existait sous la main,
+       * et la base restait ouverte pour une difficulté qui n'en était
+       * pas une.
+       *
+       * Reste la création, qui n'a pas d'`resource` à lire : on exige
+       * alors que le `siteId` écrit soit un site où l'on travaille.
+       *
+       * Rien ne s'efface : un compteur remis à zéro ferait porter le même
+       * numéro à deux écritures, et le registre cesserait de prouver sa
+       * continuité.
        */
-      allow read, write: if aUneActivite();
+      /* Un compteur absent se lit comme un document vide, pas comme un
+         refus : `resource` vaut alors `null`, et le site se deduit du nom
+         — c'est la premiere lecture que fait toute ecriture en caisse,
+         avant meme que le compteur existe. */
+      allow read: if resource == null
+        ? travailleSur(id.split('_')[0])
+        : travailleSur(resource.data.get('siteId', ''));
+      allow create: if travailleSur(request.resource.data.get('siteId', ''))
+        /* Le nom dit le site : les deux doivent s'accorder, sinon un
+           compteur se logerait sous le nom d'un autre. */
+        && request.resource.data.get('siteId', '') == id.split('_')[0];
+      allow update: if travailleSur(resource.data.get('siteId', ''))
+        /* Le compteur ne change pas de site en cours de route. */
+        && request.resource.data.get('siteId', '') == resource.data.get('siteId', '');
       allow delete: if false;
     }
 
