@@ -179,6 +179,11 @@ export default function NouveauTransfertPage() {
           partenaireId: clientDestId,
           partenaireNom: cl.nom,
           lignes,
+          /* Les emballages viennent du catalogue de la source : c'est
+             chez elle que la marchandise est comptée, et c'est sa
+             définition du carton qui fait foi au moment de la commande. */
+          emballagesParProduit: Object.fromEntries(
+            produits.map(p => [p.id, p.emballages ?? []])),
           date,
           note,
           userId: user!.uid,

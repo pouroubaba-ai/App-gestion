@@ -38,6 +38,7 @@ import { db } from './firebase';
 import {
   referenceFlux, type LigneFlux, type AuteurEtape,
 } from './flux-marchandise';
+import { ligneDepuisVente, synchroniserLignes } from './lignes-vente';
 
 /** Ce que les trois dossiers partagent, et qui les relie. */
 export interface LienOrdre {
@@ -70,6 +71,10 @@ export async function creerOrdreTransfert(params: {
   partenaireId: string;
   partenaireNom: string;
   lignes: LigneFlux[];
+  /* Les emballages de chaque produit, pour convertir les cartons en
+     unités. Sans eux, une commande de 3 cartons se lirait 3 pièces
+     partout où le stock se compte. */
+  emballagesParProduit: Record<string, { nom: string; quantite: number }[]>;
   date: string;
   note?: string | null;
   userId: string;
@@ -191,6 +196,42 @@ export async function creerOrdreTransfert(params: {
   });
 
   await batch.commit();
+
+  /* Les produits promis entrent dans leur collection.
+   *
+   * Une vente ordinaire le fait en s'enregistrant ; les deux commandes
+   * d'un ordre naissent ici, et l'oublier les laissait sans lignes. Tout
+   * ce qui part du produit plutôt que du dossier s'en trouvait faussé —
+   * la préparation, le besoin par référence, et les retours, qui
+   * cherchent la ligne d'origine pour savoir ce qui revient.
+   *
+   * C'est aussi là que le carton devient des pièces : la ligne garde sa
+   * quantité telle qu'elle a été commandée, et porte à côté ce qu'elle
+   * vaut en unités de base. Sans cette conversion, trois cartons se
+   * lisaient trois pièces dès qu'un écran comptait du stock. */
+  const lignesDe = (venteId: string, siteId: string,
+    clientId: string | null, clientNom: string | null) =>
+    params.lignes.map((l, i) => ligneDepuisVente({
+      siteId, venteId, ligneIndex: i, ligne: l,
+      emballages: params.emballagesParProduit[l.produitId] ?? [],
+      clientId, clientNom,
+    }));
+
+  await Promise.all([
+    synchroniserLignes({
+      neuve: true, venteId: refCommande.id,
+      lignes: lignesDe(refCommande.id, params.siteSourceId,
+        /* Pas de client sur le bon de commande de la source : la
+           créance est à l'autre bout. */
+        null, params.partenaireNom),
+    }),
+    synchroniserLignes({
+      neuve: true, venteId: refVente.id,
+      lignes: lignesDe(refVente.id, params.siteDestId,
+        params.partenaireId, params.partenaireNom),
+    }),
+  ]);
+
   return lien;
 }
 
