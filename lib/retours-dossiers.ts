@@ -68,17 +68,27 @@ export const LIBELLES_ETAT_RETOUR: Record<EtatRetour, string> = {
 /**
  * Qui fait avancer un retour.
  *
- * Celui qui décide ne constate pas. Le gérant ouvre le dossier, le
- * propriétaire aussi ; mais dire « la marchandise est prête », puis
- * « elle est partie », revient à celui qui la manipule. Sans cette
- * séparation, un seul homme déclarerait un retour, le ferait avancer
- * jusqu'au bout et encaisserait le remboursement d'une marchandise
- * toujours en rayon.
+ * Le responsable des commandes, et le proprietaire.
  *
- * `null` désigne le propriétaire : il entre partout, sauf ici.
+ * Celui qui decide ne constate pas : dire « la marchandise est prete »
+ * puis « elle est partie » revient a celui qui la manipule. La regle
+ * excluait donc le proprietaire, de peur qu'un seul homme declare un
+ * retour, le fasse avancer jusqu'au bout et encaisse le remboursement
+ * d'une marchandise toujours en rayon.
+ *
+ * Mais elle bloquait l'activite la ou personne d'autre ne tient les
+ * commandes, et le proprietaire possede l'activite : il n'a pas a
+ * demander l'autorisation d'y travailler. Ce qui protege ici, c'est que
+ * chaque etape inscrit son auteur — `majParUid` sur le dossier, le nom
+ * sur le mouvement. Un retour avance par le proprietaire porte son nom,
+ * et c'est lisible. La trace vaut mieux que l'interdiction : elle
+ * n'empeche pas de travailler, et elle dit qui a fait quoi.
+ *
+ * `null` designe le proprietaire.
  */
 export function peutTraiter(roleSite: string | null | undefined): boolean {
-  return roleSite === 'commandes';
+  return roleSite === 'commandes' || roleSite === null
+    || roleSite === undefined;
 }
 
 /** L'étape qui fait bouger le stock : la dernière du cycle. */
