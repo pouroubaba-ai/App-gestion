@@ -51,12 +51,22 @@ export default function VentesCard({
      la main les dossiers qui composent le montant. */
   onVoirAEncaisser?: () => void;
 }) {
-  /* Le taux se rapporte aux ventes mesurées : diviser par un total qui
-     comprend des ventes sans marge connue écraserait le pourcentage, et
-     rien à l'écran ne dirait pourquoi. */
-  const ventesMesurees = Math.max(0, ventes - ventesSansMarge);
-  const tauxMarge = ventesMesurees > 0
-    ? Math.round((benefice / ventesMesurees) * 100) : 0;
+  /* Le taux se rapporte au chiffre d'affaires, pas a une base reduite.
+   *
+     Il divisait par les seules ventes dont le cout etait connu. Sur un
+     catalogue ou les couts manquent, cela donnait « 9 % » quand le
+     benefice etait de 5 150 sur 1 335 650 vendus : un pourcentage qui ne
+     repondait pas a la question qu'on lui pose — quelle part de ce que
+     j'ai vendu me reste.
+   *
+     La part non mesuree se lit juste en dessous : c'est elle qui dit sur
+     quoi le chiffre ne porte pas, pas une division cachee. */
+  const partMarge = ventes > 0 ? (benefice / ventes) * 100 : 0;
+  /* Une decimale sous 1 % : arrondir 0,15 a « 0 % » efface un benefice
+     qui existe, et laisse croire a une vente a prix coutant. */
+  const tauxMarge = partMarge > 0 && partMarge < 1
+    ? partMarge.toFixed(1).replace('.', ',')
+    : Math.round(partMarge);
   /* Le taux ne peut pas depasser 100 : on ne laisse pas impaye plus que
      ce qu'on a vendu.
    *
