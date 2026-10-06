@@ -428,6 +428,9 @@ export default function FicheVentePage() {
     if (!vente) return;
     const suivant = SUITE_VENTE[vente.etat];
     if (!suivant) return;
+    /* La garde tient à l'écriture, pas seulement à l'écran : cacher un
+       bouton ne ferme pas la porte par laquelle on appelle. */
+    if ((vente as any).ordreLien && (vente as any).ordre !== true) return;
 
     setEnCours(true);
     setErreur('');
@@ -673,6 +676,21 @@ export default function FicheVentePage() {
   const expire = devisExpire(vente);
   const suivant = SUITE_VENTE[vente.etat];
 
+  /* Le dossier qui suit, et celui qui mène.
+   *
+   * Un ordre tient trois dossiers ensemble, et c'est la source qui les
+   * fait avancer : elle tient la marchandise, elle la prépare, elle la
+   * remet. La commande du destinataire ne décide de rien — elle
+   * constate, pour que son gérant sache où en est la commande de son
+   * client sans appeler l'autre site.
+   *
+   * Elle gardait pourtant son bouton. On pouvait donc la pousser de son
+   * côté, et les trois dossiers se mettaient à avancer séparément :
+   * l'un livré, l'autre en préparation, le transfert encore en attente.
+   * Trois états pour une seule marchandise, et aucun moyen de savoir
+   * lequel disait vrai. */
+  const ordreSuit = !!(vente as any).ordreLien && (vente as any).ordre !== true;
+
   /* On ne peut plus annuler seul après la livraison : la marchandise appartient
      au client, il faudrait un retour — et un retour se fait à deux. */
   /* La saisie des quantités trouvées n'a lieu que pendant la préparation :
@@ -778,6 +796,13 @@ export default function FicheVentePage() {
                 {enCours ? <Loader2 size={14} className="animate-spin" /> : <ArrowRight size={14} />}
                 Transformer en commande
               </button>
+            ) : ordreSuit ? (
+              /* Rien à pousser ici : ce dossier suit celui de la source.
+                 Le dire vaut mieux qu'un bouton absent, qui laisserait
+                 croire à une panne. */
+              <p className="text-xs font-medium text-gray-400">
+                Avance avec le dossier du site qui expédie
+              </p>
             ) : enPreparation ? (
               /* Une seule action : le préparé se déclare ligne par ligne, il
                  ne s'enregistre plus en bloc. */

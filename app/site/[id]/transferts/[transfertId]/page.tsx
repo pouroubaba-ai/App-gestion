@@ -165,23 +165,33 @@ export default function FicheTransfertPage() {
   const ecart = ecartValeur(transfert.lignes);
   const enEcart = lignesEnEcart(transfert.lignes);
 
+  /* Un transfert d'ordre ne se pilote pas d'ici.
+   *
+   * Il naît avec un bon de commande chez la source, et c'est ce bon qui
+   * le fait avancer : la marchandise ne voyage pas — le client l'emporte
+   * depuis la source — donc il n'y a ni colis à charger ni carton à
+   * compter à l'arrivée. Laisser ses boutons permettait de l'expédier
+   * ou de le recevoir à la main, et il partait alors dans un état que
+   * les deux autres dossiers ne connaissaient pas. */
+  const suitUnOrdre = (transfert as any).ordre === true;
+
   /* La source rassemble puis charge — elle ne déclare pas ce qu'elle n'a pas
      vu arriver. Le destinataire compte — il ne dit pas qu'un colis est parti. */
-  const peutPreparerIci = transfert.etat === 'en_cours' && estSource
+  const peutPreparerIci = !suitUnOrdre && transfert.etat === 'en_cours' && estSource
     && peutExpedier(ROLE_COURANT);
-  const peutExpedierIci = transfert.etat === 'preparation' && estSource
+  const peutExpedierIci = !suitUnOrdre && transfert.etat === 'preparation' && estSource
     && peutExpedier(ROLE_COURANT);
   /* Deux gestes, pas un. Tant que la marchandise est en route, il n'y a
      rien à compter : on ne déclare pas les quantités d'un camion qui roule.
      Le destinataire acte d'abord l'arrivée, puis il compte ce qui est dans
      les cartons. */
-  const peutAccuserIci = transfert.etat === 'expedie' && estDest
+  const peutAccuserIci = !suitUnOrdre && transfert.etat === 'expedie' && estDest
     && peutRecevoir(ROLE_COURANT);
   /* On ne traite que ce qui est arrivé : la réception ouvre le traitement,
      et c'est là seulement qu'on ouvre les cartons pour compter. */
-  const peutTraiterIci = transfert.etat === 'recu' && estDest
+  const peutTraiterIci = !suitUnOrdre && transfert.etat === 'recu' && estDest
     && peutRecevoir(ROLE_COURANT);
-  const peutRecevoirIci = transfert.etat === 'traitement' && estDest
+  const peutRecevoirIci = !suitUnOrdre && transfert.etat === 'traitement' && estDest
     && peutRecevoir(ROLE_COURANT);
 
   /* Le stock de la source se montre tant que la marchandise est chez elle :
@@ -624,6 +634,26 @@ export default function FicheTransfertPage() {
             <p className="text-xs text-indigo-700 dark:text-indigo-400">
               La marchandise se rassemble à {transfert.siteSourceNom} : elle est encore
               dans son stock, et rien n'a bougé.
+            </p>
+          </div>
+        )}
+
+        {/* Dire pourquoi il n'y a rien à faire ici : des boutons absents
+            sans explication se lisent comme une panne. */}
+        {suitUnOrdre && transfert.etat !== 'confirme'
+          && transfert.etat !== 'annule' && (
+          <div className="mb-4 flex items-start gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 dark:border-amber-800/30 dark:bg-amber-900/10">
+            <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white">
+              O
+            </span>
+            <p className="text-xs text-amber-700 dark:text-amber-400">
+              Ce transfert sert une commande
+              {(transfert as any).ordrePartenaireNom
+                ? <> pour <span className="font-bold">{(transfert as any).ordrePartenaireNom}</span></>
+                : null}.
+              Il avance avec le bon de commande du site qui expédie, et se
+              clôt quand la marchandise est remise — la marchandise ne
+              voyage pas, il n'y a donc rien à charger ni à compter ici.
             </p>
           </div>
         )}
