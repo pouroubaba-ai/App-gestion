@@ -93,6 +93,12 @@ export default function NouveauRetourPage() {
   const [role, setRole] = useState<RoleSite | null>(null);
   const [roleLu, setRoleLu] = useState(false);
   const [sources, setSources] = useState<DossierSource[]>([]);
+  /* Les noms des produits, pour les mouvements qui n'en portent pas.
+   *
+     Une vente ecrit la designation sur son mouvement ; un transfert ne
+     le fait pas — il deplace des identifiants. La liste affichait donc
+     « — » sur chaque ligne, et l'on ne savait pas ce qu'on rendait. */
+  const [nomsProduits, setNomsProduits] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [recherche, setRecherche] = useState('');
   const [choisi, setChoisi] = useState<string>('');
@@ -186,7 +192,7 @@ export default function NouveauRetourPage() {
             .map(({ id, d: m }) => ({
               mouvementId: id,
               produitId: m.produitId,
-              designation: m.produit ?? m.designation ?? '—',
+              designation: m.produit ?? m.designation ?? '',
               varianteCle: m.varianteCle ?? null,
               unite: m.unite ?? null,
               emballage: m.emballage ?? null,
@@ -246,16 +252,28 @@ export default function NouveauRetourPage() {
   /* Le stock du site, pour ne jamais proposer de rendre ce qui n'est
      plus au rayon. Chargé une fois : il ne bouge pas pendant la saisie. */
   useEffect(() => {
-    if (!user || !sortDuSite) return;
+    if (!user) return;
     let vivant = true;
     produitsDuSite(siteId)
       .then(ps => {
         if (!vivant) return;
         setStocks(Object.fromEntries(ps.map(p => [p.id, p.stock ?? 0])));
+        /* Le catalogue sert aussi a nommer : un transfert ne porte pas
+           la designation sur ses mouvements. */
+        setNomsProduits(Object.fromEntries(
+          ps.map(p => [p.id, p.designation ?? '—'])));
       })
       .catch(() => { /* sans stock, on garde le plafond du bon */ });
     return () => { vivant = false; };
-  }, [user, siteId, sortDuSite]);
+  }, [user, siteId]);
+
+  /* Le nom d'une ligne, comble au moment de l'affichage.
+   *
+     Les noms du catalogue arrivent apres les dossiers : les poser a la
+     construction les aurait trouves vides. On les lit ici, ou l'etat est
+     a jour a chaque rendu. */
+  const nomLigne = (li: { designation: string; produitId: string }) =>
+    li.designation || nomsProduits[li.produitId] || '—';
 
   const restant = (i: number) => {
     if (!source) return 0;
@@ -274,7 +292,7 @@ export default function NouveauRetourPage() {
       .map((li, i) => ({
         mouvementId: li.mouvementId,
         produitId: li.produitId,
-        designation: li.designation,
+        designation: nomLigne(li),
         varianteCle: li.varianteCle ?? null,
         quantite: quantites[i] ?? 0,
         emballage: li.emballage ?? null,
@@ -519,7 +537,7 @@ export default function NouveauRetourPage() {
                     <tr key={i} className={reste === 0 ? 'opacity-40' : ''}>
                       <td className="px-3 py-2.5">
                         <span className="block text-[13px] font-medium text-gray-900 dark:text-gray-100">
-                          {li.designation}
+                          {nomLigne(li)}
                         </span>
                         {li.unite && (
                           <span className="block text-[11px] text-gray-400">{li.unite}</span>
