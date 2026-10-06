@@ -655,18 +655,26 @@ export default function TransactionsSitePage() {
           )}
         </button>
 
-        {/* Header */}
-        <div className="flex items-center justify-between mb-5">
-          <div className="flex items-center bg-gray-100 dark:bg-gray-800 rounded-xl p-1">
-            {(['client', 'fournisseur'] as Role[]).map(r => (
-              <button key={r} onClick={() => setRole(r)}
-                className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all
-                  ${role === r ? 'bg-white dark:bg-gray-700 text-indigo-600 dark:text-indigo-400 shadow-sm' : 'text-gray-400 dark:text-gray-500'}`}>
-                {r === 'client' ? 'Clients' : 'Fournisseurs'}
-              </button>
-            ))}
+        {/* Venu du tableau de bord, le côté ne se choisit pas.
+         *
+            On a cliqué « À encaisser » : la question posée porte sur les
+            clients, et l'autre moitié du bascule n'y répond pas. L'offrir
+            ici proposait de quitter ce qu'on venait voir — et le chiffre
+            de la carte ne correspondait plus à l'écran. Depuis les
+            partenaires, au contraire, on vient pour parcourir les deux. */}
+        {!depuisDashboard && (
+          <div className="flex items-center justify-between mb-5">
+            <div className="flex items-center bg-gray-100 dark:bg-gray-800 rounded-xl p-1">
+              {(['client', 'fournisseur'] as Role[]).map(r => (
+                <button key={r} onClick={() => setRole(r)}
+                  className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all
+                    ${role === r ? 'bg-white dark:bg-gray-700 text-indigo-600 dark:text-indigo-400 shadow-sm' : 'text-gray-400 dark:text-gray-500'}`}>
+                  {r === 'client' ? 'Clients' : 'Fournisseurs'}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Six onglets alignés se ressemblaient trop pour qu'on les
             distingue. Repliés, on lit d'abord où l'on est. */}
