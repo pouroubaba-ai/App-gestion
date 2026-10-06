@@ -14,6 +14,7 @@ import {
 import { soldeTiers } from '@/lib/soldes';
 import { ArrowLeft, Plus, X, Loader2, FileText, Package, RefreshCw, Banknote } from 'lucide-react';
 import FiltreDeroulant from '@/components/FiltreDeroulant';
+import { ChampNombre } from '@/components/Champs';
 
 type Role = 'client' | 'fournisseur';
 type Onglet = 'partenaire' | 'produit' | 'mouvement' | 'versement';
@@ -850,15 +851,13 @@ export default function TransactionsPage() {
             <div className="grid grid-cols-2 gap-3 mb-3">
               <div>
                 <p className="text-xs font-bold text-gray-400 uppercase mb-1">Coût unitaire</p>
-                <input type="number" min="0" value={mCout} onChange={e => setMCout(e.target.value)}
-                  className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                <ChampNombre valeur={parseFloat(mCout) || 0} onChange={n => { setMCout(String(n)) }} min={0} className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
               </div>
               <div>
                 <p className="text-xs font-bold text-gray-400 uppercase mb-1">
                   {role === 'client' ? 'Prix de vente' : 'Prix de vente prévu'}
                 </p>
-                <input type="number" min="0" value={mPrixVente} onChange={e => setMPrixVente(e.target.value)}
-                  className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                <ChampNombre valeur={parseFloat(mPrixVente) || 0} onChange={n => { setMPrixVente(String(n)) }} min={0} className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
               </div>
             </div>
 

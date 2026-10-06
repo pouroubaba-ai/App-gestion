@@ -10,6 +10,7 @@ import { formatMontant } from '@/lib/format';
 import { joursRestants, montantParPrelevement, joursAvantSolde } from '@/lib/avances';
 import { ArrowLeft, Loader2, Plus, X, Check, Pencil, Trash2, ChevronDown } from 'lucide-react';
 import { ChampRecherche } from '@/components/Champs';
+import { ChampNombre } from '@/components/Champs';
 
 interface Avance {
   id: string;
@@ -605,8 +606,7 @@ export default function AvancesPage() {
               <input type="text" placeholder="Ex. Frais médicaux…" value={avMotif} onChange={e => setAvMotif(e.target.value)}
                 className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 mb-4 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
               <p className="text-xs font-bold text-gray-400 uppercase mb-1">Montant <span className="text-red-400">*</span></p>
-              <input type="number" placeholder="Ex. 100 000" value={avMontant} onChange={e => setAvMontant(e.target.value)}
-                className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 mb-4 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+              <ChampNombre valeur={parseFloat(avMontant) || 0} onChange={n => { setAvMontant(String(n)) }} placeholder="Ex. 100 000" className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 mb-4 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
               <p className="text-xs font-bold text-gray-400 uppercase mb-1">Date</p>
               <input type="date" value={avDate} onChange={e => setAvDate(e.target.value)}
                 className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 mb-5 focus:outline-none focus:ring-2 focus:ring-indigo-500" />

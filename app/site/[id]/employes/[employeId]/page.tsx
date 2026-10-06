@@ -13,6 +13,7 @@ import { hankenGrotesk } from '../../components/finance/font';
 import { ArrowLeft, Loader2, Pencil, Trash2, Check, X, Calendar, Phone, Clock, Plus, Settings, ChevronDown } from 'lucide-react';
 import ModalAssignation from '@/app/site/[id]/components/ModalAssignation';
 import { ChampRecherche } from '@/components/Champs';
+import { ChampNombre } from '@/components/Champs';
 
 type EtatEmploye = 'actif' | 'inactif' | 'conge' | 'suspendu';
 
@@ -1160,8 +1161,7 @@ export default function FicheEmployePage() {
                 Modifier ces valeurs ne recalcule pas les instances déjà créées. Seules les nouvelles instances utiliseront les nouvelles valeurs.
               </p>
               <p className="text-xs font-bold text-gray-400 uppercase mb-1">Valeur</p>
-              <input type="number" value={editAssignValeur} onChange={e => setEditAssignValeur(e.target.value)}
-                className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 mb-4 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+              <ChampNombre valeur={parseFloat(editAssignValeur) || 0} onChange={n => { setEditAssignValeur(String(n)) }} className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 mb-4 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
               <p className="text-xs font-bold text-gray-400 uppercase mb-1">Intervalle (jours)</p>
               <p className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 text-sm text-gray-500 dark:text-gray-400 mb-5">
                 {editAssign.intervalleJours} jour{editAssign.intervalleJours > 1 ? 's' : ''} <span className="text-xs text-gray-400 dark:text-gray-500">(non modifiable)</span>
@@ -1255,8 +1255,7 @@ export default function FicheEmployePage() {
               {editConfigErreur && <p className="text-xs text-red-500 mb-3">{editConfigErreur}</p>}
               {!editConfigErreur && <div className="mb-3" />}
               <p className="text-xs font-bold text-gray-400 uppercase mb-1">Valeur par défaut</p>
-              <input type="number" value={editConfigValeur} onChange={e => setEditConfigValeur(e.target.value)}
-                className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 mb-4 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+              <ChampNombre valeur={parseFloat(editConfigValeur) || 0} onChange={n => { setEditConfigValeur(String(n)) }} className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 mb-4 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
               <p className="text-xs font-bold text-gray-400 uppercase mb-1">Intervalle (jours)</p>
               <p className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 text-sm text-gray-500 dark:text-gray-400 mb-5">
                 {editConfig.intervalleJours} jour{editConfig.intervalleJours > 1 ? 's' : ''} <span className="text-xs text-gray-400 dark:text-gray-500">(non modifiable)</span>
@@ -1306,8 +1305,7 @@ export default function FicheEmployePage() {
               <input type="text" placeholder="Ex. Prime, Bonus…" value={manuelNom} onChange={e => setManuelNom(e.target.value)}
                 className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 mb-4 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
               <p className="text-xs font-bold text-gray-400 uppercase mb-1">Montant</p>
-              <input type="number" placeholder="Ex. 50 000" value={manuelMontant} onChange={e => setManuelMontant(e.target.value)}
-                className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 mb-4 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+              <ChampNombre valeur={parseFloat(manuelMontant) || 0} onChange={n => { setManuelMontant(String(n)) }} placeholder="Ex. 50 000" className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 mb-4 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
               <div className="flex gap-3">
                 <button onClick={() => setModalManuel(false)} className="flex-1 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 text-sm font-medium text-gray-500">Annuler</button>
                 <button onClick={ajouterManuel} disabled={savingManuel || !manuelNom.trim() || !manuelMontant}

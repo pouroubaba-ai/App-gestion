@@ -19,6 +19,7 @@ import {
   type PropsPortee,
 } from './ContexteSites';
 import { lireParSite } from '@/lib/portee';
+import { ecrireEnCaisse } from '@/lib/ecrire-caisse';
 import {
   peutPlanifierRecouvrement, peutReglerFournisseur, type RoleSite,
 } from '@/lib/roles';
@@ -505,6 +506,24 @@ export default function OngletRecouvrements({ siteId, userId, onCount, sites, ti
     const newVerse = ligneActive.verse + val;
     const newReste = Math.max(ligneActive.valeur - newVerse, 0);
     const heure = heureNow();
+
+    /* L'argent encaissé passe par la caisse, et non à côté d'elle.
+     *
+     * Ce versement n'écrivait que dans son journal : la dette baissait,
+     * mais aucun franc n'apparaissait nulle part. Le site ne voyait pas
+     * entrer ce qu'il venait de recevoir, et personne n'avait à rendre
+     * compte de l'avoir porté.
+     *
+     * `ecrireEnCaisse` tranche seul : si le site a un caissier et que ce
+     * n'est pas lui qui saisit, le mouvement part en attente — c'est la
+     * remise, que le caissier confirme en recevant l'argent. Sans
+     * caissier, l'argent entre directement comme avant. C'est ce qui
+     * permet d'ouvrir ce volet à tous les rôles : celui qui encaisse ne
+     * s'atteste plus lui-même.
+     *
+     * Le sens suit qui doit : un client rend ce qu'il devait, c'est une
+     * entrée ; un fournisseur qu'on règle, une sortie. */
+    const versClient = ligneActive.role === 'client';
     await Promise.all([
       addDoc(collection(db, 'recouvrement_versements'), {
         journalId: ligneActive.id, siteId: ligneActive.siteId ?? siteId, userId,
@@ -512,6 +531,20 @@ export default function OngletRecouvrements({ siteId, userId, onCount, sites, ti
         date: todayStr(), createdAt: serverTimestamp(),
       }),
       updateDoc(doc(db, 'recouvrement_journal', ligneActive.id), { verse: newVerse, reste: newReste }),
+      ecrireEnCaisse({
+        siteId: ligneActive.siteId ?? siteId,
+        sens: versClient ? 'entree' : 'sortie',
+        motif: versClient ? 'client' : 'fournisseur',
+        detail: `Recouvrement · ${ligneActive.nomPartenaire ?? '—'}`,
+        montant: val,
+        date: todayStr(),
+        partenaireId: ligneActive.partenaireId,
+        /* Pas de `documentId` : il n'irait avec aucun `documentType`
+           connu — une échéance de recouvrement n'est ni une vente ni un
+           achat — et l'écran qui ouvre le dossier d'une remise chercherait
+           un document introuvable. Le partenaire et le détail suffisent à
+           dire d'où vient l'argent. */
+      } as any, userId),
     ]);
     const nouveau: VersementDetail = { id: Date.now().toString(), heure, montant: val, resteApres: newReste };
     setVersements(prev => [...prev, nouveau]);
@@ -775,13 +808,19 @@ export default function OngletRecouvrements({ siteId, userId, onCount, sites, ti
    * les deux volets, et c'est ce qui rend l'écriture opposable.
    */
   function voletsDe(role: Role) {
-    /* Verser, c'est avoir eu l'argent en main. Le gérant et le
-       propriétaire décident — de ce qu'on réclame, de ce qu'on paie — et
-       cette main-là ne leur revient pas. Leur laisser saisir un versement
-       créerait une remise que personne n'a portée, attestée par celui-là
-       même qui l'a décidée. */
+    /* Verser, c'est avoir eu l'argent en main — et désormais chacun peut
+       l'avoir eue.
+     *
+     * La porte était fermée au gérant et au propriétaire pour qu'un
+     * versement ne soit pas attesté par celui-là même qui l'a décidé.
+     * Mais la remise règle ce problème mieux qu'une interdiction : qui
+     * que ce soit qui encaisse, l'argent part en attente et n'entre en
+     * caisse que lorsque le caissier confirme l'avoir reçu. Celui qui
+     * décide ne s'atteste plus lui-même — le caissier l'atteste. Et
+     * l'interdiction, elle, bloquait un client qui paie devant le gérant
+     * sans que le porteur soit là. */
     return {
-      versement: roleSite === 'recouvrement',
+      versement: true,
       /* Côté client, chacun peut constater ce qu'on lui a répondu.
          Côté fournisseur, convenir engage la maison : le porteur n'y
          décide rien. */
@@ -1839,10 +1878,16 @@ export default function OngletRecouvrements({ siteId, userId, onCount, sites, ti
                   {/* Formulaire versement */}
                   {ligneActive.reste > 0 && etatEcheance(ligneActive.date).label !== 'Passé' && (
                     <div className="flex gap-2 mb-4">
-                      <input type="number"
+                      {/* Le champ de la maison plutôt qu'un `input`
+                          brut : il sépare les milliers sous les doigts —
+                          « 20 000 » se relit, « 20000 » se compte — et
+                          applique le plafond à la frappe au lieu de
+                          laisser lire un montant qui ne sera pas retenu. */}
+                      <ChampNombre
+                        valeur={parseFloat(valeurVersement) || 0}
+                        onChange={n => setValeurVersement(n ? String(n) : '')}
                         max={bornesVersement.plafond}
                         placeholder={`Montant (max ${formatMontant(bornesVersement.plafond)})`}
-                        value={valeurVersement} onChange={e => setValeurVersement(e.target.value)}
                         className="flex-1 px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                       />
                       <button onClick={enregistrerVersement} disabled={savingVersement || !valeurVersement}
@@ -1931,9 +1976,7 @@ export default function OngletRecouvrements({ siteId, userId, onCount, sites, ti
                     <>
                       <div className="mb-3">
                         <p className="text-xs font-bold text-gray-400 uppercase mb-1">Montant convenu</p>
-                        <input type="number" placeholder="Ex. 25000" value={suiviMontant} onChange={e => setSuiviMontant(e.target.value)}
-                          className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                        />
+                        <ChampNombre valeur={parseFloat(suiviMontant) || 0} onChange={n => { setSuiviMontant(String(n)) }} placeholder="Ex. 25000" className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
                       </div>
                       <div className="mb-3">
                         <p className="text-xs font-bold text-gray-400 uppercase mb-1">Reliquat</p>
@@ -2054,9 +2097,7 @@ export default function OngletRecouvrements({ siteId, userId, onCount, sites, ti
               <button onClick={() => setEditingRole(null)} className="text-gray-400 hover:text-gray-600 p-1"><X size={18} /></button>
             </div>
             <p className="text-xs font-bold text-gray-400 uppercase mb-1">Valeur par recouvrement</p>
-            <input type="number" placeholder="Ex. 25000" value={valeurEdit} onChange={e => setValeurEdit(e.target.value)}
-              className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 mb-4 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-            />
+            <ChampNombre valeur={parseFloat(valeurEdit) || 0} onChange={n => { setValeurEdit(String(n)) }} placeholder="Ex. 25000" className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 mb-4 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
             <p className="text-xs font-bold text-gray-400 uppercase mb-1">Intervalle (jours)</p>
             {configDefautPour(editingRole!) ? (
               <p className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 text-sm text-gray-500 dark:text-gray-400 mb-5">

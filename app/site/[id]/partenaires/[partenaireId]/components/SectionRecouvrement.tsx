@@ -730,10 +730,7 @@ export default function SectionRecouvrement({
               <button onClick={() => setEditingRole(null)} className="text-gray-400 hover:text-gray-600 p-1"><X size={18} /></button>
             </div>
             <p className="text-xs font-bold text-gray-400 uppercase mb-1">Valeur par recouvrement</p>
-            <input type="number" placeholder="Ex. 25000" value={valeurEdit}
-              onChange={e => setValeurEdit(e.target.value)}
-              className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 mb-4 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-            />
+            <ChampNombre valeur={parseFloat(valeurEdit) || 0} onChange={n => { setValeurEdit(String(n)) }} placeholder="Ex. 25000" className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 mb-4 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
             <p className="text-xs font-bold text-gray-400 uppercase mb-1">Intervalle (jours)</p>
             {configPour(editingRole!) ? (
               <p className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 text-sm text-gray-500 dark:text-gray-400 mb-5">

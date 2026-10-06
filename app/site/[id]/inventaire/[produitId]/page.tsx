@@ -18,6 +18,7 @@ import { ChampRecherche } from '@/components/Champs';
    laissait les deux diverger, et c'est ce qui est arrivé quand il a
    gagné son lien aux déclinaisons. */
 import { nomDejaPris, type Emballage } from '@/lib/mouvements';
+import { ChampNombre } from '@/components/Champs';
 
 interface Caracteristique {
   nom: string;
@@ -1072,15 +1073,11 @@ export default function FicheProduitPage() {
                 <div className="flex gap-2 mt-3">
                   <div className="flex-1 min-w-0">
                     <p className="text-xs font-bold text-gray-400 uppercase mb-1">Coût</p>
-                    <input type="number" placeholder={produit.coutMoyen > 0 ? String(produit.coutMoyen) : '—'} value={vCout}
-                      onChange={e => setVCout(e.target.value)}
-                      className="w-full px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                    <ChampNombre valeur={parseFloat(vCout) || 0} onChange={n => { setVCout(String(n)) }} placeholder={produit.coutMoyen > 0 ? String(produit.coutMoyen) : '—'} className="w-full px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-xs font-bold text-gray-400 uppercase mb-1">Prix</p>
-                    <input type="number" placeholder={produit.prixVente > 0 ? String(produit.prixVente) : '—'} value={vPrix}
-                      onChange={e => setVPrix(e.target.value)}
-                      className="w-full px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                    <ChampNombre valeur={parseFloat(vPrix) || 0} onChange={n => { setVPrix(String(n)) }} placeholder={produit.prixVente > 0 ? String(produit.prixVente) : '—'} className="w-full px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
                   </div>
                 </div>
 
@@ -1160,16 +1157,13 @@ export default function FicheProduitPage() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-xs font-bold text-gray-400 uppercase mb-1">Prix recommandé</p>
-                    <input type="number" value={edPrix} onChange={e => setEdPrix(e.target.value)}
-                      className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                    <ChampNombre valeur={parseFloat(edPrix) || 0} onChange={n => { setEdPrix(String(n)) }} className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
                   </div>
                   {/* Ce qui se pratique autour : on le constate, on ne le
                       décide pas. Il peut passer sous notre coût. */}
                   <div className="flex-1 min-w-0">
                     <p className="text-xs font-bold text-gray-400 uppercase mb-1">Prix du marché</p>
-                    <input type="number" placeholder="Facultatif" value={edMarche}
-                      onChange={e => setEdMarche(e.target.value)}
-                      className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                    <ChampNombre valeur={parseFloat(edMarche) || 0} onChange={n => { setEdMarche(String(n)) }} placeholder="Facultatif" className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
                   </div>
                 </div>
                 <p className="text-xs text-gray-400 mb-4">
@@ -1481,9 +1475,7 @@ export default function FicheProduitPage() {
               </div>
 
               <p className="text-xs font-bold text-gray-400 uppercase mb-1">Prix recommandé</p>
-              <input type="number" placeholder={produit.prixVente > 0 ? String(produit.prixVente) : '—'} value={edVPrix}
-                onChange={e => setEdVPrix(e.target.value)}
-                className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 mb-1 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+              <ChampNombre valeur={parseFloat(edVPrix) || 0} onChange={n => { setEdVPrix(String(n)) }} placeholder={produit.prixVente > 0 ? String(produit.prixVente) : '—'} className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 mb-1 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
               <p className="text-xs text-gray-400 mb-4">
                 Vide = prix du produit ({formatMontant(produit.prixVente)}).
               </p>

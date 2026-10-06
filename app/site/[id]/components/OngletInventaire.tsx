@@ -26,6 +26,7 @@ import { chargerCatalogue, catalogueReprise } from '@/lib/reprise-catalogue';
    laissait les deux diverger, et c'est ce qui est arrivé quand il a
    gagné son lien aux déclinaisons. */
 import { nomDejaPris, type Emballage } from '@/lib/mouvements';
+import { ChampNombre } from '@/components/Champs';
 
 /** Caractéristique d'un produit (ex. Couleur → Rouge, Bleu). */
 interface Caracteristique {
@@ -2056,8 +2057,7 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
                   <div className="flex gap-2">
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-bold text-gray-400 uppercase mb-1">Coût d&apos;achat</p>
-                      <input type="number" placeholder="Ex. 500" value={coutAchat} onChange={e => setCoutAchat(e.target.value)}
-                        className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                      <ChampNombre valeur={parseFloat(coutAchat) || 0} onChange={n => { setCoutAchat(String(n)) }} placeholder="Ex. 500" className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
                     </div>
                     {/* Deux prix, deux natures. Le recommandé est ce
                         qu'on décide de pratiquer ; le marché est ce qui
@@ -2066,14 +2066,11 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
                         fait extérieur pour une décision. */}
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-bold text-gray-400 uppercase mb-1">Prix recommandé</p>
-                      <input type="number" placeholder="Ex. 750" value={prixVente} onChange={e => setPrixVente(e.target.value)}
-                        className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                      <ChampNombre valeur={parseFloat(prixVente) || 0} onChange={n => { setPrixVente(String(n)) }} placeholder="Ex. 750" className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-bold text-gray-400 uppercase mb-1">Prix du marché</p>
-                      <input type="number" placeholder="Facultatif" value={prixMarcheSaisi}
-                        onChange={e => setPrixMarcheSaisi(e.target.value)}
-                        className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                      <ChampNombre valeur={parseFloat(prixMarcheSaisi) || 0} onChange={n => { setPrixMarcheSaisi(String(n)) }} placeholder="Facultatif" className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
                     </div>
                     {/* Un stock se pose dans un rayon : sans site désigné,
                         demander une quantité promettrait une entrée qui
@@ -2143,12 +2140,8 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
                                 <p className="flex-1 min-w-0 px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 text-sm font-medium text-gray-900 dark:text-gray-100 truncate">
                                   {cleVariante(v.selection, caracsValides)}
                                 </p>
-                                <input type="number" placeholder={apercuCout > 0 ? String(apercuCout) : '—'} value={v.cout}
-                                  onChange={e => setVariantesSaisie(prev => prev.map((x, j) => j === index ? { ...x, cout: e.target.value } : x))}
-                                  className="w-24 shrink-0 px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-                                <input type="number" placeholder={apercuPrix > 0 ? String(apercuPrix) : '—'} value={v.prix}
-                                  onChange={e => setVariantesSaisie(prev => prev.map((x, j) => j === index ? { ...x, prix: e.target.value } : x))}
-                                  className="w-24 shrink-0 px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                                <ChampNombre valeur={parseFloat(v.cout) || 0} onChange={n => { setVariantesSaisie(prev => prev.map((x, j) => j === index ? { ...x, cout: String(n) } : x)) }} placeholder={apercuCout > 0 ? String(apercuCout) : '—'} className="w-24 shrink-0 px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                                <ChampNombre valeur={parseFloat(v.prix) || 0} onChange={n => { setVariantesSaisie(prev => prev.map((x, j) => j === index ? { ...x, prix: String(n) } : x)) }} placeholder={apercuPrix > 0 ? String(apercuPrix) : '—'} className="w-24 shrink-0 px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
                                 {emballagesUtiles.length > 0 && (
                                   <select value={v.stockEmb}
                                     onChange={e => setVariantesSaisie(prev => prev.map((x, j) => j === index ? { ...x, stockEmb: e.target.value } : x))}

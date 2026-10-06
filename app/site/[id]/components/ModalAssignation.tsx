@@ -4,6 +4,7 @@ import { addDoc, deleteDoc, doc, collection, serverTimestamp } from 'firebase/fi
 import { db } from '@/lib/firebase';
 import { formatMontant } from '@/lib/format';
 import { X, Plus, Check, ChevronDown, Trash2, Loader2 } from 'lucide-react';
+import { ChampNombre } from '@/components/Champs';
 
 export interface ConfigRem {
   id: string;
@@ -139,8 +140,7 @@ export default function ModalAssignation({
             className={`w-full px-3 py-2.5 rounded-xl border bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 mb-1 focus:outline-none focus:ring-2 focus:ring-indigo-500 ${erreurNouveau ? 'border-red-400' : 'border-gray-200 dark:border-gray-700'}`} />
           {erreurNouveau ? <p className="text-xs text-red-500 mb-3">{erreurNouveau}</p> : <div className="mb-3" />}
           <p className="text-xs font-bold text-gray-400 uppercase mb-1">Valeur</p>
-          <input type="number" placeholder="Ex. 150 000" value={nouvelleValeur} onChange={e => setNouvelleValeur(e.target.value)}
-            className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 mb-4 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+          <ChampNombre valeur={parseFloat(nouvelleValeur) || 0} onChange={n => { setNouvelleValeur(String(n)) }} placeholder="Ex. 150 000" className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 mb-4 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
           <p className="text-xs font-bold text-gray-400 uppercase mb-1">Intervalle (jours)</p>
           <input type="number" placeholder="Ex. 30" value={nouvelIntervalle} onChange={e => setNouvelIntervalle(e.target.value)}
             className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 mb-5 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
@@ -235,8 +235,7 @@ export default function ModalAssignation({
         <div className="grid grid-cols-2 gap-3 mb-4">
           <div>
             <p className="text-xs font-bold text-gray-400 uppercase mb-1">Valeur</p>
-            <input type="number" placeholder="Ex. 150 000" value={assignValeur} onChange={e => setAssignValeur(e.target.value)}
-              className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+            <ChampNombre valeur={parseFloat(assignValeur) || 0} onChange={n => { setAssignValeur(String(n)) }} placeholder="Ex. 150 000" className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
           </div>
           <div>
             <p className="text-xs font-bold text-gray-400 uppercase mb-1">Intervalle (jours)</p>
