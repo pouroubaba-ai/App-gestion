@@ -22,6 +22,13 @@ type Onglet = 'partenaire' | 'produit' | 'mouvement' | 'document' | 'versement' 
 interface Mouvement {
   id: string;
   partenaireId: string;
+  /**
+   * Cette ligne ne sait pas ce qu'elle a coute.
+   *
+   * Son benefice n'est pas zero : il est inconnu. Les additionner
+   * reviendrait a compter le prix de vente entier en marge.
+   */
+  margeInconnue?: boolean;
   role: Role;
   /** ce qui a produit la ligne ; porte le motif du document */
   type?: 'achat' | 'vente';
@@ -503,6 +510,7 @@ export default function TransactionsSitePage() {
       nomPartenaire: string; date: string;
       utilisateurNom: string | null; utilisateurFonction: string | null;
       produits: number; total: number; retour: number; verse: number;
+      benefice: number; sansCout: number;
     }>();
     filtres.forEach(m => {
       const cle = m.achatId ?? m.venteId ?? `libre-${m.id}`;
@@ -519,6 +527,14 @@ export default function TransactionsSitePage() {
         date: prev && prev.date > m.date ? prev.date : m.date,
         produits: (prev?.produits ?? 0) + 1,
         total: (prev?.total ?? 0) + totalMouvement(m, role),
+        /* Le benefice du dossier : la somme de ses lignes. Celles dont le
+           cout n'a jamais ete su ne comptent pas — les additionner a zero
+           ferait un benefice egal au prix de vente, et le dossier
+           paraitrait tout en marge. On les compte a part, pour pouvoir
+           dire que le chiffre ne porte pas sur tout. */
+        benefice: (prev?.benefice ?? 0)
+          + (m.margeInconnue ? 0 : benefice(m)),
+        sansCout: (prev?.sansCout ?? 0) + (m.margeInconnue ? 1 : 0),
         retour: 0,
         verse: verseParDoc[m.achatId ?? m.venteId ?? ''] ?? 0,
       });
@@ -598,6 +614,7 @@ export default function TransactionsSitePage() {
     (d, c) => ({
       reference: d.reference, partenaire: d.nomPartenaire, date: d.date,
       produits: d.produits, total: d.total, verse: d.verse,
+      benefice: d.benefice,
       retour: d.retour, reste: Math.max(0, d.total - d.verse),
     } as Record<string, number | string>)[c] ?? 0);
 
@@ -1066,6 +1083,13 @@ export default function TransactionsSitePage() {
                           sens={tri?.sens ?? 'desc'} onTrier={trier}>Produits</EnTeteTri>
                         <EnTeteTri cle="total" actif={tri?.cle === 'total'}
                           sens={tri?.sens ?? 'desc'} onTrier={trier}>Total</EnTeteTri>
+                        {/* Ce que le dossier a rapporte. Du cote
+                            fournisseur il n'y a pas de marge : on achete,
+                            on ne vend pas. */}
+                        {role === 'client' && (
+                          <EnTeteTri cle="benefice" actif={tri?.cle === 'benefice'}
+                            sens={tri?.sens ?? 'desc'} onTrier={trier}>Bénéfice</EnTeteTri>
+                        )}
                         <EnTeteTri cle="verse" actif={tri?.cle === 'verse'}
                           sens={tri?.sens ?? 'desc'} onTrier={trier}>Versé</EnTeteTri>
                         <EnTeteTri cle="retour" actif={tri?.cle === 'retour'}
@@ -1094,6 +1118,30 @@ export default function TransactionsSitePage() {
                             </td>
                             <td className="px-4 py-3 text-gray-500 text-center">{d.produits}</td>
                             <td className="px-4 py-3 font-medium text-gray-900 dark:text-gray-100 text-center">{formatMontant(d.total)}</td>
+                            {/* Le benefice du dossier. Un tiret quand aucune
+                                de ses lignes ne sait ce qu'elle a coute :
+                                afficher le prix de vente entier ferait lire
+                                une marge totale la ou l'on ne sait rien. */}
+                            {role === 'client' && (
+                              <td className="px-4 py-3 text-center">
+                                {d.sansCout === d.produits ? (
+                                  <span className="text-gray-300 dark:text-gray-600"
+                                    title="Coût d'achat inconnu sur toutes les lignes">—</span>
+                                ) : (
+                                  <span className={d.benefice > 0
+                                    ? 'font-medium text-emerald-600 dark:text-emerald-400'
+                                    : d.benefice < 0 ? 'font-medium text-red-500' : 'text-gray-400'}>
+                                    {formatMontant(d.benefice)}
+                                    {d.sansCout > 0 && (
+                                      <span className="ml-1 text-[10px] text-amber-500"
+                                        title={`${d.sansCout} ligne(s) sans coût connu`}>
+                                        ({d.produits - d.sansCout}/{d.produits})
+                                      </span>
+                                    )}
+                                  </span>
+                                )}
+                              </td>
+                            )}
                             <td className="px-4 py-3 text-gray-700 dark:text-gray-300 text-center">{formatMontant(d.verse)}</td>
                             <td className={`px-4 py-3 text-center ${
                               d.retour > 0 ? 'text-orange-500 font-medium' : 'text-gray-300 dark:text-gray-600'}`}>
