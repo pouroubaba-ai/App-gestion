@@ -231,6 +231,50 @@ service cloud.firestore {
           siteDetention);
     }
 
+    /* Les deux autres dossiers d'un ordre, poussés depuis le premier.
+     *
+     * Un ordre tient trois documents : le bon de la source, le transfert,
+     * et la commande du site qui facture. C'est la source qui les fait
+     * avancer — elle tient la marchandise — et chacun de ses pas écrit
+     * donc chez l'autre site, où elle ne travaille pas. La règle s'y
+     * opposait, et l'écran n'en disait rien de plus qu'un mot anglais.
+     *
+     * Le lien ne se croit pas sur parole : on va lire le transfert qu'il
+     * nomme, et on vérifie qu'il relie bien ces deux sites-là. Un
+     * identifiant inventé ne mène nulle part. */
+    function ordreOuvre(doc) {
+      return doc != null
+        && doc.get('ordreLien', null) != null
+        && transfertOuvre(doc.ordreLien.get('transfertId', ''), siteDuDoc());
+    }
+
+    /* Ce qu'une vente d'ordre entraîne : ses mouvements, son document,
+     * ses lignes.
+     *
+     * Livrer la commande du destinataire sort sa marchandise et fige sa
+     * marge — des écritures sur son site, faites depuis l'autre bout par
+     * celui qui remet. Elles portent toutes `venteId` : la règle remonte
+     * à ce dossier, et de là au transfert qui l'a produit. Rien n'est
+     * supposé, tout est lu.
+     *
+     * Une vente ordinaire ne passe pas par là : sans `ordreLien`, la
+     * porte reste fermée et le site écrit chez lui comme avant. */
+    function venteDOrdre(venteId) {
+      return venteId is string && venteId != ''
+        && exists(/databases/$(database)/documents/ventes/$(venteId))
+        && ordreOuvre(get(/databases/$(database)/documents/ventes/$(venteId)));
+    }
+
+    /* Le même lien, lu sur ce qui s'écrit ou sur ce qui existe déjà. */
+    function venteLieeEcrite() {
+      return request.resource != null
+        ? request.resource.data.get('venteId', '') : '';
+    }
+
+    function venteLieeExistante() {
+      return resource != null ? resource.data.get('venteId', '') : '';
+    }
+
     function transfertLie(t, siteDetention) {
       return (t.get('siteSourceId', '') == siteDetention
           && travailleSur(t.get('siteDestId', '')))
@@ -644,12 +688,17 @@ service cloud.firestore {
         && (travailleSur(siteEnvoye())
           /* Les deux mouvements d'un transfert naissent ensemble. */
           || travailleSur(siteLieTransfert())
-          /* La détention de l'autre site, pendant un transfert : le
-             dossier est lu, et il doit désigner ce site-là. */
+          /* La détention de l'autre site, pendant un transfert ou une
+             livraison d'ordre : le dossier est lu, et il doit désigner
+             ce site-là. */
           || (col == 'produits_site'
-            && transfertOuvre(
-              request.resource.data.get('transfertOuvrant', ''),
-              siteEnvoye())));
+            && (transfertOuvre(
+                  request.resource.data.get('transfertOuvrant', ''),
+                  siteEnvoye())
+              || venteDOrdre(request.resource.data.get('venteOuvrante', ''))))
+          /* Ce que la livraison d'un ordre écrit chez le destinataire. */
+          || (col in ['mouvements', 'documents', 'lignes_vente']
+            && venteDOrdre(venteLieeEcrite())));
 
       allow update, delete: if col in [
           'achats', 'ventes', 'lignes_vente', 'transferts', 'preparations',
@@ -673,6 +722,14 @@ service cloud.firestore {
           || travailleSur(siteDestDuDoc())
           || travailleSur(siteLieExistant())
           || travailleSur(siteLieTransfert())
+          /* Le dossier qu'un ordre fait avancer depuis l'autre bout, et
+             ce que sa livraison entraîne. */
+          || (col == 'ventes' && ordreOuvre(resource))
+          || (col in ['mouvements', 'documents', 'lignes_vente']
+            && (venteDOrdre(venteLieeExistante())
+              || venteDOrdre(venteLieeEcrite())))
+          || (col == 'produits_site'
+            && venteDOrdre(request.resource.data.get('venteOuvrante', '')))
           || (col == 'produits_site'
             && transfertOuvre(
               request.resource.data.get('transfertOuvrant', ''),

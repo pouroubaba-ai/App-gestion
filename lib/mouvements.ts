@@ -100,10 +100,23 @@ interface Variante {
  * comme la trace du dernier transfert qui l'a fait bouger.
  */
 function marqueTransfert(
-  saisie: { motif?: string | null; documentId?: string | null },
+  saisie: {
+    motif?: string | null; documentId?: string | null;
+    venteId?: string | null;
+  },
 ) {
-  return saisie.motif === 'transfert' && saisie.documentId
-    ? { transfertOuvrant: saisie.documentId } : {};
+  if (saisie.motif === 'transfert' && saisie.documentId) {
+    return { transfertOuvrant: saisie.documentId };
+  }
+  /* La vente d'un ordre sort sa marchandise depuis l'autre site : la
+     détention porte alors le dossier qui l'a fait bouger, et la règle
+     va le lire pour vérifier que l'ordre existe. Une vente ordinaire
+     le porte aussi — il ne sert à rien chez elle, mais distinguer ici
+     demanderait de savoir ce que seule la vente sait. */
+  if (saisie.motif === 'vente' && saisie.venteId) {
+    return { venteOuvrante: saisie.venteId };
+  }
+  return {};
 }
 
 export function coutMoyenApresEntree(
