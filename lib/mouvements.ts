@@ -391,7 +391,9 @@ export async function ecrireLignesEnLot(
            qu'on ne sait pas, et le tableau de bord compte la vente en
            chiffre d'affaires sans la compter en bénéfice. */
         ...(saisie.sens === 'sortie' && saisie.motif !== 'transfert' ? (
-          inconnuAvant
+          /* Un cout nul ne veut pas dire « gratuit » mais « on ne sait
+             pas » : voir `appliquerLigne`, meme regle. */
+          (inconnuAvant || coutAvant <= 0)
             ? { coutMoyenAlors: null, benefice: null, margeInconnue: true }
             : {
               coutMoyenAlors: coutAvant,
@@ -536,7 +538,8 @@ export async function enregistrerMouvement(saisie: SaisieMouvement): Promise<Mou
        qui sortait gratuitement grevait le bénéfice. */
     ...(entreeSansCout ? { coutInconnu: true } : {}),
     ...(saisie.sens === 'sortie' && saisie.motif !== 'transfert' ? (
-      inconnuAvant
+      /* Meme regle : un cout a zero est un cout ignore. */
+      (inconnuAvant || coutAvant <= 0)
         ? { coutMoyenAlors: null, benefice: null, margeInconnue: true }
         : {
           coutMoyenAlors: coutAvant,

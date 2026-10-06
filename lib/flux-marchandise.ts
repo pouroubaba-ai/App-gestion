@@ -991,7 +991,15 @@ async function appliquerLigne(
          Zéro en ferait un bénéfice égal au prix de vente — l'inverse de
          ce qu'on cherche. Le drapeau dit qu'on ne sait pas, et le
          tableau de bord compte la vente sans compter son bénéfice. */
-      inconnuAvant
+      /* Le drapeau du rayon ne suffit pas : il peut dire « je sais » et
+         porter zero. Un rayon jamais approvisionne, un stock pose a la
+         main, une reprise qui n'a pas saisi les couts — le coutMoyen
+         vaut 0 et `coutInconnu` n'a jamais ete leve. La vente comptait
+         alors 100 % de benefice : une marchandise payee 70 000 et
+         revendue 70 000 apparaissait comme 70 000 de marge pure.
+         Un cout nul sur une sortie ne veut pas dire « gratuit », il veut
+         dire « on ne sait pas ». */
+      (inconnuAvant || coutAvant <= 0)
         ? { coutMoyenAlors: null, benefice: null, margeInconnue: true }
         : {
           coutMoyenAlors: coutAvant,
