@@ -3,6 +3,7 @@ import { useEffect, useState, useMemo } from 'react';
 import {
   doc, getDoc, updateDoc, addDoc, collection, query,
   where, getDocs, serverTimestamp,
+  writeBatch,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/lib/auth-context';
@@ -157,13 +158,17 @@ export default function FicheRemunerationPage() {
       const cibles = [...lignesCiblees].sort((a, b) => a.dateDebut.localeCompare(b.dateDebut));
       let restant = montant;
       const mises: LigneRemuneration[] = [];
+      /* Un seul voyage pour tout le versement : deux allers-retours par
+         échéance s'enchaînaient dans la boucle. Le lot les porte ensemble
+         et rend l'écriture indivisible. */
+      const lot = writeBatch(db);
       for (const ligne of cibles) {
         if (restant <= 0) break;
         const appliquer = Math.min(restant, ligne.reste);
         const nouvelleVerse = ligne.verse + appliquer;
         const nouveauReste = ligne.montant - nouvelleVerse;
-        await updateDoc(doc(db, 'employe_remunerations', ligne.id), { verse: nouvelleVerse, reste: nouveauReste });
-        await addDoc(collection(db, 'employe_versements'), {
+        lot.update(doc(db, 'employe_remunerations', ligne.id), { verse: nouvelleVerse, reste: nouveauReste });
+        lot.set(doc(collection(db, 'employe_versements')), {
           ligneId: ligne.id, assignationId, employeId, siteId,
           userId: user.uid, nomConfig: assignation.nomConfig,
           montant: appliquer, date: todayStr(),
@@ -176,6 +181,7 @@ export default function FicheRemunerationPage() {
         mises.push({ ...ligne, verse: nouvelleVerse, reste: nouveauReste });
         restant -= appliquer;
       }
+      await lot.commit();
       setLignes(prev => prev.map(l => mises.find(m => m.id === l.id) ?? l));
       setSelection(new Set());
       setModalVersement(null);

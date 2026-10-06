@@ -270,13 +270,24 @@ export default function FicheAchatPage() {
          appartenait au site. La requête ne ramenait plus rien, et tous les
          coûts valaient zéro — la marge annoncée à la réception était donc
          égale au prix de vente entier. */
+      /* Le catalogue ne se relit pas une fois le dossier clos.
+       *
+       * Les coûts moyens ne servent qu'à prévenir d'une vente à perte
+       * avant de confirmer. Après, il n'y a plus rien à prévenir — et
+       * `produitsDuSite` est la lecture la plus chère de cet écran : deux
+       * requêtes, le rayon entier et sa jointure, pour un dossier d'une
+       * ligne. On la payait à chaque rechargement, y compris celui qui
+       * suit la confirmation, où elle ne change plus rien à l'affichage. */
+      const besoinCouts = a.etat !== 'confirme' && a.etat !== 'annule';
       const [prod, vers, caisse] = await Promise.all([
-        produitsDuSite(a.siteId),
+        besoinCouts ? produitsDuSite(a.siteId) : Promise.resolve(null),
         versementsDuDossier(achatId, 'achat').catch(() => []),
         chargerDisponible(a.siteId),
       ]);
-      setCoutsMoyens(Object.fromEntries(
-        prod.map(p => [p.id, p.coutMoyen ?? 0])));
+      if (prod) {
+        setCoutsMoyens(Object.fromEntries(
+          prod.map(p => [p.id, p.coutMoyen ?? 0])));
+      }
       setVersements(vers);
       setSoldeCaisseSite(caisse.disponible);
       setSoldeReelCaisse(caisse.solde);
@@ -437,17 +448,22 @@ export default function FicheAchatPage() {
         quantiteRecue: receptions.some(r => r.ligneIndex === i)
           ? (recu[i] ?? 0) : (l.quantiteRecue ?? 0),
       }));
+      /* Un seul voyage au lieu de deux.
+       *
+       * Les quantités reçues partaient par leur propre `updateDoc`, puis
+       * la confirmation suivait — deux écritures sur le même document,
+       * donc deux attentes de réseau. Depuis Brazzaville chacune coûte
+       * près d'une demi-seconde pendant laquelle l'écran ne fait rien.
+       * `confirmerAchat` les porte maintenant dans son lot. */
       const auteur = await auteurEtape(achat!.siteId, user!.uid);
-      await updateDoc(doc(db, 'achats', achatId), {
-        lignes,
-        dateReception: aujourdhui(),
-        parReception: user!.uid,
-        auteurReception: auteur,
-      });
-
       const { retourCaisse } = await confirmerAchat({
         roleSite: role,
         achat: { ...achat!, lignes }, userId: user!.uid, par: user!.uid,
+        reception: {
+          dateReception: aujourdhui(),
+          parReception: user!.uid,
+          auteurReception: auteur,
+        },
         ...(await auteurCourant(achat!.siteId, user!.uid, user!.displayName)),
       });
       /* l'app ne demande pas : elle informe de ce qu'elle a fait */

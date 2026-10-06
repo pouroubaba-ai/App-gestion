@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react';
 import {
   collection, query, where, getDocs, getDoc, addDoc, updateDoc, deleteDoc, doc, serverTimestamp,
+  writeBatch,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/lib/auth-context';
@@ -199,13 +200,21 @@ export default function AvancesPage() {
     const majAvances: Avance[] = [];
     const nouveaux: Prelevement[] = [];
 
+    /* Un seul voyage pour tout le prélèvement : deux allers-retours par
+       avance s'enchaînaient dans la boucle, et l'écran attendait le réseau
+       autant de fois qu'il y avait d'avances à solder. Le lot les porte
+       ensemble, et une coupure ne peut plus laisser une avance soldée sans
+       son prélèvement. */
+    const lot = writeBatch(db);
+
     for (const av of cibles) {
       if (restant <= 0) break;
       const appliquer = Math.min(restant, av.reste);
       const nouveauVerse = av.verse + appliquer;
       const nouveauReste = av.reste - appliquer;
-      await updateDoc(doc(db, 'employe_avances', av.id), { verse: nouveauVerse, reste: nouveauReste });
-      const ref = await addDoc(collection(db, 'employe_prelevements'), {
+      lot.update(doc(db, 'employe_avances', av.id), { verse: nouveauVerse, reste: nouveauReste });
+      const ref = doc(collection(db, 'employe_prelevements'));
+      lot.set(ref, {
         avanceId: av.id, employeId, siteId, userId: user!.uid,
         montant: appliquer,
         date: todayStr(),
@@ -222,6 +231,8 @@ export default function AvancesPage() {
       majAvances.push({ ...av, verse: nouveauVerse, reste: nouveauReste });
       restant -= appliquer;
     }
+
+    await lot.commit();
 
     setAvances(prev => prev.map(a => majAvances.find(m => m.id === a.id) ?? a));
     setPrelevements(prev => [...nouveaux, ...prev].sort((a, b) => b.date.localeCompare(a.date)));

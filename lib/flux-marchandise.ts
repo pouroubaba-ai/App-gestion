@@ -1208,6 +1208,20 @@ export async function confirmerAchat(params: {
    * dans `achats` un identifiant qui n'y est pas.
    */
   marquerDossier?: boolean;
+  /**
+   * Ce que la réception a constaté, posé dans le même lot.
+   *
+   * L'écran l'écrivait d'abord par un `updateDoc` à lui, puis appelait
+   * cette fonction : deux allers-retours là où un suffit. Depuis
+   * Brazzaville chacun coûte un demi-tour de réseau qu'on attend les bras
+   * ballants — et les deux écritures portaient sur le même document.
+   * Elles voyagent maintenant ensemble.
+   */
+  reception?: {
+    dateReception: string;
+    parReception: string;
+    auteurReception: { nom: string; fonction: string } | null;
+  } | null;
 }): Promise<{ retourCaisse: number }> {
   const { achat } = params;
   /* Un bouton caché n'est pas une permission : la garde tient ici, pas
@@ -1320,6 +1334,10 @@ export async function confirmerAchat(params: {
 
   if (params.marquerDossier !== false) {
     batch.update(doc(db, 'achats', achat.id), {
+      /* Les lignes telles que la réception les a figées, quand l'appelant
+         les confie : elles n'ont plus besoin de leur propre écriture. */
+      ...(params.reception
+        ? { lignes: achat.lignes, ...params.reception } : {}),
       etat: 'confirme',
       dateConfirmation: date,
       parConfirmation: params.par,

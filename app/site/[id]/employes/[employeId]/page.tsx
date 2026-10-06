@@ -2,7 +2,7 @@
 import { useEffect, useState, useMemo } from 'react';
 import {
   doc, getDoc, updateDoc, deleteDoc, addDoc,
-  collection, query, where, getDocs, serverTimestamp,
+  collection, query, where, getDocs, serverTimestamp, writeBatch
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/lib/auth-context';
@@ -443,13 +443,24 @@ export default function FicheEmployePage() {
     const mises: LigneRemuneration[] = [];
     const nouveauxVersements: Versement[] = [];
 
+    /* Un seul voyage pour tout le versement.
+     *
+     * Chaque échéance coûtait deux allers-retours — la ligne mise à jour,
+     * puis le versement écrit — et ils s'enchaînaient dans la boucle : un
+     * paiement couvrant cinq échéances attendait dix fois le réseau, soit
+     * plusieurs secondes immobiles. Le lot les porte ensemble, et il a un
+     * second mérite : un versement ne peut plus s'écrire à moitié, avec
+     * une ligne soldée et son versement manquant. */
+    const lot = writeBatch(db);
+
     for (const ligne of cibles) {
       if (restant <= 0) break;
       const appliquer = Math.min(restant, ligne.reste);
       const nouvelleVerse = ligne.verse + appliquer;
       const nouveauReste = ligne.reste - appliquer;
-      await updateDoc(doc(db, 'employe_remunerations', ligne.id), { verse: nouvelleVerse, reste: nouveauReste });
-      const ref = await addDoc(collection(db, 'employe_versements'), {
+      lot.update(doc(db, 'employe_remunerations', ligne.id), { verse: nouvelleVerse, reste: nouveauReste });
+      const ref = doc(collection(db, 'employe_versements'));
+      lot.set(ref, {
         ligneId: ligne.id, assignationId: ligne.assignationId ?? null,
         employeId, siteId, userId: user!.uid,
         nomConfig: ligne.nomConfig, montant: appliquer,
@@ -469,6 +480,8 @@ export default function FicheEmployePage() {
       mises.push({ ...ligne, verse: nouvelleVerse, reste: nouveauReste });
       restant -= appliquer;
     }
+
+    await lot.commit();
 
     setLignesRem(prev => prev.map(l => { const m = mises.find(x => x.id === l.id); return m ?? l; }));
     setVersements(prev => [...nouveauxVersements, ...prev].sort((a, b) => b.date.localeCompare(a.date)));

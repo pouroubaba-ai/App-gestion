@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react';
 import {
   collection, query, where, getDocs, addDoc, updateDoc, doc, serverTimestamp,
+  writeBatch,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/lib/auth-context';
@@ -115,13 +116,19 @@ export default function ManuellePage() {
       let restant = montant;
       const updatedLignes = [...lignes];
       const cibles = lignes.filter(l => selection.has(l.id) && l.reste > 0).sort((a, b) => a.dateDebut.localeCompare(b.dateDebut));
+      /* Un seul voyage pour tout le versement : deux allers-retours par
+         échéance s'enchaînaient dans la boucle, et l'on attendait le
+         réseau autant de fois qu'il y avait de lignes. Le lot les porte
+         ensemble — et rend l'écriture indivisible, là où une coupure
+         laissait une ligne soldée sans son versement. */
+      const lot = writeBatch(db);
       for (const l of cibles) {
         if (restant <= 0) break;
         const paiement = Math.min(restant, l.reste);
         if (paiement <= 0) continue;
         restant -= paiement;
-        await updateDoc(doc(db, 'employe_remunerations', l.id), { verse: l.verse + paiement, reste: l.reste - paiement });
-        await addDoc(collection(db, 'employe_versements'), {
+        lot.update(doc(db, 'employe_remunerations', l.id), { verse: l.verse + paiement, reste: l.reste - paiement });
+        lot.set(doc(collection(db, 'employe_versements')), {
           ligneId: l.id, employeId, siteId,
           montant: paiement, date: todayStr(),
           nomConfig: l.nomConfig,
@@ -134,6 +141,7 @@ export default function ManuellePage() {
         const idx = updatedLignes.findIndex(x => x.id === l.id);
         if (idx >= 0) updatedLignes[idx] = { ...updatedLignes[idx], verse: l.verse + paiement, reste: l.reste - paiement };
       }
+      await lot.commit();
       setLignes(updatedLignes);
       setModalVersement(false);
       setSelection(new Set());

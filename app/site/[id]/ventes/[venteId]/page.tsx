@@ -219,14 +219,29 @@ export default function FicheVentePage() {
        Les versements sont demandés par dossier plutôt que filtrés après
        coup — on ne rapatrie plus toute la collection du site pour en
        garder trois lignes. */
+    /* Ce qui ne sert qu'à préparer ne se lit que tant qu'on prépare.
+     *
+     * Le stock disponible et ce que les autres dossiers retiennent
+     * n'éclairent qu'un geste : décider combien on peut encore prélever.
+     * Une fois le dossier livré ou annulé, plus rien ne se prélève — et
+     * ces deux lectures continuaient de partir à chaque ouverture, dont
+     * celle qui suit la livraison. `reserveParProduit` lit toutes les
+     * préparations du site, une collection qui ne fait que grossir.
+     *
+     * L'état se lit d'abord sur ce qu'on a déjà affiché : au premier
+     * chargement on l'ignore, et on lit tout — c'est le seul cas où le
+     * dossier peut encore être ouvert sans qu'on le sache. */
+    const closDejaVu = vente
+      && (vente.etat === 'livre' || vente.etat === 'annule');
     const [snap, produits, ventesSnap, vers] = await Promise.all([
       getDoc(doc(db, 'ventes', venteId)),
       produitsDuSite(siteId),
-      getDocs(query(collection(db, 'ventes'),
-        where('siteId', '==', siteId),
-        /* Seuls les dossiers ouverts retiennent du stock : les demander
-           au serveur évite de rapatrier tout l'historique des ventes. */
-        where('etat', 'in', ['preparation', 'pret']))),
+      closDejaVu ? Promise.resolve(null)
+        : getDocs(query(collection(db, 'ventes'),
+          where('siteId', '==', siteId),
+          /* Seuls les dossiers ouverts retiennent du stock : les demander
+             au serveur évite de rapatrier tout l'historique des ventes. */
+          where('etat', 'in', ['preparation', 'pret']))),
       versementsDuDossier(venteId, 'vente').catch(() => []),
     ]);
 
@@ -281,8 +296,10 @@ export default function FicheVentePage() {
 
     /* Seuls les dossiers en préparation ou prêts retiennent du stock : un
        dossier livré est déjà sorti, un dossier annulé ne promet plus rien. */
-    const ouverts = new Set(ventesSnap.docs.map(d => d.id));
-    reserveParProduit(siteId, ouverts).then(setReserve).catch(() => setReserve({}));
+    if (ventesSnap) {
+      const ouverts = new Set(ventesSnap.docs.map(d => d.id));
+      reserveParProduit(siteId, ouverts).then(setReserve).catch(() => setReserve({}));
+    }
     setLoading(false);
   }
 
