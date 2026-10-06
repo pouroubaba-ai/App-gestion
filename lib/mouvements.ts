@@ -87,6 +87,25 @@ interface Variante {
  * La part qui couvre les unités d'origine reste une estimation, mais
  * fondée sur une facture plutôt que sur une impression.
  */
+/**
+ * Le transfert au titre duquel cette détention bouge.
+ *
+ * Confirmer une réception touche au stock des deux sites, et celui qui
+ * reçoit ne travaille pas chez celui qui envoie. La règle d'écriture ne
+ * peut pas le deviner : une détention ne dit qu'un produit et un site.
+ *
+ * Le champ porte donc le dossier, que la règle va lire pour vérifier
+ * que ce transfert existe et qu'il relie bien ces deux sites-là. Il ne
+ * sert qu'à cela — aucun écran ne l'affiche — et il reste sur la fiche
+ * comme la trace du dernier transfert qui l'a fait bouger.
+ */
+function marqueTransfert(
+  saisie: { motif?: string | null; documentId?: string | null },
+) {
+  return saisie.motif === 'transfert' && saisie.documentId
+    ? { transfertOuvrant: saisie.documentId } : {};
+}
+
 export function coutMoyenApresEntree(
   stockActuel: number, coutActuel: number,
   quantiteEntree: number, coutEntree: number,
@@ -378,14 +397,16 @@ export async function ecrireLignesEnLot(
               coutInconnu: inconnuApres,
             }];
         const total = maj.reduce((n, v) => n + (v.stock ?? 0), 0);
-        batch.update(refDetention, { variantes: maj, stock: total });
+        batch.update(refDetention, {
+          variantes: maj, stock: total, ...marqueTransfert(saisie),
+        });
         registre.detentions.set(cle, {
           id: det.id, data: { ...det.data, variantes: maj, stock: total },
         });
       } else {
         batch.update(refDetention, {
           stock: nouveauStock, coutMoyen: nouveauCout,
-          coutInconnu: inconnuApres,
+          coutInconnu: inconnuApres, ...marqueTransfert(saisie),
         });
         /* Le rayon suit ce que le lot écrira : deux lignes du même article
            s'enchaînent au lieu de repartir du même stock. Le drapeau les
@@ -517,9 +538,13 @@ export async function enregistrerMouvement(saisie: SaisieMouvement): Promise<Mou
     batch.update(refDetention, {
       variantes: majVariantes,
       stock: majVariantes.reduce((s, v) => s + (v.stock ?? 0), 0),
+      ...marqueTransfert(saisie),
     });
   } else {
-    batch.update(refDetention, { stock: nouveauStock, coutMoyen: nouveauCout });
+    batch.update(refDetention, {
+      stock: nouveauStock, coutMoyen: nouveauCout,
+      ...marqueTransfert(saisie),
+    });
   }
 
   await batch.commit();

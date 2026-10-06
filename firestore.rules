@@ -185,6 +185,59 @@ service cloud.firestore {
         : resource.data.get('siteDestId', '');
     }
 
+    /* L'autre bout d'un mouvement de transfert.
+     *
+     * Confirmer une réception ne touche pas qu'au site qui reçoit : la
+     * marchandise sort de la source au même instant, et c'est le même
+     * geste qui écrit les deux. La règle ne regardait que le site du
+     * mouvement, donc le gérant qui recevait se voyait refuser
+     * l'écriture chez l'expéditeur — où il ne travaille pas — et la
+     * confirmation échouait sans dire pourquoi.
+     *
+     * Seul un mouvement de transfert ouvre cette porte, et seulement
+     * vers le site qu'il désigne lui-même. Elle ne donne aucun droit
+     * ailleurs : on peut écrire chez l'autre site ce que ce transfert
+     * y fait, rien de plus. */
+    function siteLieTransfert() {
+      return request.resource.data.get('motif', '') == 'transfert'
+        ? request.resource.data.get('siteLieId', '') : '';
+    }
+
+    function siteLieExistant() {
+      return resource != null && resource.data.get('motif', '') == 'transfert'
+        ? resource.data.get('siteLieId', '') : '';
+    }
+
+    /* La détention de l'autre site, pendant un transfert précis.
+     *
+     * Une détention ne porte pas de lien : elle dit un produit et un
+     * site, rien de plus. On ne peut donc pas lire sur elle qu'on y
+     * touche au titre d'un transfert.
+     *
+     * Mais le transfert, lui, porte ses deux bouts. La règle va donc le
+     * chercher et vérifie trois choses : il existe, la personne
+     * travaille à l'une de ses extrémités, et le site de la détention
+     * est l'autre. Rien n'est supposé — tout est lu.
+     *
+     * La porte ne s'ouvre ainsi que vers le site que ce transfert-là
+     * désigne, et seulement pour qui en répond à l'autre bout. Un
+     * identifiant inventé ne mène nulle part : le document n'existe
+     * pas, et la règle refuse. */
+    function transfertOuvre(transfertId, siteDetention) {
+      return transfertId is string && transfertId != ''
+        && exists(/databases/$(database)/documents/transferts/$(transfertId))
+        && transfertLie(
+          get(/databases/$(database)/documents/transferts/$(transfertId)).data,
+          siteDetention);
+    }
+
+    function transfertLie(t, siteDetention) {
+      return (t.get('siteSourceId', '') == siteDetention
+          && travailleSur(t.get('siteDestId', '')))
+        || (t.get('siteDestId', '') == siteDetention
+          && travailleSur(t.get('siteSourceId', '')));
+    }
+
     // ---------------------------------------------------------------
     // Les comptes
     // ---------------------------------------------------------------
@@ -588,7 +641,15 @@ service cloud.firestore {
              plus. Elle vise un site, et c'est lui qui la comptera. */
           'importations'
         ]
-        && travailleSur(siteEnvoye());
+        && (travailleSur(siteEnvoye())
+          /* Les deux mouvements d'un transfert naissent ensemble. */
+          || travailleSur(siteLieTransfert())
+          /* La détention de l'autre site, pendant un transfert : le
+             dossier est lu, et il doit désigner ce site-là. */
+          || (col == 'produits_site'
+            && transfertOuvre(
+              request.resource.data.get('transfertOuvrant', ''),
+              siteEnvoye())));
 
       allow update, delete: if col in [
           'achats', 'ventes', 'lignes_vente', 'transferts', 'preparations',
@@ -609,7 +670,13 @@ service cloud.firestore {
         /* Un transfert se confirme à l'arrivée : la destination écrit
            ce qu'elle a réellement reçu, et elle seule peut le constater. */
         && (travailleSur(siteDuDoc())
-          || travailleSur(siteDestDuDoc()));
+          || travailleSur(siteDestDuDoc())
+          || travailleSur(siteLieExistant())
+          || travailleSur(siteLieTransfert())
+          || (col == 'produits_site'
+            && transfertOuvre(
+              request.resource.data.get('transfertOuvrant', ''),
+              siteDuDoc())));
     }
 
     /**
