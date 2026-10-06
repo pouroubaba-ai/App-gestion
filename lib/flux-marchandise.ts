@@ -1216,6 +1216,17 @@ export async function confirmerAchat(params: {
     throw new Error(
       'Confirmer une réception revient au responsable des commandes.');
   }
+  /* L'achat né d'un ordre ne fait pas entrer de marchandise.
+   *
+   * Elle entre par la confirmation du transfert, qui pose déjà son coût
+   * chez le destinataire. Le confirmer ici écrirait une seconde entrée :
+   * un carton reçu, deux cartons en rayon. Cet achat n'existe que pour
+   * porter la dette envers le site source, et c'est le transfert qui le
+   * mène — il se confirme avec lui, pas par ce bouton. */
+  if ((achat as any).ordreSansMouvement === true) {
+    throw new Error(
+      "Cet achat suit le transfert qui l'a créé : il se confirme avec lui.");
+  }
   /* Un achat n'a plus que deux états : on reçoit au fil des livraisons, puis
      on confirme. Le palier « reçu » séparait la saisie de l'arbitrage, deux
      gestes qui n'en font plus qu'un depuis que les réceptions s'enregistrent

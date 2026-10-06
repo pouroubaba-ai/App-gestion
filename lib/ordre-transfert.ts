@@ -39,7 +39,9 @@ import {
   referenceFlux, type LigneFlux, type AuteurEtape,
   livrerVente,
 } from './flux-marchandise';
-import { ligneDepuisVente, synchroniserLignes } from './lignes-vente';
+import {
+  ligneDepuisVente, synchroniserLignes, supprimerLignesDeVente,
+} from './lignes-vente';
 
 /** Ce que les trois dossiers partagent, et qui les relie. */
 export interface LienOrdre {
@@ -49,6 +51,13 @@ export interface LienOrdre {
   commandeSourceId: string;
   /** la commande du client, chez le site qui facture */
   venteDestId: string;
+  /**
+   * L'achat du destinataire auprès du site source.
+   *
+   * Absent sur les ordres écrits avant son introduction : le lire sans
+   * garde ferait échouer la lecture d'un dossier ancien.
+   */
+  achatDestId?: string;
 }
 
 /**
@@ -87,16 +96,29 @@ export async function creerOrdreTransfert(params: {
   if (!params.partenaireId) {
     throw new Error('Un ordre désigne le client qui recevra la facture.');
   }
+  /* Le prix fait la facture et la créance : sans lui, les deux dossiers
+     naissent à zéro et s'affichent soldés parce qu'ils ne doivent rien.
+     L'écran le demande déjà ; on le redemande ici, parce qu'un écran ne
+     ferme pas la porte par laquelle on appelle — et parce que le `?? 0`
+     qui suivait transformait un prix absent en un zéro silencieux au
+     lieu de refuser. */
+  const sansPrix = params.lignes.filter(l => !l.prixVente || l.prixVente <= 0);
+  if (sansPrix.length > 0) {
+    throw new Error(
+      `Prix de vente manquant sur : ${sansPrix.map(l => l.designation).join(', ')}.`);
+  }
 
   const batch = writeBatch(db);
   const refTransfert = doc(collection(db, 'transferts'));
   const refCommande = doc(collection(db, 'ventes'));
   const refVente = doc(collection(db, 'ventes'));
+  const refAchat = doc(collection(db, 'achats'));
 
   const lien: LienOrdre = {
     transfertId: refTransfert.id,
     commandeSourceId: refCommande.id,
     venteDestId: refVente.id,
+    achatDestId: refAchat.id,
   };
 
   /* Le transfert. Il naît en attente comme tout transfert : c'est la
@@ -145,7 +167,7 @@ export async function creerOrdreTransfert(params: {
     lignes: params.lignes,
     montants: [],
     sousTotalOrigine: params.lignes.reduce(
-      (s, l) => s + l.quantiteDemandee * (l.prixVente ?? 0), 0),
+      (s, l) => s + l.quantiteDemandee * l.prixVente!, 0),
     avanceVersee: 0,
     versements: [],
     devisId: null,
@@ -181,7 +203,7 @@ export async function creerOrdreTransfert(params: {
     lignes: params.lignes,
     montants: [],
     sousTotalOrigine: params.lignes.reduce(
-      (s, l) => s + l.quantiteDemandee * (l.prixVente ?? 0), 0),
+      (s, l) => s + l.quantiteDemandee * l.prixVente!, 0),
     avanceVersee: 0,
     versements: [],
     devisId: null,
@@ -202,6 +224,59 @@ export async function creerOrdreTransfert(params: {
        servi la marchandise, et aller le chercher à chaque ouverture
        coûterait une lecture pour un mot qui ne change pas. */
     ordreSiteSourceNom: params.siteSourceNom,
+    userId: params.userId,
+    createdAt: serverTimestamp(),
+  });
+
+  /* L'achat du destinataire auprès du site source.
+   *
+   * Le destinataire ne reçoit pas cette marchandise en cadeau : elle
+   * appartenait à un autre site, qui l'a sortie de son stock pour lui. Sans
+   * ce dossier, la vente au partenaire s'inscrivait chez lui avec une marge
+   * entière, comme si la marchandise lui était tombée du ciel — et le site
+   * source se dessaisissait d'un stock sans que rien ne lui soit dû.
+   *
+   * Il ne porte pas de `fournisseurId` : un site n'est pas un partenaire, et
+   * lui en inventer un créerait un compte fournisseur fantôme, avec un solde
+   * qu'aucune fiche ne saurait afficher. La relation entre sites passe par
+   * `siteLieId`, comme sur les mouvements d'un transfert ordinaire.
+   *
+   * Et surtout il n'écrit aucun mouvement de stock : `ordreSansMouvement`.
+   * La marchandise entre chez le destinataire par la confirmation du
+   * transfert, qui pose déjà son coût. Laisser cet achat se confirmer
+   * normalement la ferait entrer une seconde fois — un carton reçu, deux
+   * cartons en rayon. L'achat fait la dette, le transfert fait la
+   * marchandise : un seul chemin pour chaque chose.
+   *
+   * Son montant est la valeur de transfert, pas le prix au partenaire : ce
+   * que le destinataire doit à la source est ce que la marchandise valait
+   * chez elle. La différence est sa marge, et elle lui appartient.
+   */
+  batch.set(refAchat, {
+    reference: referenceFlux('AC', params.date),
+    siteId: params.siteDestId,
+    fournisseurId: null,
+    fournisseurNom: params.siteSourceNom,
+    etat: 'en_attente',
+    lignes: params.lignes,
+    avanceVersee: 0,
+    versements: [],
+    frais: null,
+    fraisCorrection: null,
+    fraisCle: null,
+    dateCommande: params.date,
+    dateReception: null,
+    dateConfirmation: null,
+    parCommande: params.userId,
+    auteurCommande: params.auteur ?? null,
+    note: params.note?.trim() || null,
+    /* Il suit le transfert : ni `ordre` — ce n'est pas un travail qu'on
+       lui demande — ni créance propre. Le lien dit d'où il vient. */
+    ordreLien: lien,
+    ordreSansMouvement: true,
+    ordreSiteSourceId: params.siteSourceId,
+    ordreSiteSourceNom: params.siteSourceNom,
+    siteLieId: params.siteSourceId,
     userId: params.userId,
     createdAt: serverTimestamp(),
   });
@@ -404,6 +479,34 @@ export async function propagerEtapeOrdre(params: {
     });
   }
 
+  /* L'achat du destinataire suit, lui aussi.
+   *
+   * Sa dette envers le site source naît à sa confirmation, comme pour
+   * tout achat : le laisser en attente la ferait ne jamais naître, et le
+   * destinataire vendrait avec une marge entière une marchandise qu'il
+   * n'a pas payée. Il se confirme donc quand la marchandise est remise —
+   * c'est à ce moment qu'elle a quitté le stock de la source.
+   *
+   * `ordreSansMouvement` le dispense d'écrire du stock : le transfert
+   * l'a déjà fait entrer. Il n'a que la dette à porter. */
+  if (lien.achatDestId) {
+    const etatAchat = etat === 'preparation' ? 'recu'
+      : etat === 'livre' ? 'confirme'
+      : etat === 'annule' ? 'annule'
+      : null;
+    if (etatAchat) {
+      batch.update(doc(db, 'achats', lien.achatDestId), {
+        etat: etatAchat,
+        ...(etatAchat === 'recu'
+          ? { dateReception: date, parReception: params.userId }
+          : {}),
+        ...(etatAchat === 'confirme'
+          ? { dateConfirmation: date, parConfirmation: params.userId }
+          : {}),
+      });
+    }
+  }
+
   /* Le transfert, à son rythme plus court. Il n'a que deux pas à faire :
      il se prépare quand la source prépare, et il se clôt quand elle
      remet. Entre les deux, rien — il n'y a pas de route. */
@@ -428,4 +531,82 @@ export async function propagerEtapeOrdre(params: {
   }
 
   await batch.commit();
+}
+
+/**
+ * Annule les trois dossiers d'un ordre, d'où qu'on le demande.
+ *
+ * Les trois ne sont pas trois décisions : le bon de la source et la
+ * commande du client n'existent que parce qu'un transfert devait partir.
+ * En annuler un seul laisserait les deux autres attendre une marchandise
+ * que personne n'enverra — et la créance du client resterait debout sur
+ * une livraison annulée ailleurs.
+ *
+ * Deux portes seulement, et elles ne sont pas symétriques :
+ *
+ *  - chez la source, c'est le transfert qu'on annule. Son bon de
+ *    commande n'est qu'un outil de travail : il n'a pas de client, il ne
+ *    porte aucune dette, il n'a rien à renoncer de son propre chef ;
+ *  - chez le destinataire, c'est le bon du client. C'est lui qui a été
+ *    promis à quelqu'un, et c'est de ce côté qu'on revient sur la
+ *    promesse.
+ *
+ * Après la livraison, plus rien ne s'annule : la marchandise est sortie
+ * du stock du destinataire et le client a été facturé. Revenir dessus,
+ * c'est un retour — qui se constate à deux et réécrit du stock, pas une
+ * annulation qui se contente d'un état.
+ *
+ * Les lignes promises sont retirées des deux dossiers de vente : plus
+ * rien n'est attendu, donc plus rien ne doit peser sur les besoins.
+ */
+export async function annulerOrdre(params: {
+  lien: LienOrdre;
+  userId: string;
+  date: string;
+}): Promise<void> {
+  const { lien, date } = params;
+
+  /* On lit l'état avant d'écrire : la porte par laquelle on arrive ne
+     dit pas où en sont les deux autres dossiers. Un ordre dont la vente
+     du destinataire est livrée a déjà bougé du stock et de l'argent. */
+  const [snapVente, snapTransfert] = await Promise.all([
+    getDoc(doc(db, 'ventes', lien.venteDestId)),
+    getDoc(doc(db, 'transferts', lien.transfertId)),
+  ]);
+  if (snapVente.exists() && snapVente.data().etat === 'livre') {
+    throw new Error(
+      'Cette commande est livrée : il faut un retour, pas une annulation.');
+  }
+  if (snapTransfert.exists() && snapTransfert.data().etat === 'confirme') {
+    throw new Error(
+      'Le transfert est confirmé : la marchandise est arrivée, il faut un retour.');
+  }
+
+  const batch = writeBatch(db);
+  batch.update(doc(db, 'transferts', lien.transfertId), {
+    etat: 'annule', dateAnnulation: date, parAnnulation: params.userId,
+  });
+  /* L'achat tombe avec le reste. Sous garde : les ordres écrits avant son
+     introduction n'en ont pas, et pointer un document absent ferait
+     échouer tout le lot — y compris l'annulation des trois autres. */
+  if (lien.achatDestId) {
+    batch.update(doc(db, 'achats', lien.achatDestId), {
+      etat: 'annule', dateAnnulation: date, parAnnulation: params.userId,
+    });
+  }
+  for (const venteId of [lien.commandeSourceId, lien.venteDestId]) {
+    batch.update(doc(db, 'ventes', venteId), {
+      etat: 'annule', dateAnnulation: date, parAnnulation: params.userId,
+      ordreAvanceLe: serverTimestamp(),
+    });
+  }
+  await batch.commit();
+
+  /* Plus rien n'est promis : les lignes sortent du compte des besoins.
+     Hors du lot, parce qu'elles vivent dans leur propre collection et
+     que leur suppression se fait document par document. */
+  await Promise.all([
+    supprimerLignesDeVente(lien.commandeSourceId),
+    supprimerLignesDeVente(lien.venteDestId),
+  ]);
 }

@@ -41,7 +41,9 @@ import {
 import {
   estEnsemble, retourHistorique, marqueOrigine, racineRetour,
 } from '@/lib/retour';
-import { propagerEtapeOrdre, remettreOrdre } from '@/lib/ordre-transfert';
+import {
+  propagerEtapeOrdre, remettreOrdre, annulerOrdre,
+} from '@/lib/ordre-transfert';
 import { confirmerTransfert } from '@/lib/flux-marchandise';
 import ModalPlanification from '../../components/ModalPlanification';
 import {
@@ -681,6 +683,19 @@ export default function FicheVentePage() {
     if (!peutAnnulerDossier(role as Role | null)) return;
     setEnCours(true);
     try {
+      /* Les trois dossiers d'un ordre tombent ensemble. Ils n'existent
+         que parce qu'un transfert devait partir : annuler celui-ci seul
+         laisserait la source préparer une marchandise que plus personne
+         n'attend, et le transfert partir vers une commande annulée.
+         L'autre porte est le transfert, chez la source — son bon de
+         commande, lui, ne s'annule pas de son propre chef. */
+      const lien = (vente as any).ordreLien;
+      if (lien) {
+        await annulerOrdre({ lien, userId: user!.uid, date: aujourdhui() });
+        await charger();
+        setEnCours(false);
+        return;
+      }
       await updateDoc(doc(db, 'ventes', venteId), { etat: 'annule' });
       /* Plus rien n'est promis : les lignes sortent du compte. */
       await supprimerLignesDeVente(venteId);
@@ -772,7 +787,12 @@ export default function FicheVentePage() {
   /* Annuler revient sur un engagement pris envers le client : cela relève
      de qui répond du site, pas de qui fait avancer les dossiers. */
   const peutAnnuler = vente.etat !== 'livre' && vente.etat !== 'annule'
-    && peutAnnulerDossier(role as Role | null);
+    && peutAnnulerDossier(role as Role | null)
+    /* Le bon de commande d'un ordre ne renonce pas de son propre chef :
+       il n'a pas de client et ne porte aucune dette, il n'est que l'outil
+       de travail de la source. Ce qui s'annule de ce côté, c'est le
+       transfert — et son annulation emporte les trois. */
+    && (vente as any).ordre !== true;
   /* un annule n'a pas de carte : il se consulte depuis celle des livres */
   /* La carte qu'on regardait, pas celle où le dossier a atterri : un devis
      transformé en commande se ferme sur Devis, là où on l'a ouvert. */

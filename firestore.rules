@@ -243,9 +243,16 @@ service cloud.firestore {
      * nomme, et on vérifie qu'il relie bien ces deux sites-là. Un
      * identifiant inventé ne mène nulle part. */
     function ordreOuvre(doc) {
+      /* Le site à vérifier est celui du dossier lu, pas celui du
+         document qu'on écrit. Les deux coïncident quand on met à jour la
+         vente elle-même ; ils divergent dès qu'on écrit un mouvement ou
+         une détention pour elle — et la règle cherchait alors le mauvais
+         bout du transfert. */
       return doc != null
-        && doc.get('ordreLien', null) != null
-        && transfertOuvre(doc.ordreLien.get('transfertId', ''), siteDuDoc());
+        && doc.data.get('ordreLien', null) != null
+        && transfertOuvre(
+          doc.data.ordreLien.get('transfertId', ''),
+          doc.data.get('siteId', ''));
     }
 
     /* Ce qu'une vente d'ordre entraîne : ses mouvements, son document,
@@ -273,6 +280,47 @@ service cloud.firestore {
 
     function venteLieeExistante() {
       return resource != null ? resource.data.get('venteId', '') : '';
+    }
+
+    /* Le même lien, mais lu à moindre coût.
+     *
+     * Une règle ne peut lire que dix documents par évaluation.
+     * `ordreOuvre` passait par `travailleSur`, qui vérifie l'existence du
+     * site, son activité, son propriétaire, puis le membre — quatre
+     * lectures, et il le faisait deux fois, pour les deux bouts du
+     * transfert. Avec la lecture du dossier et celle du transfert, le
+     * plafond était franchi et la règle échouait sans rien dire : pas une
+     * erreur de permission mal placée, un budget épuisé. C'est ce qui
+     * refusait « Marquer prêt » au responsable des commandes, et que
+     * relire la logique ne pouvait pas trouver — elle était juste.
+     *
+     * Ici, le transfert a déjà prouvé que les deux sites travaillent
+     * ensemble : c'est lui qui les nomme tous les deux, et il a fallu
+     * l'écrire. Il ne reste qu'à vérifier qu'on tient un de ses bouts, et
+     * un membre actif suffit à l'établir — une seule lecture de plus.
+     */
+    function membreActifDe(siteId) {
+      return siteId != '' && connecte()
+        && exists(/databases/$(database)/documents/membres/$(siteId + '_' + monUid()))
+        && get(/databases/$(database)/documents/membres/$(siteId + '_' + monUid()))
+             .data.get('actif', true) == true;
+    }
+
+    function ordreOuvreLeger(doc) {
+      return doc != null
+        && doc.data.get('ordreLien', null) != null
+        && doc.data.ordreLien.get('transfertId', '') != ''
+        && exists(/databases/$(database)/documents/transferts/$(doc.data.ordreLien.transfertId))
+        && transfertLieLeger(
+          get(/databases/$(database)/documents/transferts/$(doc.data.ordreLien.transfertId)).data,
+          doc.data.get('siteId', ''));
+    }
+
+    function transfertLieLeger(t, siteDetention) {
+      return (t.get('siteSourceId', '') == siteDetention
+          && membreActifDe(t.get('siteDestId', '')))
+        || (t.get('siteDestId', '') == siteDetention
+          && membreActifDe(t.get('siteSourceId', '')));
     }
 
     function transfertLie(t, siteDetention) {
@@ -662,7 +710,21 @@ service cloud.firestore {
         && (travailleSur(siteDuDoc())
           /* Un transfert se lit des deux bouts : celui qui envoie et
              celui qui reçoit. */
-          || travailleSur(siteDestDuDoc()));
+          || travailleSur(siteDestDuDoc())
+          /* Les dossiers de l'autre bout d'un ordre.
+           *
+           * L'écriture croisée était permise plus bas, mais pas la
+           * lecture — et elle la précède toujours : `ordreOuvre(resource)`
+           * lit le document avant de juger, et le code lit la vente du
+           * destinataire avant de la faire avancer. Autoriser d'écrire ce
+           * qu'on ne peut pas lire n'autorise rien : la règle d'écriture
+           * ne pouvait jamais être atteinte. C'est ce qui refusait
+           * « Marquer prêt » au responsable des commandes.
+           *
+           * Le lien ne suffit pas à lui seul : on remonte au transfert,
+           * qui porte les deux sites, et on exige d'en tenir un bout. */
+          || (col in ['ventes', 'achats', 'transferts', 'lignes_vente']
+            && ordreOuvreLeger(resource)));
 
       /* La liste ne sait pas ce qu'elle rapportera : on la borne à la
          maison, le site se vérifie à chaque document lu et à chaque
@@ -724,7 +786,11 @@ service cloud.firestore {
           || travailleSur(siteLieTransfert())
           /* Le dossier qu'un ordre fait avancer depuis l'autre bout, et
              ce que sa livraison entraîne. */
-          || (col == 'ventes' && ordreOuvre(resource))
+          /* Le dossier de l'autre bout d'un ordre, et l'achat qui porte
+             la dette entre les deux sites. La version économe : voir
+             `ordreOuvreLeger` — le plafond de dix lectures par règle est
+             atteint sans elle. */
+          || (col in ['ventes', 'achats'] && ordreOuvreLeger(resource))
           || (col in ['mouvements', 'documents', 'lignes_vente']
             && (venteDOrdre(venteLieeExistante())
               || venteDOrdre(venteLieeEcrite())))

@@ -24,6 +24,7 @@ import {
   libelleTransfert, valeurEnvoyee,
 } from '@/lib/flux-marchandise';
 import { estEnsemble, retourHistorique, retourOnglet } from '@/lib/retour';
+import { annulerOrdre } from '@/lib/ordre-transfert';
 import { formatMontant } from '@/lib/format';
 
 
@@ -469,7 +470,17 @@ export default function FicheTransfertPage() {
     if (!peutAnnulerDossier(ROLE_COURANT)) return;
     setEnCours(true); setErreur('');
     try {
-      await updateDoc(doc(db, 'transferts', transfertId), { etat: 'annule' });
+      /* Un transfert qui sert une commande n'est pas seul : le bon de la
+         source et la commande du client sont nés avec lui et n'ont pas
+         d'existence sans lui. L'annuler ici les annule tous les trois —
+         sinon le destinataire garderait une créance sur une marchandise
+         que plus personne n'enverra. */
+      const lien = (transfert as any).ordreLien;
+      if (lien) {
+        await annulerOrdre({ lien, userId: user!.uid, date: aujourdhui() });
+      } else {
+        await updateDoc(doc(db, 'transferts', transfertId), { etat: 'annule' });
+      }
       await charger();
     } catch (e: any) { setErreur(e?.message ?? 'Échec.'); }
     finally { setEnCours(false); }

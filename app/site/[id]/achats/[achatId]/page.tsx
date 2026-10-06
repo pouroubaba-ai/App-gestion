@@ -371,7 +371,12 @@ export default function FicheAchatPage() {
   const peutTraiter = achat.etat === 'recu';
   /* Confirmer constate l'arrivée de la marchandise : c'est le geste du
      responsable des commandes, jamais celui qui a passé la commande. */
-  const peutConfirmer = achat.etat === 'traitement' && peutConfirmerAchat(role);
+  /* L'achat né d'un ordre ne se confirme pas à la main : il suit le
+     transfert qui l'a créé, et c'est ce transfert qui fait entrer la
+     marchandise. Le confirmer ici la ferait entrer deux fois. */
+  const suitUnOrdre = (achat as any).ordreSansMouvement === true;
+  const peutConfirmer = achat.etat === 'traitement' && peutConfirmerAchat(role)
+    && !suitUnOrdre;
   /* Rien n'est appliqué au stock avant la confirmation : tant qu'elle n'a pas
      eu lieu, une quantité mal comptée doit pouvoir être reprise. On compte
      pendant le traitement — c'est là qu'on vérifie ce qui est arrivé. */

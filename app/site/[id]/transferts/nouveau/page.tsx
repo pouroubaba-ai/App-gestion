@@ -151,10 +151,22 @@ export default function NouveauTransfertPage() {
      silencieusement ferait disparaître un produit que l'utilisateur croit avoir envoyé. */
   const lignesCompletes = lignes.length > 0 && lignes.every(l => l.produitId && l.quantiteDemandee > 0);
 
+  /* Un partenaire désigné fait de ce transfert une vente qui sera
+     facturée chez le destinataire. Une vente sans prix n'existe pas :
+     elle naîtrait à zéro, et le dossier s'afficherait soldé parce qu'il
+     ne doit rien. Le prix n'était jusqu'ici qu'une proposition
+     facultative — bonne pour un réapprovisionnement, où le destinataire
+     garde ses propres prix, fausse ici où c'est ce chiffre qui fait la
+     facture et la créance. */
+  const lignesSansPrix = clientDestId
+    ? lignes.filter(l => !l.prixVente || l.prixVente <= 0)
+    : [];
+
   /* Le prix ne peut pas descendre sous ce que la marchandise coûtera au
      receveur : le champ y remonte de lui-même. Rien à bloquer ici — un
      bouton éteint n'aurait pas dit quoi corriger. */
-  const pretAEnregistrer = !!destId && lignesCompletes && autres.length > 0;
+  const pretAEnregistrer = !!destId && lignesCompletes && autres.length > 0
+    && lignesSansPrix.length === 0;
 
   async function enregistrer() {
     setErreur('');
@@ -349,10 +361,23 @@ export default function NouveauTransfertPage() {
         <SelecteurProduits
           produits={produits} lignes={lignes} onChange={setLignes}
           coutEditable={false} montrerStock labelCout="Coût moyen"
+          /* Un partenaire désigné : le prix fait la facture, il ne se
+             propose plus, il s'exige. */
+          prixExige={!!clientDestId}
           chezDestinataire={destId ? chezDest : undefined}
           nomDestinataire={autres.find(a => a.id === destId)?.nom ?? null}
         />
 
+
+        {/* Un bouton éteint ne dit pas quoi corriger : on nomme les
+            lignes qui manquent de prix. */}
+        {lignesSansPrix.length > 0 && (
+          <p className="text-xs text-orange-500 mt-3">
+            Ce transfert sera facturé à {clientsDest.find(c => c.id === clientDestId)?.nom ?? 'ce client'} :
+            chaque ligne doit porter son prix de vente.
+            {' '}Il manque sur {lignesSansPrix.map(l => l.designation).join(', ')}.
+          </p>
+        )}
 
         {erreur && <p className="text-xs text-red-500 mt-3">{erreur}</p>}
 

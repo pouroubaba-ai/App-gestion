@@ -55,3 +55,8 @@ next-env.d.ts
 # vit sur le poste, le temps de la reprise, et s'efface ensuite.
 /app/migration-stock/
 /lib/migration-stock.ts
+# Les scripts de diagnostic. Ils portent le chemin de la cle de service
+# et parlent directement a la base : ils vivent sur le poste, jamais dans
+# le depot.
+scripts/_*.mjs
+scripts/_*.json

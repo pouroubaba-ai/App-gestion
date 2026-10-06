@@ -56,6 +56,17 @@ interface Props {
    */
   vente?: boolean;
   /**
+   * Le prix de vente est exigé sur chaque ligne.
+   *
+   * Un transfert ordinaire n'en a pas besoin : le destinataire garde ses
+   * propres prix, et le champ n'est qu'une proposition. Mais quand le
+   * transfert sert une commande de partenaire, c'est ce prix qui fait la
+   * facture et la créance — et il ne se devine pas. Sans ce drapeau, le
+   * champ ne paraissait qu'une fois la destination choisie : qui remplit
+   * ses lignes avant de choisir où elles vont ne le voyait jamais.
+   */
+  prixExige?: boolean;
+  /**
    * Engagement futur — un devis, une commande à livrer plus tard. Le stock
    * reste affiché pour informer, mais le dépassement n'est plus signalé :
    * ce qu'on n'a pas aujourd'hui, on l'aura acheté d'ici la livraison.
@@ -102,7 +113,7 @@ function uniteLisible(p?: ProduitChoisissable, quantite = 1): string {
 export default function SelecteurProduits({
   produits, lignes, onChange, coutEditable, montrerStock, labelCout,
   chezDestinataire, nomDestinataire, onCreerProduit,
-  vente = false, futur = false,
+  vente = false, futur = false, prixExige = false,
   produitsNeufs, onCreerGamme,
   partsFrais, totalFrais: totalDesFrais, partsImposees, onCorrigerPart, listeMasquee,
   fraisCle, onChangerCleFrais, coutVideParDefaut, coutInconnuPossible,
@@ -301,8 +312,12 @@ export default function SelecteurProduits({
         : (v ? v.coutMoyen : (p.coutMoyen ?? 0)),
       ...(coutInconnuParDefaut && !coutConnuDuRayon
         ? { coutInconnu: true } : {}),
-      /* une variante sans prix propre hérite de celui du produit */
-      prixVente: (v?.prixVente ?? p.prixVente) || null,
+      /* Le prix proposé est d'abord celui du destinataire : c'est lui
+         qui vendra, et c'est son tarif que son client connaît. Celui de
+         la source ne sert que de repli — il peut être absent, quand elle
+         ne vend pas ce produit, et la ligne naissait alors sans prix. */
+      prixVente: (chezDestinataire?.[p.id]?.prixVente
+        || v?.prixVente || p.prixVente) || null,
     }]);
   }
 
@@ -831,7 +846,7 @@ export default function SelecteurProduits({
                       receveur pratiquera : il ne peut pas descendre sous ce
                       que la marchandise lui aura coûté, mais rien ne le
                       borne vers le haut — sa marge lui appartient. */}
-                  {(coutEditable || vente || chezDestinataire) && (
+                  {(coutEditable || vente || chezDestinataire || prixExige) && (
                     <label className="flex items-center gap-1.5">
                       <span className="text-xs text-gray-400">
                         {chezDestinataire ? 'Prix proposé' : 'Prix'}
@@ -839,13 +854,16 @@ export default function SelecteurProduits({
                       {/* `min` ramène au plancher quand on quitte le champ :
                           on garde la liberté de taper, on ne garde pas une
                           valeur qui ferait vendre à perte. */}
+                      {/* Un prix exigé et manquant se voit sur sa ligne,
+                          pas seulement dans un message en bas de page :
+                          c'est ici qu'on le corrige. */}
                       <ChampNombre valeur={l.prixVente ?? 0}
                         min={chezDestinataire ? coutQuiBorne : 0}
                         onChange={n => majLigne(i, {
                           prixVente: chezDestinataire
                             ? Math.max(n, coutQuiBorne)
                             : (n || null) })}
-                        className={`w-24 px-2 py-1 rounded-lg border text-xs text-center focus:outline-none focus:ring-2 ${sousLeCout
+                        className={`w-24 px-2 py-1 rounded-lg border text-xs text-center focus:outline-none focus:ring-2 ${sousLeCout || (prixExige && !l.prixVente)
                           ? 'border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 focus:ring-red-500'
                           : 'border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 focus:ring-indigo-500'}`} />
                     </label>
