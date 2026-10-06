@@ -365,7 +365,15 @@ export async function ecrireLignesEnLot(
         emballage: saisie.emballage ?? null,
         quantiteUnites: qteUnites,
         valeurUnitaire: saisie.valeurUnitaire,
-        valeurTotale: saisie.valeurUnitaire * qteUnites,
+        /* La valeur se compte dans l'emballage saisi, pas en pieces.
+         *
+           `valeurUnitaire` est le prix d'UN emballage — la ligne plus haut
+           le dit en divisant par `qteUnites` pour obtenir le cout d'une
+           piece. Le multiplier par les pieces faisait payer le prix du
+           carton a chaque piece : un carton de 25 a 12 000 valait 300 000.
+           Le recalcul du cout moyen lit ce champ, et l'inventaire entier
+           s'en trouvait fausse d'un facteur egal a la contenance. */
+        valeurTotale: saisie.valeurUnitaire * saisie.quantite,
         /* La même règle qu'à l'unité : une perte coûte son coût moyen, une
            sortie sans prix ne réalise rien. La réécrire ici la ferait
            diverger le jour où l'une des deux changerait. */
@@ -504,7 +512,9 @@ export async function enregistrerMouvement(saisie: SaisieMouvement): Promise<Mou
     emballage: saisie.emballage ?? null,
     quantiteUnites: qteUnites,
     valeurUnitaire: saisie.valeurUnitaire,
-    valeurTotale: saisie.valeurUnitaire * qteUnites,
+    /* Meme regle que dans le lot : le prix est celui d'un emballage, la
+       valeur se compte donc sur les emballages saisis. */
+    valeurTotale: saisie.valeurUnitaire * saisie.quantite,
     /* Un transfert déplace de la valeur sans la réaliser : ni bénéfice ni perte.
        Une perte détruit le stock : elle coûte son coût moyen.
        Une vente réalise la marge entre le prix obtenu et le coût moyen.

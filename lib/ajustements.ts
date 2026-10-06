@@ -4,7 +4,7 @@ import {
 } from 'firebase/firestore';
 import { db } from './firebase';
 import { lireParSite, type Portee } from './portee';
-import { ecrireLignesEnLot } from './mouvements';
+import { ecrireLignesEnLot, enUnitesBase } from './mouvements';
 import { ouvrirDetention } from './produits-site';
 import { precharger } from './flux-marchandise';
 
@@ -449,9 +449,17 @@ export async function confirmerAjustement(params: {
          chaque ligne d'un aller-retour, pour la même réponse. */
       const det = registre.detentions.get(`${d.siteId}:${l.produitId}`);
       const enRayon = det?.data?.stock ?? 0;
-      if (l.quantite > enRayon) {
+      /* Le stock se tient en pieces, la ligne se compte dans son
+         emballage : comparer les deux laissait passer 1 carton contre
+         10 pieces en rayon, puis l'ecriture sortait les 25 pieces et le
+         stock tombait sous zero. La garde doit parler la meme unite que
+         ce qu'elle garde. */
+      const aSortir = enUnitesBase(
+        l.quantite, l.emballage ?? null,
+        registre.produits.get(l.produitId)?.emballages ?? []);
+      if (aSortir > enRayon) {
         throw new Error(
-          `${l.designation} : ${l.quantite} à sortir, ${enRayon} en stock.`);
+          `${l.designation} : ${aSortir} à sortir, ${enRayon} en stock.`);
       }
     }
   }

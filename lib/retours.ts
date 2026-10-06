@@ -131,9 +131,16 @@ export async function enregistrerRetour(params: {
     if (sortDuSite && m.produitId) {
       const detention = await detentionDe(params.siteId, m.produitId);
       const enRayon = detention?.stock ?? 0;
-      if (l.quantite > enRayon) {
+      /* Le stock se tient en pieces, la ligne se compte en emballages :
+         comparer les deux laissait passer 1 carton contre 10 pieces en
+         rayon, et le stock tombait a -14 apres l'ecriture. On convertit
+         la ligne comme le fait l'ecriture elle-meme, quelques lignes plus
+         bas. */
+      const aSortir = (m.quantiteUnites ?? m.quantite)
+        * (l.quantite / (m.quantite || 1));
+      if (aSortir > enRayon) {
         throw new Error(
-          `${m.produit ?? 'Ce produit'} : ${l.quantite} à rendre, `
+          `${m.produit ?? 'Ce produit'} : ${aSortir} à rendre, `
           + `${enRayon} en stock. On ne rend pas ce qu'on n'a plus.`);
       }
     }

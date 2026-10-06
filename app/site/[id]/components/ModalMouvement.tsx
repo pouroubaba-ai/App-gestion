@@ -124,7 +124,16 @@ export default function ModalMouvement({ siteId, userId, produit, onClose, onEnr
         sens, motif, date,
         quantite: qte,
         emballage: emballage || null,
-        valeurUnitaire: valeur,
+        /* Le prix part dans l'emballage saisi, pas a la piece.
+         *
+           L'ecran demande un prix « par {unite} » — par piece — et le
+           propose au cout moyen, qui est lui aussi par piece. Mais
+           `enregistrerMouvement` lit ce champ comme le prix d'UN
+           emballage et le divise par la contenance pour retrouver la
+           piece : un carton de 25 saisi a 500 la piece entrait a 20 la
+           piece, et le cout moyen du rayon s'effondrait d'un facteur 25.
+           On convertit donc ici, une fois, au bord de la saisie. */
+        valeurUnitaire: qte > 0 ? (valeur * qteUnites) / qte : valeur,
         partenaireId: partenaireId || null,
         partenaireNom: p?.nom ?? null,
         documentId: documentId.trim() || null,
