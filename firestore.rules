@@ -871,7 +871,29 @@ service cloud.firestore {
           || (col == 'produits_site'
             && transfertOuvre(
               request.resource.data.get('transfertOuvrant', ''),
-              siteDuDoc())));
+              siteDuDoc())))
+        /**
+         * Ce qui prouve ne s'efface pas.
+         *
+         * `update` et `delete` partageaient la meme regle : tout ce qu'un
+         * membre pouvait corriger, il pouvait l'effacer. Supprimer une
+         * vente livree faisait disparaitre la creance avec elle — le
+         * client ne devait plus rien, et rien ne disait qu'une facture
+         * avait existe. Les mouvements, eux, sont la source du cout moyen
+         * et du stock : les effacer rend l'inventaire indemontrable.
+         *
+         * L'app ne supprime d'ailleurs aucun de ces documents. Elle
+         * n'efface que des configurations et des fiches, et `lignes_vente`
+         * — qui se reecrit a chaque fois que les lignes d'un dossier
+         * changent, et disparait quand il est annule. C'est le seul de
+         * cette liste a disparaitre legitimement.
+         *
+         * Une erreur se corrige par une ecriture contraire : un retour,
+         * une annulation, une contre-passation. Jamais en faisant
+         * disparaitre la trace.
+         */
+        && (request.method != 'delete'
+          || col == 'lignes_vente');
     }
 
     /**
