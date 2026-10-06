@@ -269,7 +269,19 @@ async function retoursParDossier(siteId: Portee): Promise<Map<string, number>> {
 export async function restesDesVentes(
   siteId: Portee,
 ): Promise<{ date: string | null; reste: number; siteId: string | null }[]> {
-  const docs = await lireParSite('ventes', siteId);
+  /* Ce que les retours ont deja eteint, par dossier.
+   *
+     Le commentaire au-dessus promettait que le retour reduit le reste —
+     et rien ne le faisait. Un client qui rendait toute sa marchandise
+     restait debiteur de son montant entier : la carte « A encaisser »
+     annoncait 55 000 pour une vente integralement rendue, et le
+     proprietaire reclamait de l'argent a quelqu'un qui ne devait plus
+     rien. `soldesDuSite` lisait deja ces retours ; cette fonction-ci,
+     non. Deux ecrans comptaient la meme dette differemment. */
+  const [docs, parRetour] = await Promise.all([
+    lireParSite('ventes', siteId),
+    retoursParDossier(siteId),
+  ]);
   return docs
     .map(d => {
       const v = d.data() as any;
@@ -282,7 +294,8 @@ export async function restesDesVentes(
       const total = valeurVente(v.lignes ?? []);
       return {
         date: v.dateLivraison ?? v.dateCommande ?? null,
-        reste: Math.max(0, total - (v.avanceVersee ?? 0)),
+        reste: Math.max(0,
+          total - (v.avanceVersee ?? 0) - (parRetour.get(d.id) ?? 0)),
         siteId: v.siteId ?? null,
       };
     })
