@@ -100,6 +100,11 @@ export default function FicheVentePage() {
   const venteId = params.venteId as string;
 
   const [vente, setVente] = useState<Vente | null>(null);
+  /* Le site qui a servi la marchandise, quand ce n'est pas celui-ci.
+     Les dossiers récents le portent en clair ; les plus anciens n'ont
+     que l'identifiant du transfert, et on va alors chercher le nom
+     là-bas plutôt que de laisser la case vide. */
+  const [siteServeur, setSiteServeur] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   /* Le responsable des commandes fait avancer des dossiers : les montants ne
      lui apprennent rien et exposent la marge de l'activité. */
@@ -210,7 +215,18 @@ export default function FicheVentePage() {
     ]);
 
     if (snap.exists()) {
-      setVente({ id: snap.id, ...snap.data() } as Vente);
+      const d = snap.data() as any;
+      setVente({ id: snap.id, ...d } as Vente);
+
+      /* Qui a servi : écrit sur le dossier depuis peu, à retrouver sur
+         le transfert pour ceux d'avant. */
+      if (d.ordreSiteSourceNom) setSiteServeur(d.ordreSiteSourceNom);
+      else if (d.ordreLien?.transfertId && d.ordre !== true) {
+        getDoc(doc(db, 'transferts', d.ordreLien.transfertId))
+          .then(t => setSiteServeur(
+            t.exists() ? ((t.data() as any).siteSourceNom ?? null) : null))
+          .catch(() => setSiteServeur(null));
+      } else setSiteServeur(null);
       chargerPreparations(venteId).then(setPreparations).catch(() => setPreparations([]));
       setVersements(vers);
     }
@@ -415,6 +431,19 @@ export default function FicheVentePage() {
         parPreparation: user!.uid,
         auteurPreparation: await auteurEtape(vente.siteId, user!.uid),
       });
+
+      /* Le passage à « prêt » entraîne les deux autres dossiers, comme
+         les autres étapes. Il vit dans sa propre fonction — la
+         préparation se clôt par un décompte, pas par un simple cran — et
+         la propagation n'y avait pas été posée : les trois repartaient
+         ensemble jusqu'ici, puis le destinataire restait en préparation
+         pendant que la source était prête. */
+      const lien = (vente as any).ordreLien;
+      if (lien && (vente as any).ordre === true) {
+        await propagerEtapeOrdre({
+          lien, etat: 'pret', userId: user!.uid, date: aujourdhui(),
+        });
+      }
       await charger();
     } catch (e: any) { setErreur(e?.message ?? 'Opération impossible.'); }
     finally { setEnCours(false); }
@@ -497,9 +526,16 @@ export default function FicheVentePage() {
       if (lienOrdre && estSourceOrdre
         && (suivant === 'preparation' || suivant === 'pret'
           || suivant === 'livre')) {
+        /* La livraison d'en face porte le nom de qui l'a déclenchée :
+           une archive doit dire qui a fait le geste, même des mois
+           après. */
+        const parQui = await auteurCourant(
+          vente.siteId, user!.uid, user!.displayName);
         await propagerEtapeOrdre({
           lien: lienOrdre, etat: suivant, userId: user!.uid,
           date: aujourdhui(),
+          utilisateurNom: parQui.utilisateurNom,
+          utilisateurFonction: parQui.utilisateurFonction,
           /* À la remise, le transfert est déjà clos par
              `confirmerTransfert` : le repousser le ferait repasser par
              un état qu'il a franchi. */
@@ -765,6 +801,17 @@ export default function FicheVentePage() {
 
             <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
               <h1 className="truncate text-lg font-bold text-gray-900 dark:text-gray-100">{vente.reference}</h1>
+              {/* La pastille suit le dossier jusque dans sa fiche : elle
+                  le distinguait dans la liste, et l'ouvrir la faisait
+                  disparaître — on ne savait plus ce qu'on lisait. */}
+              {(vente as any).ordreLien && (
+                <span title={(vente as any).ordre === true
+                  ? `À remettre à ${(vente as any).ordrePartenaireNom ?? 'un client'} — facturé par l'autre site`
+                  : 'Servie par un autre site'}
+                  className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white">
+                  O
+                </span>
+              )}
               <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-bold ${
                 expire ? 'bg-orange-100 text-orange-600 dark:bg-orange-900/30 dark:text-orange-400' : COULEURS_ETAT[vente.etat]}`}>
                 {expire ? 'Devis expiré' : LIBELLES_VENTE[vente.etat]}
@@ -842,6 +889,19 @@ export default function FicheVentePage() {
               <p className="truncate text-gray-400">Client</p>
               <p className="truncate font-medium text-gray-700 dark:text-gray-300">{vente.clientNom}</p>
             </div>
+            {/* Qui a servi la marchandise, quand ce n'est pas ce site.
+                La commande est d'ici, le client est d'ici, la facture
+                aussi — mais les cartons sont sortis d'ailleurs, et sans
+                ce nom on cherche dans son propre stock un mouvement qui
+                n'y est jamais passé. */}
+            {siteServeur && (
+              <div className="rounded-xl bg-gray-50 px-3 py-1.5 dark:bg-gray-800/50 sm:py-2">
+                <p className="truncate text-gray-400">Servie par</p>
+                <p className="truncate font-medium text-gray-700 dark:text-gray-300">
+                  {siteServeur}
+                </p>
+              </div>
+            )}
             <div className="rounded-xl bg-gray-50 px-3 py-1.5 dark:bg-gray-800/50 sm:py-2">
               <p className="truncate text-gray-400">Produits</p>
               <p className="font-medium text-gray-700 dark:text-gray-300">

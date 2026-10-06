@@ -32,11 +32,12 @@
  */
 
 import {
-  collection, addDoc, doc, writeBatch, serverTimestamp,
+  collection, addDoc, doc, writeBatch, serverTimestamp, getDoc, updateDoc,
 } from 'firebase/firestore';
 import { db } from './firebase';
 import {
   referenceFlux, type LigneFlux, type AuteurEtape,
+  livrerVente,
 } from './flux-marchandise';
 import { ligneDepuisVente, synchroniserLignes } from './lignes-vente';
 
@@ -191,6 +192,10 @@ export async function creerOrdreTransfert(params: {
        et le lien le dit. */
     ordreLien: lien,
     ordreSiteSourceId: params.siteSourceId,
+    /* Le nom, pas seulement l'identifiant : la fiche doit dire qui a
+       servi la marchandise, et aller le chercher à chaque ouverture
+       coûterait une lecture pour un mot qui ne change pas. */
+    ordreSiteSourceNom: params.siteSourceNom,
     userId: params.userId,
     createdAt: serverTimestamp(),
   });
@@ -336,6 +341,8 @@ export async function propagerEtapeOrdre(params: {
   etat: 'preparation' | 'pret' | 'livre' | 'annule';
   userId: string;
   date: string;
+  utilisateurNom?: string | null;
+  utilisateurFonction?: string | null;
   /* À la remise, le transfert a déjà été clos par `confirmerTransfert`,
      qui seul sait écrire les mouvements. Le repousser ici le ferait
      repasser par un état franchi, et son garde le refuserait. */
@@ -350,11 +357,46 @@ export async function propagerEtapeOrdre(params: {
   const champDate = etat === 'preparation' ? 'datePreparation'
     : etat === 'pret' ? 'datePret'
     : etat === 'livre' ? 'dateLivraison' : 'dateAnnulation';
-  batch.update(doc(db, 'ventes', lien.venteDestId), {
-    etat,
-    [champDate]: date,
-    ordreAvanceLe: serverTimestamp(),
-  });
+
+  /* Livrer n'est pas changer d'état.
+   *
+   * La marchandise entre chez le destinataire par le transfert, et sa
+   * vente doit l'en faire ressortir : c'est cette sortie qui fige la
+   * marge et vide le rayon. En n'écrivant que l'état, le dossier se
+   * disait livré pendant que les savons restaient en stock — facturés
+   * au client, et pourtant encore vendables une seconde fois. La marge,
+   * elle, ne se calculait sur rien.
+   *
+   * On passe donc par la même porte qu'une vente ordinaire. Les
+   * quantités reçues sont posées d'abord : `livrerVente` sort ce qui a
+   * été constaté, et sans elles il sortirait le demandé. */
+  if (etat === 'livre') {
+    const snap = await getDoc(doc(db, 'ventes', lien.venteDestId));
+    if (snap.exists()) {
+      const v = { id: snap.id, ...snap.data() } as any;
+      await updateDoc(doc(db, 'ventes', lien.venteDestId), {
+        etat: 'pret',
+        datePret: v.datePret ?? date,
+        datePreparation: v.datePreparation ?? date,
+        lignes: (v.lignes ?? []).map((l: LigneFlux) => ({
+          ...l, quantiteRecue: l.quantiteRecue ?? l.quantiteDemandee,
+        })),
+      });
+      const frais = await getDoc(doc(db, 'ventes', lien.venteDestId));
+      await livrerVente({
+        vente: { id: frais.id, ...frais.data() } as any,
+        userId: params.userId, par: params.userId,
+        utilisateurNom: params.utilisateurNom ?? null,
+        utilisateurFonction: params.utilisateurFonction ?? null,
+      });
+    }
+  } else {
+    batch.update(doc(db, 'ventes', lien.venteDestId), {
+      etat,
+      [champDate]: date,
+      ordreAvanceLe: serverTimestamp(),
+    });
+  }
 
   /* Le transfert, à son rythme plus court. Il n'a que deux pas à faire :
      il se prépare quand la source prépare, et il se clôt quand elle

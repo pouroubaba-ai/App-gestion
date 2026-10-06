@@ -187,6 +187,26 @@ export default function OngletCycleVente({ siteId, userId, role, sites, titre }:
     return Math.max(0, valeurVente(v.lignes) - (v.avanceVersee ?? 0));
   }
 
+  /* Le bon de commande qu'un ordre pose chez le site qui expédie.
+   *
+   * Il a la forme d'une vente et n'en est pas une : il dit au magasinier
+   * quoi rassembler et à qui remettre, pendant que la facture et la
+   * créance vivent chez le site du client. Les deux portant le même
+   * montant, les compter tous deux doublait le chiffre — une marchandise
+   * vendue une fois s'affichait vendue deux fois.
+   *
+   * Chez son site, il reste : le responsable l'a traité, il doit le
+   * retrouver. Mais la vue d'ensemble embrasse l'activité entière, et
+   * elle y voyait les deux dossiers d'une même commande — quatre lignes
+   * pour deux ventes, et le double du chiffre.
+   *
+   * Une commande n'y paraît donc qu'une fois, portée par le site qui la
+   * facture, avec la pastille pour dire que la marchandise est venue
+   * d'ailleurs. */
+  function estBonDOrdre(v: Vente): boolean {
+    return (v as any).ordre === true && !!(v as any).ordreLien;
+  }
+
   if (loading) return (
     <div className="min-h-64 flex items-center justify-center">
       <Loader2 size={24} className="animate-spin text-indigo-500" />
@@ -196,7 +216,13 @@ export default function OngletCycleVente({ siteId, userId, role, sites, titre }:
   /* L'onglet ne montre que ce qui est vivant : un dossier clos, annulé ou
      expiré s'archive et se consulte par le rapport. Sans ça, la carte Livré
      accumulerait des années de dossiers et noierait le travail du jour. */
-  const actives = ventes.filter(venteActive);
+  const actives = ventes
+    .filter(venteActive)
+    /* En vue d'ensemble, le bon de la source s'efface devant la
+       commande qu'il sert : les deux disent la même marchandise, et
+       seule celle du site qui facture porte le client. Chez son propre
+       site, il reste entier. */
+    .filter(v => !ctx.ensemble || !estBonDOrdre(v));
   const parEtat = (e: EtatVente) => actives.filter(v => v.etat === e);
   /* En vue « en cours », la carte couvre tous les statuts sauf le livre :
      filtrer sur le seul « commande » aurait cache les dossiers en
@@ -699,8 +725,14 @@ export default function OngletCycleVente({ siteId, userId, role, sites, titre }:
                         sort d'ici, mais la facture est à l'autre site.
                         Le dire sur la ligne évite qu'on aille réclamer
                         son argent à quelqu'un qui ne doit rien ici. */}
-                    {(v as any).ordre && (
-                      <span title={`À remettre à ${(v as any).ordrePartenaireNom ?? 'un client'} — facturé par l'autre site`}
+                    {/* La pastille sur les deux faces d'un ordre : le bon
+                        de la source dit « je remets sans facturer », la
+                        commande du destinataire dit « je facture une
+                        marchandise que je n'ai pas servie ». */}
+                    {(v as any).ordreLien && (
+                      <span title={(v as any).ordre
+                        ? `À remettre à ${(v as any).ordrePartenaireNom ?? 'un client'} — facturé par l'autre site`
+                        : 'Servie par un autre site'}
                         className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white">
                         O
                       </span>

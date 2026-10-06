@@ -513,6 +513,12 @@ export default function FicheTransfertPage() {
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
                   <h1 className="truncate text-lg font-bold text-gray-900 dark:text-gray-100">{transfert.reference}</h1>
+                  {(transfert as any).ordre === true && (
+                    <span title={`À remettre à ${(transfert as any).ordrePartenaireNom ?? 'un client'}`}
+                      className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white">
+                      O
+                    </span>
+                  )}
                   <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-bold ${COULEURS_ETAT[transfert.etat]}`}>
                     {libelleTransfert(transfert.etat, estDest ? 'reception' : 'envoi')}
                   </span>
@@ -604,6 +610,13 @@ export default function FicheTransfertPage() {
             {([
               [estSource ? 'Destination' : 'Origine',
                 estSource ? transfert.siteDestNom : transfert.siteSourceNom],
+              /* À qui la marchandise est destinée, quand ce transfert
+                 sert une commande. Sans ce nom, le responsable lisait
+                 deux sites et devait deviner laquelle des commandes du
+                 jour il avait sous les yeux. */
+              ...((transfert as any).ordrePartenaireNom
+                ? [['À remettre à', (transfert as any).ordrePartenaireNom]]
+                : []),
               ['Produits',
                 `${transfert.lignes.length} ligne${transfert.lignes.length > 1 ? 's' : ''}`],
               ['Initié', formatDate(transfert.dateInitiation)],

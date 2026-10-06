@@ -67,6 +67,21 @@ function vide(partenaireId: string): SoldeTiers {
  * livraison.
  */
 function conclu(doc: any, role: RoleTiers): boolean {
+  /* Le bon de commande d'un ordre n'est pas une vente.
+   *
+   * Un ordre tient deux dossiers de vente : celui du site qui expédie,
+   * et celui du site qui facture. Seul le second porte un client et une
+   * créance — le premier est un ordre de travail, il dit au magasinier
+   * quoi rassembler et à qui remettre.
+   *
+   * Les deux portant le même montant, les compter tous les deux doublait
+   * tout : la vente, le reste à encaisser, le chiffre d'affaires. Une
+   * seule marchandise facturée une fois apparaissait deux fois.
+   *
+   * Il se reconnaît à `ordre` — seul le dossier de la source le porte —
+   * et il n'a d'ailleurs pas de `clientId`, puisque le client est à
+   * l'autre bout. */
+  if (doc?.ordre === true) return false;
   return role === 'fournisseur'
     ? doc.etat === 'confirme'
     : doc.etat === 'livre';
