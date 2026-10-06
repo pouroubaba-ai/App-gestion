@@ -27,7 +27,9 @@ import {
   recuParLigne, type Reception,
 } from '@/lib/receptions';
 import { ChampNombre } from '@/components/Champs';
-import { peutDisposerDuCapital, roleSurSite, type RoleSite } from '@/lib/roles';
+import {
+  peutDisposerDuCapital, peutPlanifierReglement, roleSurSite, type RoleSite,
+} from '@/lib/roles';
 import {
   ArrowLeft, Loader2, CheckCheck, Check, ArrowDownLeft, Clock, Wallet, X, Info, Plus } from 'lucide-react';
 import {
@@ -113,12 +115,17 @@ export default function FicheAchatPage() {
      que l'activité engage. L'onglet les lui cachait déjà — la fiche les
      montrait encore, ce qui revenait à ne rien cacher du tout. */
   const [role, setRole] = useState<RoleSite | null>(null);
+  /* `null` vaut « aucune restriction » autant que « pas encore lu » :
+     sans ce drapeau, la question s'ouvrirait pendant le battement, chez
+     quelqu'un qui n'a pas à y répondre. */
+  const [roleLu, setRoleLu] = useState(false);
 
   /* L'admin de l'activité n'est désigné par aucun membre : `roleSurSite`
      lui rend `null`, qui vaut « tout permis ». */
   useEffect(() => {
     if (!user || !siteId) return;
-    roleSurSite(user.uid, siteId, activite?.adminUid).then(setRole).catch(() => {});
+    roleSurSite(user.uid, siteId, activite?.adminUid)
+      .then(setRole).catch(() => {}).finally(() => setRoleLu(true));
   }, [user, siteId, activite?.adminUid]);
 
   const montreArgent = role !== 'commandes';
@@ -208,6 +215,10 @@ export default function FicheAchatPage() {
        aucune echeance, et le dossier redemanderait a chaque ouverture. */
     if (!achat || planifDemandee || achat.planifieLe) return;
     if (achat.etat !== 'confirme' || !achat.fournisseurId) return;
+    /* Poser une échéance engage l'argent du site : ce n'est pas au
+       responsable des commandes d'en décider, et la question ne doit
+       même pas lui être posée. */
+    if (!roleLu || !peutPlanifierReglement(role)) return;
     /* Ce qu'on doit, frais compris : le transport est dû au même
        fournisseur, et l'échéance qui l'oublie laisserait une part de la
        dette sans date. `totalAchat` est la seule façon de compter ce
@@ -224,7 +235,7 @@ export default function FicheAchatPage() {
       setAPlanifier(du);
     }).catch(() => {});
     return () => { vivant = false; };
-  }, [achat, planifDemandee, siteId]);
+  }, [achat, planifDemandee, siteId, roleLu, role]);
 
   async function charger() {
     /* Le spinner ne remplace l'écran qu'à la première venue : après une

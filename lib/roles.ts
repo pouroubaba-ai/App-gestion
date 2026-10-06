@@ -155,6 +155,22 @@ export function peutReglerFournisseur(role: RoleSite | null): boolean {
 }
 
 /**
+ * Qui décide de la façon dont une dette sera réglée.
+ *
+ * Poser une échéance, c'est engager l'argent du site à une date : une
+ * décision de trésorerie, pas un geste de manutention.
+ *
+ * Le responsable des commandes fait avancer la marchandise — il reçoit,
+ * il compte, il expédie. L'écran le lui demandait pourtant dès qu'il
+ * ouvrait un achat confirmé, et il se trouvait devant un dossier de
+ * dette qu'il n'a ni à voir ni à trancher. Le recouvrement, lui,
+ * encaisse ce qui est dû ; il ne fixe pas non plus les termes.
+ */
+export function peutPlanifierReglement(role: RoleSite | null): boolean {
+  return role === null || role === 'gerant';
+}
+
+/**
  * Qui dispose du capital de l'activité.
  *
  * Un apport et un retrait ne sont pas des mouvements d'exploitation : le

@@ -121,6 +121,9 @@ export async function creerOrdreTransfert(params: {
     ordrePartenaireId: params.partenaireId,
     ordrePartenaireNom: params.partenaireNom,
     ordreSiteFactureId: params.siteDestId,
+    /* Le nom à côté de l'identifiant, comme pour la source : la fiche
+       doit dire où part la marchandise sans aller le chercher. */
+    ordreSiteFactureNom: params.siteDestNom,
     userId: params.userId,
     createdAt: serverTimestamp(),
   });
@@ -158,6 +161,9 @@ export async function creerOrdreTransfert(params: {
     ordrePartenaireId: params.partenaireId,
     ordrePartenaireNom: params.partenaireNom,
     ordreSiteFactureId: params.siteDestId,
+    /* Le nom à côté de l'identifiant, comme pour la source : la fiche
+       doit dire où part la marchandise sans aller le chercher. */
+    ordreSiteFactureNom: params.siteDestNom,
     userId: params.userId,
     createdAt: serverTimestamp(),
   });

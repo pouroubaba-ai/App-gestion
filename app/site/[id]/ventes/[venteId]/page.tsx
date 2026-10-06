@@ -6,7 +6,9 @@ import {
 import { db } from '@/lib/firebase';
 import { produitsDuSite } from '@/lib/produits-site';
 import { useAuth } from '@/lib/auth-context';
-import { roleSurSite, type RoleSite } from '@/lib/roles';
+import {
+  peutPlanifierReglement, roleSurSite, type RoleSite,
+} from '@/lib/roles';
 import { auteurCourant, auteurEtape } from '@/lib/auteur';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { formatMontant } from '@/lib/format';
@@ -105,14 +107,23 @@ export default function FicheVentePage() {
      que l'identifiant du transfert, et on va alors chercher le nom
      là-bas plutôt que de laisser la case vide. */
   const [siteServeur, setSiteServeur] = useState<string | null>(null);
+  /* Et le site qui facture, vu depuis le bon de la source : la
+     marchandise part d'ici, mais le client et la facture sont là-bas.
+     Sans ce nom, le responsable remet des cartons sans savoir à quel
+     compte ils seront portés. */
+  const [siteFacture, setSiteFacture] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   /* Le responsable des commandes fait avancer des dossiers : les montants ne
      lui apprennent rien et exposent la marge de l'activité. */
   const [role, setRole] = useState<RoleSite | null>(null);
+  /* `null` vaut « aucune restriction » autant que « pas encore lu » :
+     sans ce drapeau, la question s'ouvrirait pendant le battement. */
+  const [roleLu, setRoleLu] = useState(false);
 
   useEffect(() => {
     if (!user) return;
-    roleSurSite(user.uid, siteId, activite?.adminUid).then(setRole).catch(() => {});
+    roleSurSite(user.uid, siteId, activite?.adminUid)
+      .then(setRole).catch(() => {}).finally(() => setRoleLu(true));
   }, [user, siteId, activite?.adminUid]);
   const [enCours, setEnCours] = useState(false);
   /* Ce qui reste dû par le client une fois livré. Tant qu'il est posé, on
@@ -178,6 +189,9 @@ export default function FicheVentePage() {
        aucune echeance, et le dossier redemanderait a chaque ouverture. */
     if (!vente || planifDemandee || vente.planifieLe) return;
     if (vente.etat !== 'livre' || !vente.clientId) return;
+    /* Fixer quand le client paiera est une décision de trésorerie : le
+       responsable des commandes livre, il ne négocie pas les termes. */
+    if (!roleLu || !peutPlanifierReglement(role)) return;
     const du = valeurVente(vente.lignes) - (vente.avanceVersee ?? 0);
     if (du <= 0) return;
 
@@ -190,7 +204,7 @@ export default function FicheVentePage() {
       setAPlanifier(du);
     }).catch(() => {});
     return () => { vivant = false; };
-  }, [vente, planifDemandee, siteId]);
+  }, [vente, planifDemandee, siteId, roleLu, role]);
 
   async function charger() {
     /* Le spinner ne remplace l'écran qu'à la première venue : après un
@@ -221,12 +235,24 @@ export default function FicheVentePage() {
       /* Qui a servi : écrit sur le dossier depuis peu, à retrouver sur
          le transfert pour ceux d'avant. */
       if (d.ordreSiteSourceNom) setSiteServeur(d.ordreSiteSourceNom);
-      else if (d.ordreLien?.transfertId && d.ordre !== true) {
+      else setSiteServeur(null);
+      if (d.ordreSiteFactureNom) setSiteFacture(d.ordreSiteFactureNom);
+      else setSiteFacture(null);
+
+      /* Les dossiers d'avant ne portent que l'identifiant du transfert :
+         on y lit les deux noms d'un coup plutôt que de laisser les cases
+         vides. */
+      if (d.ordreLien?.transfertId
+        && !(d.ordreSiteSourceNom || d.ordreSiteFactureNom)) {
         getDoc(doc(db, 'transferts', d.ordreLien.transfertId))
-          .then(t => setSiteServeur(
-            t.exists() ? ((t.data() as any).siteSourceNom ?? null) : null))
-          .catch(() => setSiteServeur(null));
-      } else setSiteServeur(null);
+          .then(t => {
+            if (!t.exists()) return;
+            const x = t.data() as any;
+            if (d.ordre === true) setSiteFacture(x.siteDestNom ?? null);
+            else setSiteServeur(x.siteSourceNom ?? null);
+          })
+          .catch(() => {});
+      }
       chargerPreparations(venteId).then(setPreparations).catch(() => setPreparations([]));
       setVersements(vers);
     }
@@ -899,6 +925,14 @@ export default function FicheVentePage() {
                 <p className="truncate text-gray-400">Servie par</p>
                 <p className="truncate font-medium text-gray-700 dark:text-gray-300">
                   {siteServeur}
+                </p>
+              </div>
+            )}
+            {siteFacture && (
+              <div className="rounded-xl bg-gray-50 px-3 py-1.5 dark:bg-gray-800/50 sm:py-2">
+                <p className="truncate text-gray-400">Facturée par</p>
+                <p className="truncate font-medium text-gray-700 dark:text-gray-300">
+                  {siteFacture}
                 </p>
               </div>
             )}
