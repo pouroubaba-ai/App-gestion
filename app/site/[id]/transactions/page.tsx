@@ -68,6 +68,8 @@ interface Versement {
   motif: string;
   reference?: string | null;
   nomPartenaire?: string;
+  /** le site qui a encaisse ; la vue d'ensemble en couvre plusieurs */
+  siteId?: string | null;
   /* Qui a encaissé, tel que figé au moment du geste. */
   utilisateurNom?: string | null;
   utilisateurFonction?: string | null;
@@ -82,6 +84,8 @@ interface Partenaire {
   creance: number;
   rolesFournisseur: boolean;
   rolesClient: boolean;
+  /** le site qui tient cette fiche ; la vue d'ensemble en couvre plusieurs */
+  siteId?: string | null;
   /* Qui a ajouté ce partenaire, figé à la création de sa fiche. */
   utilisateurNom?: string | null;
   utilisateurFonction?: string | null;
@@ -370,6 +374,7 @@ export default function TransactionsSitePage() {
             motif: v.motif ?? 'reglement',
             reference: v.reference ?? null,
             nomPartenaire: v.partenaireNom ?? nomMap.get(v.partenaireId) ?? '—',
+            siteId: v.siteId ?? null,
             utilisateurNom: v.utilisateurNom ?? null,
             utilisateurFonction: v.utilisateurFonction ?? null,
           } as Versement;
@@ -459,7 +464,8 @@ export default function TransactionsSitePage() {
            colonnes racontent la même histoire ou aucune. */
         const totalTx = solde ? solde.total : 0;
         return {
-          id: p.id, nom: p.nom, totalTx, totalBenef, totalRetour, verse, reste,
+          id: p.id, nom: p.nom, siteId: p.siteId ?? null,
+          totalTx, totalBenef, totalRetour, verse, reste,
           derniere: solde?.derniereOperation ?? '',
           derniereValeur: solde?.derniereValeur ?? 0,
           utilisateurNom: p.utilisateurNom ?? null,
@@ -620,7 +626,8 @@ export default function TransactionsSitePage() {
   const partenairesVus = applique(
     statsPartenaires.filter(p => correspond(p.nom) && passeStatut(p.totalTx, p.verse)),
     (p, c) => ({
-      nom: p.nom, total: p.totalTx, benefice: p.totalBenef, retour: p.totalRetour,
+      nom: p.nom, site: nomDuSite(p.siteId),
+      total: p.totalTx, benefice: p.totalBenef, retour: p.totalRetour,
       verse: p.verse, reste: p.reste, derniere: p.derniereValeur,
     } as Record<string, number | string>)[c] ?? 0);
 
@@ -641,7 +648,7 @@ export default function TransactionsSitePage() {
       correspond(v.nomPartenaire, v.reference, v.motif, v.utilisateurNom)),
     (v, c) => ({
       date: v.date, partenaire: v.nomPartenaire ?? '', motif: v.motif,
-      montant: v.montant,
+      site: nomDuSite(v.siteId), montant: v.montant,
     } as Record<string, number | string>)[c] ?? 0);
 
   const produitsVus = applique(
@@ -655,6 +662,7 @@ export default function TransactionsSitePage() {
     filtres.filter(m => correspond(m.produit, m.nomPartenaire, m.reference)),
     (m, c) => ({
       produit: m.produit, date: m.date, partenaire: m.nomPartenaire ?? '',
+      site: nomDuSite(m.siteId),
       quantite: m.quantite, cout: m.cout, prixVente: m.prixVente,
     } as Record<string, number | string>)[c] ?? 0);
 
@@ -831,6 +839,10 @@ export default function TransactionsSitePage() {
                     <thead>
                       <tr className="bg-indigo-600 text-white">
                         <th className="text-center px-4 py-3 font-medium">Nom</th>
+                        {montreSite && (
+                          <EnTeteTri cle="site" actif={tri?.cle === 'site'}
+                            sens={tri?.sens ?? 'desc'} onTrier={trier}>Site</EnTeteTri>
+                        )}
                         <th className="text-center px-4 py-3 font-medium">
                           {role === 'client' ? 'Dernière vente' : 'Dernier achat'}
                         </th>
@@ -867,6 +879,9 @@ export default function TransactionsSitePage() {
                             onClick={() => router.push(`/site/${siteId}/partenaires/${p.id}/transactions?role=${role}&retour=global`)}
                             className="hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors cursor-pointer">
                             <td className="px-4 py-3 font-medium text-gray-900 dark:text-gray-100 text-center">{p.nom}</td>
+                            {montreSite && (
+                              <td className="px-4 py-3 text-gray-500 text-center">{nomDuSite(p.siteId)}</td>
+                            )}
                             <td className="px-4 py-3 text-center">
                               {p.derniere ? (
                                 <span>
@@ -1016,6 +1031,10 @@ export default function TransactionsSitePage() {
                         <th className="text-center px-4 py-3 font-medium">Produit</th>
                         <th className="text-center px-4 py-3 font-medium">Date</th>
                         <th className="text-center px-4 py-3 font-medium">{role === 'client' ? 'Client' : 'Fournisseur'}</th>
+                        {montreSite && (
+                          <EnTeteTri cle="site" actif={tri?.cle === 'site'}
+                            sens={tri?.sens ?? 'desc'} onTrier={trier}>Site</EnTeteTri>
+                        )}
                         <th className="text-center px-4 py-3 font-medium">Unité</th>
                         <EnTeteTri cle="quantite" actif={tri?.cle === 'quantite'}
                           sens={tri?.sens ?? 'desc'} onTrier={trier}>Quantité</EnTeteTri>
@@ -1045,6 +1064,9 @@ export default function TransactionsSitePage() {
                             <td className="px-4 py-3 font-medium text-gray-900 dark:text-gray-100 text-center">{m.produit}</td>
                             <td className="px-4 py-3 text-gray-500 text-center">{new Date(m.date).toLocaleDateString('fr-FR')}</td>
                             <td className="px-4 py-3 text-gray-700 dark:text-gray-300 text-center">{m.nomPartenaire}</td>
+                            {montreSite && (
+                              <td className="px-4 py-3 text-gray-500 text-center">{nomDuSite(m.siteId)}</td>
+                            )}
                             <td className="px-4 py-3 text-gray-500 text-center">{m.unite}</td>
                             <td className="px-4 py-3 text-gray-700 dark:text-gray-300 text-center">{m.quantite}</td>
                             <td className="px-4 py-3 text-gray-700 dark:text-gray-300 text-center">{r.quantite}</td>
@@ -1342,6 +1364,10 @@ export default function TransactionsSitePage() {
                         <th className="text-center px-4 py-3 font-medium">Date</th>
                         <th className="text-center px-4 py-3 font-medium">Heure</th>
                         <th className="text-center px-4 py-3 font-medium">{role === 'client' ? 'Client' : 'Fournisseur'}</th>
+                        {montreSite && (
+                          <EnTeteTri cle="site" actif={tri?.cle === 'site'}
+                            sens={tri?.sens ?? 'desc'} onTrier={trier}>Site</EnTeteTri>
+                        )}
                         <th className="text-center px-4 py-3 font-medium">Motif</th>
                         <th className="text-center px-4 py-3 font-medium">Référence</th>
                         <EnTeteTri cle="montant" actif={tri?.cle === 'montant'}
@@ -1361,6 +1387,9 @@ export default function TransactionsSitePage() {
                           </td>
                           <td className="px-4 py-3 text-gray-400 text-center">{v.heure || '—'}</td>
                           <td className="px-4 py-3 text-gray-700 dark:text-gray-300 text-center">{v.nomPartenaire}</td>
+                          {montreSite && (
+                            <td className="px-4 py-3 text-gray-500 text-center">{nomDuSite(v.siteId)}</td>
+                          )}
                           {/* D'où vient l'argent : une avance et un
                               recouvrement ne se lisent pas pareil. */}
                           <td className="px-4 py-3 text-gray-500 text-center">
