@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useVueUrl } from '@/lib/vue-url';
 import {
   collection, query, where, getDocs, addDoc, updateDoc, deleteDoc, doc, serverTimestamp,
+  increment,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { formatMontant, abregeMontant, dansNJours, ecartJours } from '@/lib/format';
@@ -19,6 +20,7 @@ import {
   type PropsPortee,
 } from './ContexteSites';
 import { lireParSite } from '@/lib/portee';
+import { dossiersOuverts, repartir } from '@/lib/imputation';
 import { ecrireEnCaisse } from '@/lib/ecrire-caisse';
 import {
   peutPlanifierRecouvrement, peutReglerFournisseur, type RoleSite,
@@ -536,6 +538,35 @@ export default function OngletRecouvrements({ siteId, userId, onCount, sites, ti
      * Le sens suit qui doit : un client rend ce qu'il devait, c'est une
      * entrée ; un fournisseur qu'on règle, une sortie. */
     const versClient = ligneActive.role === 'client';
+
+    /* La dette du tiers doit baisser, pas seulement le journal.
+     *
+     * Ce versement n'écrivait que dans `recouvrement_journal` : son
+     * échéance passait à « reste 0 », mais les dossiers du client
+     * gardaient leur `avanceVersee` à zéro — et c'est elle qui fait la
+     * créance. L'écran annonçait donc 13 650 encaissés et 13 650 encore
+     * dus, pour le même argent. Deux comptabilités côte à côte qui ne se
+     * parlaient pas.
+     *
+     * On impute donc les dossiers ouverts, du plus ancien au plus
+     * récent, comme le fait n'importe quel règlement. Et sans attendre
+     * le caissier : le client a payé, sa dette est éteinte à cet
+     * instant. Ce que le caissier confirme, c'est que l'argent est
+     * arrivé au tiroir — pas que le client s'est acquitté. */
+    const imputation = await (async () => {
+      try {
+        /* Le site de l'échéance, jamais la portée : en vue d'ensemble
+           celle-ci couvre plusieurs sites, et les dossiers à imputer
+           sont ceux du site où la créance est née. */
+        const siteEcheance = ligneActive.siteId;
+        if (!siteEcheance) return [];
+        const ouverts = await dossiersOuverts(
+          siteEcheance, ligneActive.partenaireId,
+          ligneActive.role === 'client' ? 'client' : 'fournisseur');
+        return repartir(val, ouverts).parts;
+      } catch { return []; }
+    })();
+
     await Promise.all([
       addDoc(collection(db, 'recouvrement_versements'), {
         journalId: ligneActive.id, siteId: ligneActive.siteId ?? siteId, userId,
@@ -543,6 +574,12 @@ export default function OngletRecouvrements({ siteId, userId, onCount, sites, ti
         date: todayStr(), createdAt: serverTimestamp(),
       }),
       updateDoc(doc(db, 'recouvrement_journal', ligneActive.id), { verse: newVerse, reste: newReste }),
+      /* Chaque dossier reçoit sa part. `increment` additionne sur le
+         serveur : deux versements simultanés s'ajoutent au lieu de
+         s'écraser. */
+      ...imputation.map(part => updateDoc(
+        doc(db, versClient ? 'ventes' : 'achats', part.dossierId),
+        { avanceVersee: increment(part.impute) })),
       ecrireEnCaisse({
         siteId: ligneActive.siteId ?? siteId,
         sens: versClient ? 'entree' : 'sortie',
