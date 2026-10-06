@@ -84,22 +84,29 @@ service cloud.firestore {
     /**
      * Le propriétaire.
      *
-     * Deux façons de le dire, et il faut les deux. Les comptes récents
-     * portent `adminUid` sur leur profil — une lecture suffit alors. Les
-     * plus anciens ne l'ont pas : pour eux on va lire l'activité, ce qui
-     * coûte une lecture de plus mais ne les laisse pas dehors.
+     * La réponse se lit sur l'activité, jamais sur le profil.
      *
-     * L'ordre compte : le cas rapide en premier, l'autre seulement s'il
-     * échoue. Un `||` s'arrête dès qu'il a sa réponse.
+     * Le profil portait `adminUid` comme raccourci, et une lecture
+     * suffisait. Mais c'est l'utilisateur lui-même qui écrit son profil :
+     * il lui suffisait de poser `adminUid: <moi>` et `activiteId: <la
+     * maison d'un autre>` pour devenir propriétaire chez quelqu'un
+     * d'autre — tout voir, tout écrire, tout effacer. La porte s'ouvrait
+     * depuis la console du navigateur, sans rien contourner.
+     *
+     * L'activité, elle, n'appartient qu'à son propriétaire : il est le
+     * seul à pouvoir y écrire. C'est donc elle qui répond, au prix d'une
+     * lecture de plus. Le `adminUid` du profil reste écrit par l'app —
+     * il sert de cache à l'écran — mais plus aucune règle ne le croit.
+     *
+     * Le rôle `admin` du profil ne fait pas foi non plus, pour la même
+     * raison : il s'écrit soi-même.
      */
     function suisProprietaire() {
       return aUnProfil()
-        && (profil().get('adminUid', '') == monUid()
-          || (profil().get('role', '') == 'admin'
-            && profil().get('activiteId', '') != ''
-            && exists(/databases/$(database)/documents/activites/$(profil().get('activiteId', '')))
-            && get(/databases/$(database)/documents/activites/$(profil().get('activiteId', '')))
-                 .data.get('adminUid', '') == monUid()));
+        && profil().get('activiteId', '') != ''
+        && exists(/databases/$(database)/documents/activites/$(profil().get('activiteId', '')))
+        && get(/databases/$(database)/documents/activites/$(profil().get('activiteId', '')))
+             .data.get('adminUid', '') == monUid();
     }
 
     /* La même activité : la frontière que rien ne franchit. Deux
@@ -344,46 +351,59 @@ service cloud.firestore {
          propriétaire vient après, quand le sien est là pour répondre. */
       allow read: if connecte()
         && (uid == monUid() || suisProprietaire());
-      allow create: if connecte() && uid == monUid();
-      /* Le rôle et l'activité se posent à l'inscription et ne se changent
-         plus d'ici : se dire admin, ou se rattacher à l'activité d'un
-         autre, tiendrait en une ligne de console. */
-      /**
-       * `resource != null` d'abord.
+      /* `adminUid` ne s'écrit pas depuis le navigateur.
        *
-       * Une écriture sur un document absent s'évalue parfois comme un
-       * update : le SDK ne sait pas toujours si le document existe, et
-       * envoie alors les deux hypothèses. `resource.data` vaut null, la
-       * comparaison échoue, et l'écriture est refusée — alors que
-       * `create` l'aurait acceptée. C'est exactement ce qui empêchait un
-       * compte neuf d'écrire son propre profil.
+         Il n'était qu'un cache de ce que porte l'activité, et plus aucune
+         règle ne le lit — mais le laisser inscriptible garderait une
+         fausse piste dans la base, et la première règle qui le relirait
+         par mégarde rouvrirait la porte. L'app le pose par le SDK admin,
+         ou pas du tout. */
+      allow create: if connecte() && uid == monUid()
+        && !('adminUid' in request.resource.data);
+      /**
+       * Une seule règle d'écriture, et c'est essentiel.
+       *
+       * Il y en avait deux : une qui gardait le rôle, une autre qui
+       * gardait l'activité. Firestore accepte dès qu'UNE règle passe —
+       * elles ne s'additionnent pas, elles s'offrent. La première
+       * laissait donc `activiteId` libre, et la seconde ne protégeait
+       * rien : n'importe quel compte inscrivait l'identifiant de la
+       * maison d'un autre commerçant et lisait aussitôt ses sites, ses
+       * ventes et ses soldes.
+       *
+       * `resource == null` d'abord : une écriture sur un document absent
+       * s'évalue parfois comme un update — le SDK ne sait pas toujours
+       * si le document existe et envoie les deux hypothèses. Sans ce
+       * cas, un compte neuf ne pouvait pas écrire son propre profil.
+       *
+       * Ce qui est verrouillé :
+       *
+       * `adminUid` — il n'était qu'un cache de ce que porte l'activité,
+       * et plus aucune règle ne le lit. Le laisser inscriptible
+       * garderait une fausse piste que la prochaine règle écrite par
+       * mégarde croirait.
+       *
+       * `role` — sauf pour se dégrader d'admin à membre, qui répare un
+       * rattachement raté. On ne peut que descendre.
+       *
+       * `activiteId` — il se pose une fois, à la première connexion,
+       * depuis l'invitation qui l'apporte, et ne bouge plus d'ici. Une
+       * règle ne peut pas vérifier l'invitation elle-même : elle vit
+       * sous `membres/{siteId}_{uid}` et le serveur ne devine pas le
+       * site. On verrouille donc le champ plutôt que de prétendre
+       * contrôler sa valeur ; un rattachement fautif se répare côté
+       * gérant, sur l'invitation.
        */
       allow update: if connecte() && uid == monUid()
-        && (resource == null
-          || request.resource.data.get('role', '') == resource.data.get('role', '')
-          /* Se dégrader d'admin à membre : la réparation d'un rattachement
-             raté. On ne peut que descendre, jamais monter — se nommer
-             admin reste impossible, et c'est tout ce qui compte. */
-          || (resource.data.get('role', '') == 'admin'
-            && request.resource.data.get('role', '') == 'membre'));
-      /**
-       * S'aligner sur l'activité où l'on travaille.
-       *
-       * Un membre hérite de la maison du site où on l'a inscrit. Sans elle,
-       * les règles ne savent pas d'où il est et lui refusent tout : son
-       * écran reste blanc sans rien expliquer. Il faut donc qu'il puisse la
-       * poser — et la corriger, car une invitation mal rattachée lui en
-       * donne une fausse.
-       *
-       * Ce que cela n'ouvre pas : se rattacher à la maison d'un autre. Un
-       * membre ne se donne pas une activité, il recopie celle de son
-       * inscription, et `membres` est hors de sa portée — seul le gérant
-       * ou le propriétaire y écrit. Le rôle, lui, ne bouge pas ici.
-       */
-      allow update: if connecte() && uid == monUid()
-        && resource != null
-        && request.resource.data.get('activiteId', '') != ''
-        && request.resource.data.get('role', '') == resource.data.get('role', '');
+        && (resource == null || (
+          !request.resource.data.diff(resource.data)
+            .affectedKeys().hasAny(['adminUid'])
+          && (request.resource.data.get('role', '') == resource.data.get('role', '')
+            || (resource.data.get('role', '') == 'admin'
+              && request.resource.data.get('role', '') == 'membre'))
+          && (resource.data.get('activiteId', '') == ''
+            || request.resource.data.get('activiteId', '')
+                 == resource.data.get('activiteId', ''))));
       allow delete: if false;
     }
 
