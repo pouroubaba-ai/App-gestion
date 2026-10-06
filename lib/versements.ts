@@ -2,6 +2,7 @@ import {
   collection, query, where, getDocs, updateDoc, doc,
 } from 'firebase/firestore';
 import { db } from './firebase';
+import { conclu } from './soldes';
 import { valeurDossier } from './ouverture';
 import { enregistrerVersement } from './versements-collection';
 import { ecrireEnCaisse } from './ecrire-caisse';
@@ -75,6 +76,11 @@ export async function couvertureTiers(
     .sort((a, b) => a.date.localeCompare(b.date));
 
   const documents = dSnap.docs
+    /* Meme regle qu'a l'imputation : seuls les dossiers conclus doivent
+       de l'argent. Un devis, une commande pas encore livree ou une vente
+       annulee n'ont rien a recevoir, et les proposer au reglement fait
+       partir l'argent sur un dossier qui n'est plus rien. */
+    .filter(d => conclu(d.data(), role))
     .map(d => {
       const x = d.data() as any;
       const total = valeurDossier(x, role);

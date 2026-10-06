@@ -2,7 +2,7 @@ import {
   collection, getDocs, query, where,
 } from 'firebase/firestore';
 import { db } from './firebase';
-import type { RoleTiers } from './soldes';
+import { conclu, type RoleTiers } from './soldes';
 import { valeurDossier } from './ouverture';
 
 /**
@@ -74,6 +74,18 @@ export async function dossiersOuverts(
     where(champ, '==', partenaireId)));
 
   return snap.docs
+    /* Un paiement ne se pose que sur un dossier conclu.
+     *
+     * Rien ne filtrait l'etat : un devis, une commande pas encore livree,
+     * une vente annulee entraient dans la file au meme titre qu'une
+     * facture due. Le client payait, l'argent s'imputait sur le dossier
+     * le plus ancien — souvent celui qui n'etait plus rien — et la vraie
+     * facture restait entiere. On lui reclamait deux fois.
+     *
+     * `conclu` est la meme porte que les soldes : une vente livree, un
+     * achat confirme, jamais un ordre de travail. Deux ecrans qui
+     * comptent la meme dette doivent compter les memes dossiers. */
+    .filter(d => conclu(d.data(), role))
     .map(d => {
       const x = d.data() as any;
       const total = valeurLignes(x.lignes ?? [], role, x);

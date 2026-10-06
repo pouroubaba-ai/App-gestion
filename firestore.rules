@@ -533,7 +533,27 @@ service cloud.firestore {
       allow get: if travailleSur(resource.data.get('siteId', ''));
       allow list: if aUneActivite();
       allow create: if travailleSur(siteEnvoye());
-      allow update, delete: if false;
+      /**
+       * Le registre ne se recrit pas — sauf pour dire qu'une ligne a ete
+       * contre-passee.
+       *
+       * `update: false` refusait aussi cette marque-la. L'annulation
+       * ecrivait donc sa contre-passation, puis echouait a marquer
+       * l'original : l'ecran affichait une erreur, le mouvement restait
+       * annulable, et chaque nouveau clic ajoutait une contre-passation
+       * de plus. Trois clics, trois fois l'argent rentre.
+       *
+       * `annuleParId` est le seul champ qui bouge, et une seule fois :
+       * il doit etre vide avant, rempli apres. Le montant, le sens, la
+       * date et l'auteur restent ce qu'ils etaient — c'est tout
+       * l'interet d'un registre.
+       */
+      allow update: if travailleSur(resource.data.get('siteId', ''))
+        && resource.data.get('annuleParId', '') == ''
+        && request.resource.data.get('annuleParId', '') != ''
+        && request.resource.data.diff(resource.data)
+             .affectedKeys().hasOnly(['annuleParId']);
+      allow delete: if false;
     }
 
     /**

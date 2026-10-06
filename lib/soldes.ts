@@ -66,7 +66,7 @@ function vide(partenaireId: string): SoldeTiers {
  * marchandise n'est pas reçue, on ne doit rien. Une vente pareillement, à la
  * livraison.
  */
-function conclu(doc: any, role: RoleTiers): boolean {
+export function conclu(doc: any, role: RoleTiers): boolean {
   /* Le bon de commande d'un ordre n'est pas une vente.
    *
    * Un ordre tient deux dossiers de vente : celui du site qui expédie,
