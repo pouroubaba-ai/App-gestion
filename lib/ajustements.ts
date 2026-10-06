@@ -477,7 +477,14 @@ export async function confirmerAjustement(params: {
     if (!snap.exists()) throw new Error('Ce dossier n’existe plus.');
     const etat = snap.data().etat as EtatAjustement;
     if (etat === 'annule') throw new Error('Ce dossier a été annulé.');
-    if (etat === 'confirme') throw new Error('Ce dossier est déjà confirmé.');
+    /* Un dossier deja confirme n'est repris que s'il lui manque son
+       stock. L'etat se posait avant l'ecriture et hors de la meme
+       transaction : si celle-ci echouait, le dossier restait clos et la
+       marchandise n'avait pas bouge — sans rien pour le dire ni le
+       reprendre. */
+    if (etat === 'confirme' && snap.data().stockEcrit === true) {
+      throw new Error('Ce dossier est déjà confirmé.');
+    }
     tx.update(ref, {
       etat: 'confirme' as EtatAjustement,
       confirmeParUid: params.parUid,
@@ -534,7 +541,23 @@ export async function confirmerAjustement(params: {
     utilisateurFonction: params.utilisateurFonction ?? null,
   }));
 
+  /* La reprise est sure jusqu'a 250 lignes, et c'est une limite assumee.
+   *
+     `ecrireLignesEnLot` ecrit par lots de 250 : en deca, tout passe ou
+     rien ne passe, et `stockEcrit` absent veut bien dire que RIEN n'a
+     ete ecrit. Au-dela, une coupure entre deux tranches laisserait une
+     ecriture partielle qu'une reprise rejouerait — la marchandise
+     entrerait deux fois pour les premieres lignes.
+   *
+     Un dossier de reprise de catalogue peut depasser ce seuil. Le cas
+     demande un marqueur par ligne, pas par dossier ; il n'est pas traite
+     ici. Il est signale plutot que masque : une reprise qu'on croit sure
+     et qui ne l'est pas coute plus cher que pas de reprise du tout. */
   await ecrireLignesEnLot(lignes, registre);
+  /* Le stock est ecrit : le dossier peut le dire. Pose apres coup, parce
+     que c'est precisement le fait que les deux ne sont pas simultanes
+     qu'il faut enregistrer. */
+  await updateDoc(doc(db, 'ajustements', d.id), { stockEcrit: true });
 
   return { lignes: aEcrire.length };
 }

@@ -136,6 +136,20 @@ export interface DossierRetour {
   siteId: string;
   type: TypeRetour;
   etat: EtatRetour;
+  /**
+   * Le stock a-t-il reellement bouge ?
+   *
+   * L'etat final se posait avant l'ecriture du stock, et hors de la meme
+   * transaction : si celle-ci echouait — reseau coupe, permission
+   * refusee — le dossier restait clos et la marchandise n'etait jamais
+   * rentree. L'ecran n'offrait plus rien, et rien ne disait qu'il
+   * manquait quelque chose.
+   *
+   * Ce marqueur separe les deux faits. Un dossier confirme dont le stock
+   * n'est pas ecrit peut etre repris : on refait l'ecriture sans
+   * retoucher a l'etat.
+   */
+  stockEcrit?: boolean;
   reference: string;
   date: string;
 
@@ -567,10 +581,14 @@ async function confirmerVraiment(params: {
     if (!snap.exists()) throw new Error('Ce retour n’existe plus.');
     const etat = snap.data().etat as EtatRetour;
     if (etat === 'annule') throw new Error('Ce retour a été annulé.');
-    if (etat === etatFinal(d.type)) {
+    /* Un dossier deja confirme n'est repris que s'il lui manque son
+       stock : c'est la reprise d'une ecriture interrompue, pas une
+       seconde confirmation. */
+    if (etat === etatFinal(d.type) && snap.data().stockEcrit === true) {
       throw new Error('Ce retour est déjà confirmé.');
     }
-    if (etapes.indexOf(etat) !== etapes.length - 2) {
+    if (etat !== etatFinal(d.type)
+      && etapes.indexOf(etat) !== etapes.length - 2) {
       throw new Error('Ce retour n’est pas encore prêt à être confirmé.');
     }
     tx.update(ref, {
@@ -586,7 +604,10 @@ async function confirmerVraiment(params: {
      en décide, selon ce qui a été choisi à l'ouverture. Sans ce drapeau
      il concluait de `resteDu: 0` que tout était à rembourser, et le
      versement partait deux fois. */
-  if (d.type !== 'transfert' && d.partenaireId) {
+  /* Le stock ne se rejoue pas : s'il est deja ecrit, on passe. C'est ce
+     qui permet de reprendre un dossier interrompu sans faire rentrer la
+     marchandise une seconde fois. */
+  if (d.type !== 'transfert' && d.partenaireId && d.stockEcrit !== true) {
     await enregistrerRetour({
       siteId: d.siteId,
       userId: params.parUid,
@@ -609,6 +630,10 @@ async function confirmerVraiment(params: {
       utilisateurNom: params.parNom ?? null,
       utilisateurFonction: params.utilisateurFonction ?? null,
     });
+    /* Le stock est entre : le dossier peut le dire. Pose apres coup, et
+       non dans la transaction d'etat — c'est precisement parce que les
+       deux ne sont pas simultanes qu'il faut les distinguer. */
+    await updateDoc(doc(db, 'retours_dossiers', d.id), { stockEcrit: true });
   }
 
   return reglerRetour(params);

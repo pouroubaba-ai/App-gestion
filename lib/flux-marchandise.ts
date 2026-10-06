@@ -1,6 +1,6 @@
 import {
   collection, doc, getDoc, getDocs, query, where, documentId,
-  serverTimestamp, writeBatch,
+  serverTimestamp, writeBatch, runTransaction,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import {
@@ -1142,6 +1142,23 @@ export async function confirmerTransfert(params: {
     throw new Error('Seul un transfert reçu peut être confirmé.');
   }
 
+  /* L'etat se relit sur la base, pas sur l'ecran.
+   *
+     Un transfert confirme deux fois sort la marchandise deux fois du
+     site source et la fait entrer deux fois chez le destinataire : deux
+     rayons fausses d'un coup, et le cout moyen des deux cotes avec eux.
+     La verification ci-dessus porte sur l'objet charge a l'affichage, et
+     ne voit rien d'un second appel lance entre-temps. */
+  await runTransaction(db, async (tx) => {
+    const ref = doc(db, 'transferts', transfert.id);
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error("Ce transfert n'existe plus.");
+    const etat = snap.data().etat as EtatTransfert;
+    if (etat === 'confirme') throw new Error('Ce transfert est déjà confirmé.');
+    if (etat === 'annule') throw new Error('Ce transfert a été annulé.');
+    tx.update(ref, { etat: 'confirme' as EtatTransfert });
+  });
+
   const date = new Date().toISOString().split('T')[0];
   const batch = writeBatch(db);
 
@@ -1324,6 +1341,32 @@ export async function confirmerAchat(params: {
     throw new Error('Cet achat ne peut plus être confirmé.');
   }
 
+  /* L'etat se relit sur la base, pas sur l'ecran.
+   *
+     La verification ci-dessus porte sur l'objet charge a l'affichage.
+     Entre ce chargement et l'ecriture il y a plusieurs allers-retours :
+     un second poste, un onglet oublie ou une connexion qui rejoue
+     trouvait le meme etat et confirmait aussi. La marchandise entrait
+     deux fois en stock, et la dette fournisseur naissait deux fois.
+   *
+     La transaction relit et reserve. Le second appel trouve `confirme`
+     et repart. `marquerDossier: false` designe l'importation, qui tient
+     son propre cycle dans une autre collection : il n'y a rien a
+     reserver dans `achats`. */
+  if (params.marquerDossier !== false) {
+    await runTransaction(db, async (tx) => {
+      const ref = doc(db, 'achats', achat.id);
+      const snap = await tx.get(ref);
+      if (!snap.exists()) throw new Error("Cet achat n'existe plus.");
+      const etat = snap.data().etat as EtatAchat;
+      if (etat === 'confirme') throw new Error('Cet achat est déjà confirmé.');
+      if (etat !== 'en_attente' && etat !== 'recu' && etat !== 'traitement') {
+        throw new Error('Cet achat ne peut plus être confirmé.');
+      }
+      tx.update(ref, { etat: 'confirme' as EtatAchat });
+    });
+  }
+
   /* Les frais se posent entièrement, ou le dossier ne se confirme pas.
    *
    * Un frais à moitié réparti fait disparaître de l'argent : la dette le
@@ -1468,9 +1511,32 @@ export async function livrerVente(params: {
   mode?: 'livraison' | 'retrait';
 }): Promise<{ retourCaisse: number }> {
   const { vente } = params;
-  if (vente.etat !== 'pret' && vente.etat !== 'preparation') {
-    throw new Error('Seule une vente préparée peut être livrée.');
-  }
+
+  /* L'etat se relit sur la base, pas sur l'ecran.
+   *
+     Il etait verifie sur l'objet charge a l'affichage : entre ce
+     chargement et l'ecriture, la vente a pu etre livree par quelqu'un
+     d'autre — un second poste, un onglet oublie, une connexion qui
+     rejoue. Les deux appels trouvaient `pret` et sortaient chacun la
+     marchandise : un seul client servi, deux fois le stock parti et deux
+     creances nees.
+   *
+     La transaction lit et ecrit sans que rien ne s'intercale. Elle pose
+     `livre` tout de suite : le second appel trouve l'etat deja change et
+     repart. Le stock suit, hors transaction — Firestore n'en accepte pas
+     d'aussi longue — mais la course est fermee a l'endroit ou elle se
+     jouait. */
+  await runTransaction(db, async (tx) => {
+    const ref = doc(db, 'ventes', vente.id);
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error("Cette vente n'existe plus.");
+    const etat = snap.data().etat as EtatVente;
+    if (etat === 'livre') throw new Error('Cette vente est déjà livrée.');
+    if (etat !== 'pret' && etat !== 'preparation') {
+      throw new Error('Seule une vente préparée peut être livrée.');
+    }
+    tx.update(ref, { etat: 'livre' as EtatVente });
+  });
 
   const date = new Date().toISOString().split('T')[0];
   const livre = valeurVente(vente.lignes);
