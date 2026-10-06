@@ -383,8 +383,22 @@ export default function TransactionsSitePage() {
   const debut = debutPeriode(periode);
   const dansPeriode = (d?: string | null) => !debut || (d ?? '') >= debut;
 
+  /* Un transfert n'est ni une vente ni un achat.
+   *
+     `roleDe` deduit le role du sens quand le mouvement n'en porte pas :
+     une sortie devient « client ». Un transfert sort de la marchandise
+     sans la vendre — il n'a ni client ni reference de dossier — et
+     atterrissait donc dans l'ecran des clients, en lignes muettes : un
+     tiret partout, zero franc, « Solde » sans que rien n'ait ete du.
+     Vingt-trois lignes sur quarante-trois ne disaient rien.
+   *
+     Meme chose pour ce qui ne regarde aucun tiers : une perte, un
+     reajustement, un usage interne. On ne garde que les motifs qui
+     opposent le site a quelqu'un. */
+  const MOTIFS_TIERS = ['vente', 'achat'];
   const filtres = useMemo(
     () => mouvements.filter(m => roleDe(m) === role && m.motif !== 'retour'
+      && MOTIFS_TIERS.includes(m.motif ?? '')
       && dansPeriode(m.date)),
     [mouvements, role, debut]);
 
