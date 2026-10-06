@@ -131,6 +131,31 @@ function cumuler(
 
 /** Les soldes de tous les tiers d'un site, des deux côtés. */
 export async function soldesDuSite(siteId: Portee): Promise<SoldesParRole> {
+  return (await soldesEtVentilation(siteId)).ensemble;
+}
+
+/**
+ * Les mêmes soldes, plus leur ventilation site par site.
+ *
+ * Le tableau de bord veut les deux : le total de la portée, et la
+ * créance de chaque site pour sa colonne. Il les obtenait en appelant
+ * `soldesDuSite` une fois sur l'ensemble, puis une fois par site — soit
+ * sept collections relues autant de fois qu'il y a de sites, alors que
+ * les mêmes documents venaient d'arriver. Sur trois sites, cela faisait
+ * vingt-huit lectures là où sept suffisent, et l'onglet mettait
+ * plusieurs secondes à s'ouvrir.
+ *
+ * On ne pouvait pas ventiler après coup : `soldesDuSite` agrège par
+ * partenaire et perd le site en chemin, et le reste dû se borne dossier
+ * par dossier — `max(0, total − versé − retour)` ne se redéduit pas
+ * d'une somme. La ventilation doit donc se faire au moment du cumul,
+ * sur les mêmes documents. C'est ce que fait cette fonction : une
+ * lecture, deux cumuls.
+ */
+export async function soldesEtVentilation(siteId: Portee): Promise<{
+  ensemble: SoldesParRole;
+  parSite: Map<string, SoldesParRole>;
+}> {
   /* Une importation est un achat : elle fait entrer la même marchandise
      et crée la même dette chez le même fournisseur. Elle vit seulement
      dans une autre collection, parce que son voyage a ses étapes. Ne pas
@@ -145,6 +170,17 @@ export async function soldesDuSite(siteId: Portee): Promise<SoldesParRole> {
   const fournisseur = new Map<string, SoldeTiers>();
   const client = new Map<string, SoldeTiers>();
 
+  /* Le même cumul, répété sur le seau du site d'où vient le dossier. Un
+     document sans `siteId` ne tombe dans aucun seau : il compte dans
+     l'ensemble, et aucune colonne ne se l'attribue à tort. */
+  const parSite = new Map<string, SoldesParRole>();
+  const seau = (id: unknown): SoldesParRole | null => {
+    if (typeof id !== 'string' || !id) return null;
+    let s = parSite.get(id);
+    if (!s) { s = { fournisseur: new Map(), client: new Map() }; parSite.set(id, s); }
+    return s;
+  };
+
   for (const d of achDocs) {
     const a = d.data() as any;
     if (!a.fournisseurId || !conclu(a, 'fournisseur')) continue;
@@ -153,36 +189,36 @@ export async function soldesDuSite(siteId: Portee): Promise<SoldesParRole> {
     const parRet = parRetour.get(d.id) ?? 0;
     /* Frais compris : le transport est dû au même fournisseur, et
        l'omettre soldait un dossier qu'il restait à payer. */
-    cumuler(fournisseur, a.fournisseurId,
-      valeurDossier(a, 'fournisseur'),
-      a.avanceVersee ?? 0,
-      a.dateConfirmation ?? a.dateReception ?? a.dateCommande ?? null,
-      parRet);
+    const dateA = a.dateConfirmation ?? a.dateReception ?? a.dateCommande ?? null;
+    const valA = valeurDossier(a, 'fournisseur');
+    cumuler(fournisseur, a.fournisseurId, valA, a.avanceVersee ?? 0, dateA, parRet);
+    const sA = seau(a.siteId);
+    if (sA) cumuler(sA.fournisseur, a.fournisseurId, valA, a.avanceVersee ?? 0, dateA, parRet);
   }
 
   for (const d of impDocs) {
     const i = d.data() as any;
     if (!i.fournisseurId || i.etat !== 'confirme') continue;
     const parRet = parRetour.get(d.id) ?? 0;
-    cumuler(fournisseur, i.fournisseurId,
-      totalImportation(i),
-      i.avanceVersee ?? 0,
-      i.dates?.confirme ?? i.dates?.recu ?? i.dates?.en_attente ?? null,
-      parRet);
+    const dateI = i.dates?.confirme ?? i.dates?.recu ?? i.dates?.en_attente ?? null;
+    const valI = totalImportation(i);
+    cumuler(fournisseur, i.fournisseurId, valI, i.avanceVersee ?? 0, dateI, parRet);
+    const sI = seau(i.siteId);
+    if (sI) cumuler(sI.fournisseur, i.fournisseurId, valI, i.avanceVersee ?? 0, dateI, parRet);
   }
 
   for (const d of venDocs) {
     const v = d.data() as any;
     if (!v.clientId || !conclu(v, 'client')) continue;
     const parRet = parRetour.get(d.id) ?? 0;
-    cumuler(client, v.clientId,
-      valeurDossier(v, 'client'),
-      v.avanceVersee ?? 0,
-      v.dateLivraison ?? v.dateCommande ?? null,
-      parRet);
+    const dateV = v.dateLivraison ?? v.dateCommande ?? null;
+    const valV = valeurDossier(v, 'client');
+    cumuler(client, v.clientId, valV, v.avanceVersee ?? 0, dateV, parRet);
+    const sV = seau(v.siteId);
+    if (sV) cumuler(sV.client, v.clientId, valV, v.avanceVersee ?? 0, dateV, parRet);
   }
 
-  return { fournisseur, client };
+  return { ensemble: { fournisseur, client }, parSite };
 }
 
 /**

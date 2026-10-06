@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { formatMontant } from '@/lib/format';
-import { soldesDuSite, totalRole, restesDesVentes } from '@/lib/soldes';
+import { soldesEtVentilation, totalRole, restesDesVentes } from '@/lib/soldes';
 import { chargerVersementsDuSite } from '@/lib/versements-collection';
 import { hankenGrotesk } from './finance/font';
 import {
@@ -257,7 +257,14 @@ export default function OngletDashboard({ siteId, userId, onNaviguer, sites, tit
       });
       /* Créance et dette se déduisent des dossiers non soldés : les lire sur
          la fiche donnait un total qui survivait à leur suppression. */
-      const soldes = await soldesDuSite(ctx.portee);
+      /* Les soldes et la caisse partent avec le reste : ils ne dépendent
+         d'aucun résultat précédent, et les attendre l'un après l'autre
+         additionnait trois allers-retours au lieu de les recouvrir. */
+      const [ventile, caisse] = await Promise.all([
+        soldesEtVentilation(ctx.portee),
+        chargerCaisseDuSite(ctx.portee),
+      ]);
+      const soldes = ventile.ensemble;
       const cr = totalRole(soldes, 'client').reste;
       restesDesVentes(ctx.portee).then(setRestesVentes).catch(() => setRestesVentes([]));
       chargerAttente(ctx.portee).then(setAttente).catch(() => setAttente([]));
@@ -272,17 +279,17 @@ export default function OngletDashboard({ siteId, userId, onNaviguer, sites, tit
       const ids = sitesDe(ctx.portee);
       if (ids.length > 1) {
         const parSite: Record<string, { creance: number; dette: number }> = {};
-        await Promise.all(ids.map(async id => {
-          const s = await soldesDuSite(id);
+        for (const id of ids) {
+          const s = ventile.parSite.get(id);
           parSite[id] = {
-            creance: totalRole(s, 'client').reste,
-            dette: totalRole(s, 'fournisseur').reste + (detteEmp[id] ?? 0),
+            creance: s ? totalRole(s, 'client').reste : 0,
+            dette: (s ? totalRole(s, 'fournisseur').reste : 0) + (detteEmp[id] ?? 0),
           };
-        }));
+        }
         setSoldesParSite(parSite);
       } else setSoldesParSite({});
 
-      setMouvementsCaisse(await chargerCaisseDuSite(ctx.portee));
+      setMouvementsCaisse(caisse);
       setVentes(v);
       setDepenses(d);
       setHorsCaisse(hc);
