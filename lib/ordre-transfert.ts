@@ -455,6 +455,18 @@ export async function propagerEtapeOrdre(params: {
     const snap = await getDoc(doc(db, 'ventes', lien.venteDestId));
     if (snap.exists()) {
       const v = { id: snap.id, ...snap.data() } as any;
+
+      /* Une vente déjà livrée ne se livre pas une seconde fois.
+       *
+       * Ce qui suit la ramène à « prêt » puis appelle `livrerVente` :
+       * sur un dossier déjà sorti, cela écrirait une seconde sortie de
+       * stock et une seconde créance pour une seule marchandise remise.
+       * Le cas n'arrivait pas tant qu'une remise ne se jouait qu'une
+       * fois ; il devient possible dès qu'on peut reprendre une remise
+       * interrompue, et c'est le genre d'erreur qui se découvre au
+       * moment de compter le rayon. */
+      if (v.etat === 'livre') return;
+
       await updateDoc(doc(db, 'ventes', lien.venteDestId), {
         etat: 'pret',
         datePret: v.datePret ?? date,

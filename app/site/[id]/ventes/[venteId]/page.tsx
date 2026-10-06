@@ -522,6 +522,46 @@ export default function FicheVentePage() {
       if (suivant === 'livre' && estSourceOrdre) {
         const auteur = await auteurCourant(
           vente.siteId, user!.uid, user!.displayName);
+
+        /* La marchandise bouge avant que le bon se dise livré.
+         *
+         * L'ordre inverse a laissé un dossier à mi-chemin : le bon
+         * passait à « livré », puis la confirmation du transfert
+         * échouait — et plus rien ne la relançait. Le bon se disait
+         * remis, le transfert restait en préparation, aucun stock
+         * n'avait bougé, et l'écran ne montrait plus de bouton pour
+         * reprendre. Deux lots séparés ne peuvent pas être annulés
+         * ensemble ; l'ordre dans lequel on les écrit est donc le seul
+         * filet qu'on ait. On écrit d'abord ce qui est difficile — les
+         * mouvements des deux sites — et on ne clôt le bon que si cela
+         * a réussi. Un échec laisse alors un dossier qu'on peut
+         * simplement relancer. */
+        const tSnap = await getDoc(doc(db, 'transferts', lienOrdre.transfertId));
+        if (!tSnap.exists()) {
+          throw new Error("Le transfert de cet ordre est introuvable.");
+        }
+
+        /* Les quantités remises doivent être sur le transfert avant qu'il
+           les applique : c'est `remettreOrdre` qui les y pose, mais lui
+           seul peut le faire sans clore le bon. On les pose donc ici, et
+           la clôture du bon suit la confirmation. */
+        await updateDoc(doc(db, 'transferts', lienOrdre.transfertId), {
+          lignes: vente.lignes.map(l => ({
+            ...l,
+            quantiteExpediee: l.quantiteDemandee,
+            quantiteRecue: l.quantiteDemandee,
+          })),
+        });
+
+        const tFrais = await getDoc(doc(db, 'transferts', lienOrdre.transfertId));
+        await confirmerTransfert({
+          transfert: { id: tFrais.id, ...tFrais.data() } as any,
+          userId: user!.uid, par: user!.uid,
+          utilisateurNom: auteur.utilisateurNom,
+          utilisateurFonction: auteur.utilisateurFonction,
+        });
+
+        /* Le stock a bougé : le bon peut se dire livré. */
         await remettreOrdre({
           lien: lienOrdre,
           lignes: vente.lignes,
@@ -530,18 +570,6 @@ export default function FicheVentePage() {
           utilisateurNom: auteur.utilisateurNom,
           utilisateurFonction: auteur.utilisateurFonction,
         });
-        /* Le transfert a maintenant ses quantités : il peut écrire les
-           mouvements et se clore. C'est lui, et lui seul, qui touche au
-           stock des deux sites. */
-        const tSnap = await getDoc(doc(db, 'transferts', lienOrdre.transfertId));
-        if (tSnap.exists()) {
-          await confirmerTransfert({
-            transfert: { id: tSnap.id, ...tSnap.data() } as any,
-            userId: user!.uid, par: user!.uid,
-            utilisateurNom: auteur.utilisateurNom,
-            utilisateurFonction: auteur.utilisateurFonction,
-          });
-        }
 
       /* La livraison n'est pas un simple changement d'état : c'est là que le
          stock sort et que la créance naît. */
