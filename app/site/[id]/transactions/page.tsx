@@ -2,6 +2,8 @@
 import { estEnsemble, racineRetour } from '@/lib/retour';
 import { useEffect, useState, useMemo, useRef } from 'react';
 import { collection, query, where, getDocs } from 'firebase/firestore';
+import { lireParSite, type Portee } from '@/lib/portee';
+import { sitesDeLActivite } from '@/lib/produits-site';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/lib/auth-context';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
@@ -139,12 +141,38 @@ function EnTeteTri({ cle, actif, sens, onTrier, children }: {
 }
 
 export default function TransactionsSitePage() {
-  const { user } = useAuth();
+  const { user, activite } = useAuth();
   const router = useRouter();
   const params = useParams();
   const searchParams = useSearchParams();
   const siteId = params.id as string;
   const roleParam = (searchParams.get('role') as Role) ?? 'client';
+
+  /* Cette page sert aussi la vue d'ensemble.
+   *
+   * La carte « À encaisser » du tableau de bord y renvoyait avec un site
+   * à `null` — l'ensemble n'écrit sur aucun site en particulier — et la
+   * page s'ouvrait vide. Il fallait entrer dans une boutique pour voir
+   * ce que la carte annonçait pour toutes.
+   *
+   * Elle lit donc une portée : le site de l'adresse quand il y en a un,
+   * tous ceux de l'activité quand on vient de l'ensemble. */
+  const venantDEnsemble = estEnsemble(searchParams);
+  const [sitesActivite, setSitesActivite] = useState<string[] | null>(null);
+  useEffect(() => {
+    if (!venantDEnsemble || !activite?.id) { setSitesActivite(null); return; }
+    let vivant = true;
+    sitesDeLActivite(activite.id)
+      .then(l => { if (vivant) setSitesActivite(l); })
+      .catch(() => { if (vivant) setSitesActivite(null); });
+    return () => { vivant = false; };
+  }, [venantDEnsemble, activite?.id]);
+
+  /* Tant que la liste n'est pas lue, on ne lit rien : lire le site de
+     l'adresse en attendant ferait clignoter un montant partiel. */
+  const portee: Portee | null = venantDEnsemble
+    ? sitesActivite
+    : siteId;
 
   const [role, setRole] = useState<Role>(roleParam);
   /* L'onglet d'arrivée se demande dans l'adresse.
@@ -253,7 +281,7 @@ export default function TransactionsSitePage() {
   const [versements, setVersements] = useState<Versement[]>([]);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user || !portee) return;
     Promise.all([
       /* Le site, pas le compte.
        *
@@ -261,30 +289,34 @@ export default function TransactionsSitePage() {
        * qui l'a inscrit : filtrer dessus cachait au gérant les tiers
        * créés par le propriétaire. L'onglet Partenaires les montrait,
        * cette page annonçait « Aucun client » pour le même site — et une
-       * créance bien réelle restait invisible. */
-      getDocs(query(collection(db, 'partenaires'), where('siteId', '==', siteId))),
-      getDocs(query(collection(db, 'mouvements'), where('siteId', '==', siteId))),
+       * créance bien réelle restait invisible.
+       *
+       * `lireParSite` plutôt qu'un `where` : la portée couvre un site ou
+       * toute l'activité selon d'où l'on vient, et elle découpe elle-même
+       * en lots de trente, ce que Firestore impose sur un `in`. */
+      lireParSite('partenaires', portee),
+      lireParSite('mouvements', portee),
       /* Les versements vivent sur le document, pas sur ses lignes. */
-      getDocs(query(collection(db, 'achats'), where('siteId', '==', siteId))),
-      getDocs(query(collection(db, 'ventes'), where('siteId', '==', siteId))),
+      lireParSite('achats', portee),
+      lireParSite('ventes', portee),
       /* Tous les versements, quelle que soit leur origine : imbriqués dans
          les dossiers, ils échappaient à toute lecture d'ensemble. */
-      getDocs(query(collection(db, 'versements'), where('siteId', '==', siteId))),
-    ]).then(([partSnap, movSnap, achSnap, venSnap, vSnap]) => {
-      const parts = partSnap.docs.map(d => ({ id: d.id, ...d.data() } as Partenaire));
+      lireParSite('versements', portee),
+    ]).then(([partDocs, movDocs, achDocs, venDocs, vDocs]) => {
+      const parts = partDocs.map(d => ({ id: d.id, ...d.data() } as Partenaire));
       const nomMap = new Map(parts.map(p => [p.id, p.nom]));
       setPartenaires(parts);
-      setMouvements(movSnap.docs.map(d => {
+      setMouvements(movDocs.map(d => {
         const data = { id: d.id, ...d.data() } as Mouvement;
         return { ...data, nomPartenaire: nomMap.get(data.partenaireId) ?? '—' };
       }));
 
       setVerseParDoc(Object.fromEntries([
-        ...achSnap.docs.map(d => [d.id, d.data().avanceVersee ?? 0] as const),
-        ...venSnap.docs.map(d => [d.id, d.data().avanceVersee ?? 0] as const),
+        ...achDocs.map(d => [d.id, d.data().avanceVersee ?? 0] as const),
+        ...venDocs.map(d => [d.id, d.data().avanceVersee ?? 0] as const),
       ]));
 
-      setVersements(vSnap.docs
+      setVersements(vDocs
         .map(d => {
           const v = { id: d.id, ...d.data() } as any;
           return {
@@ -305,8 +337,8 @@ export default function TransactionsSitePage() {
 
       setLoading(false);
     });
-    soldesDuSite(siteId).then(setSoldes);
-  }, [user, siteId]);
+    soldesDuSite(portee).then(setSoldes);
+  }, [user, portee]);
 
   /* Les lignes du rôle affiché, retours exclus : un retour est un mouvement
      à part, on le montre à côté de ce qu'il annule, pas comme une vente. */

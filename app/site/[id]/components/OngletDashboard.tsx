@@ -628,8 +628,13 @@ export default function OngletDashboard({ siteId, userId, onNaviguer, sites, tit
         /* La période voyage avec le clic : la page doit découper le
            temps comme la carte le découpait, sinon les deux écrans
            donnent deux montants pour la même question. */
+        /* En vue d'ensemble, `siteEcriture` vaut `null` : l'adresse
+           devenait `/site/null/transactions` et la page s'ouvrait vide.
+           On passe alors par n'importe quel site de la portée — la page
+           lit l'activité entière dès qu'elle voit `de=ensemble`, et le
+           site de l'adresse ne lui sert plus qu'à exister. */
         onVoirAEncaisser={() => router.push(
-          `/site/${ctx.siteEcriture}/transactions`
+          `/site/${ctx.siteEcriture ?? ctx.sitesVus[0]?.id ?? siteId}/transactions`
           + `?role=client&vue=document&periode=${periode}&depuis=dashboard`
           + (ctx.ensemble ? '&de=ensemble' : ''))}
       />
