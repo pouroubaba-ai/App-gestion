@@ -817,6 +817,14 @@ async function appliquerLigne(
     reference?: string | null;
     achatId?: string | null; venteId?: string | null;
     mouvementOrigineId?: string | null;
+    /**
+     * Cette entree ne sait pas ce qu'elle a coute.
+     *
+     * Une ligne a zero n'est pas une ligne gratuite : c'est une ligne
+     * dont le prix n'a jamais ete su. La difference compte — un cout de
+     * zero fait du chiffre d'affaires entier un benefice.
+     */
+    coutInconnu?: boolean;
   },
   /**
    * Ce qui a été lu d'avance, quand l'appelant a préchargé.
@@ -874,8 +882,21 @@ async function appliquerLigne(
   const variante = params.varianteCle
     ? variantesSite.find(v => v.cle === params.varianteCle)
     : undefined;
-  const stockAvant = variante ? variante.stock : (detention.stock ?? 0);
-  const coutAvant = variante ? variante.coutMoyen : (detention.coutMoyen ?? 0);
+  /* Une variante demandee mais absente du rayon n'a rien en stock.
+   *
+     Le code retombait alors sur le total de la detention — la somme de
+     toutes les variantes. Prelever du « rouge » que le rayon n'a jamais
+     eu puisait donc dans le bleu et le vert : la garde laissait passer,
+     le stock global baissait, et aucune variante ne savait laquelle
+     avait maigri. Une variante demandee repond pour elle seule, meme
+     quand sa reponse est zero. */
+  const cibleVariante = !!params.varianteCle;
+  const stockAvant = cibleVariante
+    ? (variante?.stock ?? 0)
+    : (detention.stock ?? 0);
+  const coutAvant = cibleVariante
+    ? (variante?.coutMoyen ?? 0)
+    : (detention.coutMoyen ?? 0);
   /* Le rayon sait-il ce qu'il a payé ? Lu sur la détention qu'on tient
      déjà : un stock initial entre en quantité sans valeur, et ce qu'il
      ignore ne doit pas peser dans une moyenne. */
@@ -883,10 +904,25 @@ async function appliquerLigne(
     ? !!(variante as any).coutInconnu
     : !!detention.coutInconnu;
 
-  /* Une entrée réelle — un achat, un transfert — porte un coût : elle
-     lève l'ignorance, et son prix vaut pour tout le stock faute de mieux
-     à attribuer aux unités d'origine. */
-  const inconnuApres = params.sens === 'entree' ? false : inconnuAvant;
+  /* Une entree qui porte un cout leve l'ignorance : son prix vaut pour
+     tout le stock, faute de mieux a attribuer aux unites d'origine.
+   *
+     Mais une entree PEUT ne rien savoir — une marchandise transferee
+     depuis un rayon qui ignorait deja son cout, par exemple. La regle
+     disait `false` sans condition : le destinataire heritait alors d'un
+     cout « connu » de zero, et le tableau de bord comptait tout son
+     chiffre d'affaires en benefice. Le doute se transmet, il ne
+     disparait pas en changeant de site.
+   *
+     Trois situations, les memes qu'a l'ecriture d'un mouvement : un
+     rayon vierge qui recoit sans cout reste ignorant ; un rayon qui
+     savait ne le redevient jamais ; une entree chiffree leve tout. */
+  const entreeSansCout = params.sens === 'entree'
+    && (!!params.coutInconnu || params.valeurUnitaire <= 0);
+  const rayonVierge = stockAvant <= 0 && coutAvant <= 0;
+  const inconnuApres = params.sens === 'entree'
+    ? (inconnuAvant || rayonVierge) && entreeSansCout
+    : inconnuAvant;
 
   /* Le coût se saisit dans l'emballage retenu, le stock se tient à
      l'unité : un carton de 25 ampoules à 19 825 vaut 793 la pièce. Les
@@ -1109,11 +1145,24 @@ export async function confirmerTransfert(params: {
       utilisateurFonction: params.utilisateurFonction ?? null,
     }, registre);
 
+    /* Le doute voyage avec la marchandise.
+     *
+       Si le rayon de la source ignore ce que coute ce produit, ce qui en
+       part l'ignore aussi : le destinataire ne peut pas en savoir plus
+       que celui qui lui envoie. Sans cela il heritait d'un cout « connu »
+       de zero, et son tableau de bord comptait chaque vente en benefice
+       entier. */
+    const detSource = registre.detentions
+      .get(`${transfert.siteSourceId}:${l.produitId}`);
+    const sourceIgnore = !!detSource?.data?.coutInconnu
+      || (l.valeurUnitaire ?? 0) <= 0;
+
     await appliquerLigne(batch, {
       siteId: transfert.siteDestId, userId: params.userId,
       produitId: l.produitId, varianteCle: l.varianteCle,
       sens: 'entree', motif: 'transfert', date,
       quantite: qte, emballage: l.emballage, valeurUnitaire: l.valeurUnitaire,
+      coutInconnu: sourceIgnore,
       /* Le prix convenu à l'initiation prend effet ici : la marchandise
          entre dans son rayon, elle doit savoir à combien la revendre. Sans
          lui, un produit qu'elle n'avait jamais eu arriverait sans prix. */

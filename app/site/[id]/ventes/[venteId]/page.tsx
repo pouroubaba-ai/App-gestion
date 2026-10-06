@@ -546,20 +546,38 @@ export default function FicheVentePage() {
            seul peut le faire sans clore le bon. On les pose donc ici, et
            la clôture du bon suit la confirmation. */
         await updateDoc(doc(db, 'transferts', lienOrdre.transfertId), {
-          lignes: vente.lignes.map(l => ({
-            ...l,
-            quantiteExpediee: l.quantiteDemandee,
-            quantiteRecue: l.quantiteDemandee,
-          })),
+          /* Ce qui part est ce qui a ete prepare, pas ce qui a ete
+             demande.
+           *
+             « Marquer pret » pose dans `quantiteRecue` le decompte des
+             prelevements reellement faits au rayon. Repartir du demande
+             sortait 5 cartons quand 3 avaient ete rassembles — le stock
+             de la source perdait 2 cartons fantomes, et le client etait
+             facture de 5. */
+          lignes: vente.lignes.map(l => {
+            const remis = l.quantiteRecue ?? l.quantiteDemandee;
+            return { ...l, quantiteExpediee: remis, quantiteRecue: remis };
+          }),
         });
 
+        /* Chaque etape se saute si elle est deja faite.
+         *
+           Une remise qui echoue au milieu laisse des etapes acquises et
+           d'autres non. Au second clic, `confirmerTransfert` levait
+           « Seul un transfert recu peut etre confirme » — le dossier
+           restait bloque pour toujours, stock entre chez le destinataire
+           sans jamais ressortir, client non facture. Reprendre doit etre
+           possible : une etape deja franchie n'est pas une erreur, c'est
+           du travail en moins. */
         const tFrais = await getDoc(doc(db, 'transferts', lienOrdre.transfertId));
-        await confirmerTransfert({
-          transfert: { id: tFrais.id, ...tFrais.data() } as any,
-          userId: user!.uid, par: user!.uid,
-          utilisateurNom: auteur.utilisateurNom,
-          utilisateurFonction: auteur.utilisateurFonction,
-        });
+        if ((tFrais.data() as any)?.etat !== 'confirme') {
+          await confirmerTransfert({
+            transfert: { id: tFrais.id, ...tFrais.data() } as any,
+            userId: user!.uid, par: user!.uid,
+            utilisateurNom: auteur.utilisateurNom,
+            utilisateurFonction: auteur.utilisateurFonction,
+          });
+        }
 
         /* La vente du client sort son stock, et l'achat prend sa dette :
            c'est le dernier geste coûteux, donc il passe avant la clôture

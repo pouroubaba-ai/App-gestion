@@ -309,8 +309,14 @@ export async function ecrireLignesEnLot(
       const variante = saisie.varianteCle
         ? variantesSite.find(v => v.cle === saisie.varianteCle)
         : undefined;
-      const stockAvant = variante ? variante.stock : (det.data.stock ?? 0);
-      const coutAvant = variante ? variante.coutMoyen : (det.data.coutMoyen ?? 0);
+      /* Une variante demandee mais absente du rayon n'a rien en stock :
+         retomber sur le total de la detention ferait puiser dans les
+         autres variantes. Voir `appliquerLigne`, meme regle. */
+      const cibleVariante = !!saisie.varianteCle;
+      const stockAvant = cibleVariante
+        ? (variante?.stock ?? 0) : (det.data.stock ?? 0);
+      const coutAvant = cibleVariante
+        ? (variante?.coutMoyen ?? 0) : (det.data.coutMoyen ?? 0);
       /* Le rayon sait-il ce qu'il a payé ? Lu sur la détention, qu'on
          tient déjà en main : pas une lecture de plus. */
       const inconnuAvant: boolean = variante
@@ -472,8 +478,13 @@ export async function enregistrerMouvement(saisie: SaisieMouvement): Promise<Mou
   const variante = saisie.varianteCle
     ? variantesSite.find(v => v.cle === saisie.varianteCle)
     : undefined;
-  const stockAvant = variante ? variante.stock : (detention.stock ?? 0);
-  const coutAvant = variante ? variante.coutMoyen : (detention.coutMoyen ?? 0);
+  /* Meme regle qu'en lot : une variante demandee repond pour elle seule,
+     meme quand sa reponse est zero. */
+  const cibleVariante = !!saisie.varianteCle;
+  const stockAvant = cibleVariante
+    ? (variante?.stock ?? 0) : (detention.stock ?? 0);
+  const coutAvant = cibleVariante
+    ? (variante?.coutMoyen ?? 0) : (detention.coutMoyen ?? 0);
   /* La même règle qu'en lot : un rayon qui ignore ce qu'il a payé ne
      pondère rien, et ce qu'il a appris ne se désapprend pas. */
   const inconnuAvant: boolean = variante

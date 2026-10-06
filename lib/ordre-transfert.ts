@@ -403,14 +403,17 @@ export async function remettreOrdre(params: {
      écrira les mouvements, et il ne peut le faire que sur ce qu'il sait
      être parti. */
   batch.update(doc(db, 'transferts', params.lien.transfertId), {
-    lignes: params.lignes.map(l => ({
-      ...l,
-      /* Expédié et reçu valent le demandé : la quantité est celle qui a
-         été dite, et elle était disponible — il n'y a pas de route où
-         quelque chose pourrait se perdre, donc pas d'écart possible. */
-      quantiteExpediee: l.quantiteDemandee,
-      quantiteRecue: l.quantiteDemandee,
-    })),
+    /* Expedie et recu valent ce qui a ete prepare.
+     *
+       Ils valaient le demande, et le commentaire s'en expliquait : la
+       marchandise ne voyage pas, donc rien ne peut se perdre en route.
+       C'est vrai du trajet, mais pas du rayon — la preparation compte ce
+       qu'on a reellement rassemble, et il peut en manquer. Le dossier
+       sortait alors du stock une quantite que personne n'avait prise. */
+    lignes: params.lignes.map(l => {
+      const remis = l.quantiteRecue ?? l.quantiteDemandee;
+      return { ...l, quantiteExpediee: remis, quantiteRecue: remis };
+    }),
   });
 
   await batch.commit();
@@ -456,32 +459,35 @@ export async function propagerEtapeOrdre(params: {
     if (snap.exists()) {
       const v = { id: snap.id, ...snap.data() } as any;
 
-      /* Une vente déjà livrée ne se livre pas une seconde fois.
+      /* Une vente deja livree ne se livre pas une seconde fois — mais le
+         reste de la fonction doit continuer.
        *
-       * Ce qui suit la ramène à « prêt » puis appelle `livrerVente` :
-       * sur un dossier déjà sorti, cela écrirait une seconde sortie de
-       * stock et une seconde créance pour une seule marchandise remise.
-       * Le cas n'arrivait pas tant qu'une remise ne se jouait qu'une
-       * fois ; il devient possible dès qu'on peut reprendre une remise
-       * interrompue, et c'est le genre d'erreur qui se découvre au
-       * moment de compter le rayon. */
-      if (v.etat === 'livre') return;
-
-      await updateDoc(doc(db, 'ventes', lien.venteDestId), {
-        etat: 'pret',
-        datePret: v.datePret ?? date,
-        datePreparation: v.datePreparation ?? date,
-        lignes: (v.lignes ?? []).map((l: LigneFlux) => ({
-          ...l, quantiteRecue: l.quantiteRecue ?? l.quantiteDemandee,
-        })),
-      });
-      const frais = await getDoc(doc(db, 'ventes', lien.venteDestId));
-      await livrerVente({
-        vente: { id: frais.id, ...frais.data() } as any,
-        userId: params.userId, par: params.userId,
-        utilisateurNom: params.utilisateurNom ?? null,
-        utilisateurFonction: params.utilisateurFonction ?? null,
-      });
+         Ce qui suit la ramene a « pret » puis appelle `livrerVente` : sur
+         un dossier deja sorti, cela ecrirait une seconde sortie de stock
+         et une seconde creance pour une seule marchandise remise.
+       *
+         Un `return` ici reglait ce point mais en creait un autre : il
+         sautait aussi la confirmation de l'achat et la cloture du
+         transfert, plus bas. Une remise reprise apres une interruption
+         laissait donc la dette inter-sites jamais nee. On saute l'etape,
+         pas la suite. */
+      if (v.etat !== 'livre') {
+        await updateDoc(doc(db, 'ventes', lien.venteDestId), {
+          etat: 'pret',
+          datePret: v.datePret ?? date,
+          datePreparation: v.datePreparation ?? date,
+          lignes: (v.lignes ?? []).map((l: LigneFlux) => ({
+            ...l, quantiteRecue: l.quantiteRecue ?? l.quantiteDemandee,
+          })),
+        });
+        const frais = await getDoc(doc(db, 'ventes', lien.venteDestId));
+        await livrerVente({
+          vente: { id: frais.id, ...frais.data() } as any,
+          userId: params.userId, par: params.userId,
+          utilisateurNom: params.utilisateurNom ?? null,
+          utilisateurFonction: params.utilisateurFonction ?? null,
+        });
+      }
     }
   } else {
     batch.update(doc(db, 'ventes', lien.venteDestId), {
