@@ -724,13 +724,28 @@ service cloud.firestore {
       allow create: if travailleSur(siteEnvoye())
         && request.resource.data.get('parUid', '') == monUid()
         && request.resource.data.get('etat', '') == 'en_attente';
-      /* Avancer d'une étape, ou confirmer. Dans les deux cas l'auteur
-         reste celui qui a ouvert, et confirmer demande un autre que lui. */
+      /* Avancer d'une etape, ou confirmer.
+       *
+         L'auteur d'ouverture ne change jamais, et la valeur du dossier
+         non plus : ce sont les deux faits sur lesquels tout le reste
+         s'appuie.
+       *
+         Confirmer demandait un autre que celui qui a ouvert. La
+         separation des deux mains vaut entre employes — l'un declare,
+         l'autre constate — mais pas contre celui a qui appartient la
+         marchandise : l'y soumettre l'obligeait a demander a un employe
+         de valider son propre travail, et le dossier restait bloque,
+         stock pas rentre, client ni rembourse ni credite.
+       *
+         Le proprietaire peut donc confirmer ce qu'il a ouvert. Pour un
+         employe la regle tient, et les deux noms restent inscrits
+         separement : qui a ouvert, qui a confirme. */
       allow update: if travailleSur(siteDuDoc())
         && request.resource.data.get('parUid', '') == resource.data.get('parUid', '')
         && request.resource.data.get('valeurTotale', 0) == resource.data.get('valeurTotale', 0)
         && (request.resource.data.get('confirmeParUid', '') == ''
-          || request.resource.data.get('confirmeParUid', '') != resource.data.get('parUid', ''));
+          || request.resource.data.get('confirmeParUid', '') != resource.data.get('parUid', '')
+          || suisProprietaire());
       /* Un retour annulé reste au registre : il raconte une tentative. */
       allow delete: if false;
     }
