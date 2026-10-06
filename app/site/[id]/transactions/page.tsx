@@ -468,6 +468,8 @@ export default function TransactionsSitePage() {
           totalTx, totalBenef, totalRetour, verse, reste,
           derniere: solde?.derniereOperation ?? '',
           derniereValeur: solde?.derniereValeur ?? 0,
+          avantDerniere: solde?.avantDerniereOperation ?? '',
+          avantDerniereValeur: solde?.avantDerniereValeur ?? 0,
           utilisateurNom: p.utilisateurNom ?? null,
           utilisateurFonction: p.utilisateurFonction ?? null,
           apporteur: p.apporteur ?? null,
@@ -516,9 +518,13 @@ export default function TransactionsSitePage() {
   const nomDuSite = (id: string | null | undefined) =>
     (id && sitesConnus?.find(s => s.id === id)?.nom) || '—';
 
-  /* La colonne Site n'a de sens que si la vue en couvre plusieurs : sur un
-     seul, elle repeterait le meme nom a chaque ligne. */
-  const montreSite = venantDEnsemble && !filtreSite && (sitesConnus?.length ?? 0) > 1;
+  /* La colonne Site s'affiche des que la vue embrasse l'activite et qu'on
+     n'a pas choisi un site en particulier. Elle exigeait en plus que la
+     liste des sites soit deja lue et en compte plusieurs : la liste
+     arrivant apres le premier rendu, la colonne manquait a l'ouverture,
+     et un filtre sur un seul site la faisait disparaitre alors que c'est
+     justement la qu'on verifie d'ou vient chaque ligne. */
+  const montreSite = venantDEnsemble && !filtreSite;
 
   /* Agrégation onglet document : les lignes d'un même dossier se regroupent
      sous lui. Une ligne sans dossier a été saisie à la main et reste seule. */
@@ -628,7 +634,12 @@ export default function TransactionsSitePage() {
     (p, c) => ({
       nom: p.nom, site: nomDuSite(p.siteId),
       total: p.totalTx, benefice: p.totalBenef, retour: p.totalRetour,
-      verse: p.verse, reste: p.reste, derniere: p.derniereValeur,
+      verse: p.verse, reste: p.reste,
+      /* Le tri suit ce que la colonne montre : trier sur la vente du jour
+         pendant qu'on affiche celle d'avant classerait les lignes sur un
+         chiffre invisible. */
+      derniere: (p.derniere && anciennete(p.derniere) === "aujourd'hui")
+        ? p.avantDerniereValeur : p.derniereValeur,
     } as Record<string, number | string>)[c] ?? 0);
 
   const documentsVus = applique(
@@ -882,15 +893,36 @@ export default function TransactionsSitePage() {
                             {montreSite && (
                               <td className="px-4 py-3 text-gray-500 text-center">{nomDuSite(p.siteId)}</td>
                             )}
+                            {/* La vente d'avant, pas celle du jour.
+                                Ce que le client vient de prendre se lit
+                                deja dans Total et dans Verse ; le repeter
+                                ici n'apprend rien, et le jour d'une
+                                tournee toute la colonne affichait
+                                « aujourd'hui ». Ce qu'on vient y chercher
+                                est l'inverse : depuis combien de temps
+                                celui-la n'etait pas revenu. On montre donc
+                                la precedente des que la derniere tombe
+                                aujourd'hui — et un client qui n'a achete
+                                qu'aujourd'hui n'a pas de precedente, le
+                                tiret le dit. */}
                             <td className="px-4 py-3 text-center">
-                              {p.derniere ? (
-                                <span>
-                                  <span className="font-medium text-gray-700 dark:text-gray-300">
-                                    {formatMontant(p.derniereValeur)}
+                              {(() => {
+                                const dejaVue = p.derniere && anciennete(p.derniere) === "aujourd'hui";
+                                const date = dejaVue ? p.avantDerniere : p.derniere;
+                                const valeur = dejaVue ? p.avantDerniereValeur : p.derniereValeur;
+                                if (!date) return (
+                                  <span className="text-gray-300 dark:text-gray-600"
+                                    title={dejaVue ? "Aucune vente avant aujourd'hui" : undefined}>—</span>
+                                );
+                                return (
+                                  <span>
+                                    <span className="font-medium text-gray-700 dark:text-gray-300">
+                                      {formatMontant(valeur)}
+                                    </span>
+                                    <span className="ml-1.5 text-xs text-gray-400">{anciennete(date)}</span>
                                   </span>
-                                  <span className="ml-1.5 text-xs text-gray-400">{anciennete(p.derniere)}</span>
-                                </span>
-                              ) : <span className="text-gray-300 dark:text-gray-600">—</span>}
+                                );
+                              })()}
                             </td>
                             <td className="px-4 py-3 text-gray-700 dark:text-gray-300 text-center">{formatMontant(p.totalTx)}</td>
                             {role === 'client' && (

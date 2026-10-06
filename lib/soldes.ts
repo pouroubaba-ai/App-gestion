@@ -45,6 +45,16 @@ export interface SoldeTiers {
      comptait. Plusieurs dossiers du même jour se cumulent — sans heure sur
      les dossiers, le jour est la plus petite unité qu'on puisse départager. */
   derniereValeur: number;
+  /**
+   * L'opération d'avant, et ce qu'elle pesait.
+   *
+   * « Dernière vente : aujourd'hui » n'apprend rien à qui regarde si un
+   * client est encore vivant : le jour même, toute la colonne dit la
+   * même chose. C'est l'ecart avec la fois d'avant qui distingue
+   * l'habitué de celui qui reparait après des mois.
+   */
+  avantDerniereOperation: string | null;
+  avantDerniereValeur: number;
   /** nombre de documents non soldés */
   ouverts: number;
 }
@@ -57,7 +67,8 @@ export interface SoldesParRole {
 function vide(partenaireId: string): SoldeTiers {
   return {
     partenaireId, total: 0, verse: 0, retour: 0, reste: 0,
-    derniereOperation: null, derniereValeur: 0, ouverts: 0,
+    derniereOperation: null, derniereValeur: 0,
+    avantDerniereOperation: null, avantDerniereValeur: 0, ouverts: 0,
   };
 }
 
@@ -125,6 +136,24 @@ function cumuler(
       : !e.derniereOperation || date > e.derniereOperation ? total
       : date === e.derniereOperation ? e.derniereValeur + total
       : e.derniereValeur,
+    /* Le second rang se décale quand une date plus récente arrive : celle
+       qui tenait la tête descend d'un cran. Une date du même jour que la
+       première s'y cumule et ne descend rien ; une date plus ancienne ne
+       prend le second rang que si elle bat ce qui s'y trouve. */
+    avantDerniereOperation: !date ? e.avantDerniereOperation
+      : !e.derniereOperation ? e.avantDerniereOperation
+      : date > e.derniereOperation ? e.derniereOperation
+      : date === e.derniereOperation ? e.avantDerniereOperation
+      : !e.avantDerniereOperation || date > e.avantDerniereOperation
+        ? date : e.avantDerniereOperation,
+    avantDerniereValeur: !date ? e.avantDerniereValeur
+      : !e.derniereOperation ? e.avantDerniereValeur
+      : date > e.derniereOperation ? e.derniereValeur
+      : date === e.derniereOperation ? e.avantDerniereValeur
+      : !e.avantDerniereOperation || date > e.avantDerniereOperation
+        ? total
+        : date === e.avantDerniereOperation
+          ? e.avantDerniereValeur + total : e.avantDerniereValeur,
     ouverts: e.ouverts + (reste > 0 ? 1 : 0),
   });
 }
