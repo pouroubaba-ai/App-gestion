@@ -9,7 +9,7 @@ import { formatMontant } from '@/lib/format';
 export default function VentesCard({
   ventes, benefice, encaisse, reste, retours = 0, fonds, sousTitreFonds,
   ventesSansMarge = 0, nbSansMarge = 0,
-  onNaviguer,
+  onNaviguer, onVoirAEncaisser,
 }: {
   ventes: number;
   benefice: number;
@@ -45,6 +45,11 @@ export default function VentesCard({
   fonds: number;
   sousTitreFonds?: string;
   onNaviguer?: (onglet: string) => void;
+  /* Où mène « À encaisser ». Elle ouvrait les recouvrements, qui disent
+     ce qu'il faut aller chercher — une autre question que « de quoi ce
+     chiffre est-il fait ». Sans cette porte, il fallait reconstituer à
+     la main les dossiers qui composent le montant. */
+  onVoirAEncaisser?: () => void;
 }) {
   /* Le taux se rapporte aux ventes mesurées : diviser par un total qui
      comprend des ventes sans marge connue écraserait le pourcentage, et
@@ -84,7 +89,7 @@ export default function VentesCard({
 
       <button
         type="button"
-        onClick={() => onNaviguer?.('recouvrements')}
+        onClick={() => (onVoirAEncaisser ?? (() => onNaviguer?.('recouvrements')))()}
         className="group block rounded-2xl border border-black/[0.06] bg-white p-5 text-left shadow-sm transition-all hover:-translate-y-0.5 dark:border-white/10 dark:bg-neutral-900"
       >
         <span className="flex h-8 w-8 items-center justify-center rounded-[10px] bg-neutral-100 text-lg dark:bg-neutral-800">

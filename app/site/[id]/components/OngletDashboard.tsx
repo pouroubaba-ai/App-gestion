@@ -625,6 +625,13 @@ export default function OngletDashboard({ siteId, userId, onNaviguer, sites, tit
         retours={totalRetours}
         fonds={fonds}
         onNaviguer={onNaviguer}
+        /* La période voyage avec le clic : la page doit découper le
+           temps comme la carte le découpait, sinon les deux écrans
+           donnent deux montants pour la même question. */
+        onVoirAEncaisser={() => router.push(
+          `/site/${ctx.siteEcriture}/transactions`
+          + `?role=client&vue=document&periode=${periode}&depuis=dashboard`
+          + (ctx.ensemble ? '&de=ensemble' : ''))}
       />
 
       {/* Ce qui attend le tiroir, en pleine largeur sous les trois cartes.

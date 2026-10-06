@@ -10,6 +10,31 @@ import { ChevronDown } from 'lucide-react';
  */
 export type Periode = 'jour' | 'semaine' | 'mois' | 'annee' | 'tout';
 
+/**
+ * Le premier jour d'une période, au format que portent les documents.
+ *
+ * Elle vivait recopiée dans les écrans qui filtrent — chacun avec sa
+ * version, et rien pour garantir qu'elles tombent le même lundi. Elle
+ * vit ici, à côté du filtre qui la commande.
+ *
+ * Chaîne vide pour « tout » : il n'y a pas de borne, et comparer à ''
+ * laisse tout passer sans qu'on ait à traiter le cas à part.
+ */
+export function debutPeriode(p: Periode): string {
+  const iso = (d: Date) => d.toISOString().slice(0, 10);
+  const d = new Date();
+  if (p === 'jour') return iso(d);
+  if (p === 'semaine') {
+    /* semaine commençant le lundi */
+    const jour = (d.getDay() + 6) % 7;
+    d.setDate(d.getDate() - jour);
+    return iso(d);
+  }
+  if (p === 'mois') { d.setDate(1); return iso(d); }
+  if (p === 'annee') { d.setMonth(0, 1); return iso(d); }
+  return '';
+}
+
 const PERIODES: { key: Periode; label: string }[] = [
   { key: 'jour', label: "Aujourd'hui" },
   { key: 'semaine', label: 'Cette semaine' },

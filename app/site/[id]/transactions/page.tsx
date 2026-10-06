@@ -7,6 +7,7 @@ import { useAuth } from '@/lib/auth-context';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { formatMontant } from '@/lib/format';
 import { ChampRecherche } from '@/components/Champs';
+import PeriodFilter, { debutPeriode, type Periode } from '../components/finance/PeriodFilter';
 import { sourceDe, LIBELLES_SOURCE, parApporteur, type Apporteur } from '@/lib/apporteur';
 import { soldesDuSite, soldeDe, type SoldesParRole } from '@/lib/soldes';
 import { LIBELLES_MOTIF_VERSEMENT } from '@/lib/versements-collection';
@@ -146,7 +147,34 @@ export default function TransactionsSitePage() {
   const roleParam = (searchParams.get('role') as Role) ?? 'client';
 
   const [role, setRole] = useState<Role>(roleParam);
-  const [onglet, setOngletBrut] = useState<Onglet>('partenaire');
+  /* L'onglet d'arrivée se demande dans l'adresse.
+   *
+   * On vient souvent d'ailleurs — d'une carte du tableau de bord qui
+   * annonce un chiffre, et qu'on ouvre pour voir de quoi il est fait.
+   * Celui qui clique « À encaisser » cherche les documents qui restent
+   * dus, pas la liste des clients : le faire atterrir sur la vue par
+   * partenaire lui demandait un second geste pour arriver où il allait. */
+  const ONGLETS_VALIDES: Onglet[] = [
+    'partenaire', 'produit', 'mouvement', 'document', 'versement', 'apporteur',
+  ];
+  /* La période arrive aussi de l'adresse : on vient d'une carte qui
+     annonçait un chiffre sur « aujourd'hui », et la page doit montrer
+     le même découpage — sinon les deux écrans affichent deux montants
+     pour la même question. */
+  const PERIODES_VALIDES: Periode[] = ['jour', 'semaine', 'mois', 'annee', 'tout'];
+  const periodeParam = searchParams.get('periode') as Periode | null;
+  const [periode, setPeriode] = useState<Periode>(
+    periodeParam && PERIODES_VALIDES.includes(periodeParam)
+      ? periodeParam : 'tout');
+
+  /* D'où l'on vient : le retour n'a pas la même destination selon
+     l'écran qui a ouvert celui-ci. */
+  const depuisDashboard = searchParams.get('depuis') === 'dashboard';
+
+  const ongletParam = searchParams.get('vue') as Onglet | null;
+  const [onglet, setOngletBrut] = useState<Onglet>(
+    ongletParam && ONGLETS_VALIDES.includes(ongletParam)
+      ? ongletParam : 'partenaire');
 
   /* Un terme saisi sur les produits n'a rien à filtrer sur les versements :
      changer d'onglet repart d'une liste entière. */
@@ -285,13 +313,22 @@ export default function TransactionsSitePage() {
   /* Les lignes écrites avant que le motif n'existe n'en portent pas : les
      exclure ferait disparaître tout l'historique antérieur. Seul un motif
      `retour` explicite écarte une ligne d'ici. */
-  const filtres = useMemo(
-    () => mouvements.filter(m => roleDe(m) === role && m.motif !== 'retour'),
-    [mouvements, role]);
+  /* La borne de la période choisie. Vide pour « tout » : la comparaison
+     laisse alors tout passer sans qu'on traite le cas à part. */
+  const debut = debutPeriode(periode);
+  const dansPeriode = (d?: string | null) => !debut || (d ?? '') >= debut;
 
+  const filtres = useMemo(
+    () => mouvements.filter(m => roleDe(m) === role && m.motif !== 'retour'
+      && dansPeriode(m.date)),
+    [mouvements, role, debut]);
+
+  /* Les retours suivent la même borne : un retour d'octobre ne doit pas
+     venir réduire ce qu'on a vendu en septembre. */
   const retours = useMemo(
-    () => mouvements.filter(m => roleDe(m) === role && m.motif === 'retour'),
-    [mouvements, role]);
+    () => mouvements.filter(m => roleDe(m) === role && m.motif === 'retour'
+      && dansPeriode(m.date)),
+    [mouvements, role, debut]);
 
   /** Valeur d'un mouvement de retour, au prix du sens concerné. */
   function valeurRetour(m: Mouvement) {
@@ -419,7 +456,8 @@ export default function TransactionsSitePage() {
   }, [filtres, retours, verseParDoc, role]);
 
   const versementsRole = useMemo(
-    () => versements.filter(v => v.role === role), [versements, role]);
+    () => versements.filter(v => v.role === role && dansPeriode(v.date)),
+    [versements, role, debut]);
 
   /* Du plus proche de la question posée au plus éloigné : on arrive ici
      depuis une carte de créances ou de dettes, donc pour savoir qui doit
@@ -528,18 +566,28 @@ export default function TransactionsSitePage() {
       <div className="p-4 sm:p-6">
 
         {/* Retour */}
-        {/* On revient d'où l'on vient : la carte des créances s'ouvre
-            aussi depuis la vue d'ensemble. */}
+        {/* On revient d'où l'on vient.
+            Le retour menait toujours aux partenaires, parce que c'est de
+            là qu'on venait quand cette page a été écrite. La carte « À
+            encaisser » y mène désormais aussi, et renvoyer son lecteur
+            vers les partenaires l'emmenait dans un écran qu'il n'avait
+            pas quitté. L'origine se dit donc dans l'adresse. */}
         <button onClick={() => router.push(
-          `${racineRetour(estEnsemble(searchParams), siteId)}`
-          + `?onglet=partenaires&vue=${role === 'client' ? 'clients' : 'fournisseurs'}`)}
+          depuisDashboard
+            ? `${racineRetour(estEnsemble(searchParams), siteId)}?onglet=dashboard`
+            : `${racineRetour(estEnsemble(searchParams), siteId)}`
+              + `?onglet=partenaires&vue=${role === 'client' ? 'clients' : 'fournisseurs'}`)}
           className="flex items-center gap-2 mb-5 group">
           <ArrowLeft size={15} className="text-gray-400 group-hover:text-gray-600 dark:group-hover:text-gray-200 transition-colors" />
           <span className="text-sm font-medium text-gray-700 dark:text-gray-200 group-hover:text-gray-900 dark:group-hover:text-white transition-colors">
-            Partenaires
+            {depuisDashboard ? 'Tableau de bord' : 'Partenaires'}
           </span>
-          <span className="text-gray-300 dark:text-gray-600">/</span>
-          <span className="text-sm text-gray-400">{role === 'client' ? 'Clients' : 'Fournisseurs'}</span>
+          {!depuisDashboard && (
+            <>
+              <span className="text-gray-300 dark:text-gray-600">/</span>
+              <span className="text-sm text-gray-400">{role === 'client' ? 'Clients' : 'Fournisseurs'}</span>
+            </>
+          )}
         </button>
 
         {/* Header */}
@@ -612,6 +660,12 @@ export default function TransactionsSitePage() {
               className="w-full"
             />
           </div>
+
+          {/* La période, à côté de la recherche. On arrive souvent d'une
+              carte qui annonçait un chiffre sur une période donnée : la
+              retrouver ici permet de la déplier ou de la resserrer sans
+              repartir du tableau de bord. */}
+          <PeriodFilter periode={periode} onChange={setPeriode} />
 
           {/* Seuls les tableaux qui portent un statut se filtrent ainsi : un
               versement est un fait accompli, il n'est ni soldé ni partiel. */}
