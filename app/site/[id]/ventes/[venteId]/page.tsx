@@ -561,7 +561,24 @@ export default function FicheVentePage() {
           utilisateurFonction: auteur.utilisateurFonction,
         });
 
-        /* Le stock a bougé : le bon peut se dire livré. */
+        /* La vente du client sort son stock, et l'achat prend sa dette :
+           c'est le dernier geste coûteux, donc il passe avant la clôture
+           du bon. Un échec ici laisse le bon à « prêt », et l'on reclique.
+           Fait après, il laissait un bon livré, une marchandise déplacée
+           entre les sites, et rien de sorti chez le client — facturé
+           pourtant, et toujours en rayon. */
+        await propagerEtapeOrdre({
+          lien: lienOrdre, etat: 'livre', userId: user!.uid,
+          date: aujourdhui(),
+          utilisateurNom: auteur.utilisateurNom,
+          utilisateurFonction: auteur.utilisateurFonction,
+          /* Le transfert vient d'être clos par `confirmerTransfert` : le
+             repousser le ferait repasser par un état franchi. */
+          transfertDejaClos: true,
+        });
+
+        /* Tout a bougé : le bon peut enfin se dire livré. C'est la seule
+           écriture dont la perte ne coûte rien — elle se rejoue. */
         await remettreOrdre({
           lien: lienOrdre,
           lignes: vente.lignes,
@@ -596,9 +613,10 @@ export default function FicheVentePage() {
       /* Un bon de commande né d'un ordre entraîne les deux autres
          dossiers : le gérant d'en face n'a rien à pousser, et le
          transfert se clôt au moment où la marchandise est remise. */
+      /* « livré » est traité plus haut, dans son propre ordre : ici ne
+         restent que les crans qui n'écrivent qu'un état. */
       if (lienOrdre && estSourceOrdre
-        && (suivant === 'preparation' || suivant === 'pret'
-          || suivant === 'livre')) {
+        && (suivant === 'preparation' || suivant === 'pret')) {
         /* La livraison d'en face porte le nom de qui l'a déclenchée :
            une archive doit dire qui a fait le geste, même des mois
            après. */
@@ -609,10 +627,6 @@ export default function FicheVentePage() {
           date: aujourdhui(),
           utilisateurNom: parQui.utilisateurNom,
           utilisateurFonction: parQui.utilisateurFonction,
-          /* À la remise, le transfert est déjà clos par
-             `confirmerTransfert` : le repousser le ferait repasser par
-             un état qu'il a franchi. */
-          transfertDejaClos: suivant === 'livre',
         });
       }
       await charger();
