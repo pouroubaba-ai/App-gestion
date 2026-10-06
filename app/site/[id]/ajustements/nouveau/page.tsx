@@ -47,7 +47,20 @@ export default function NouvelAjustementPage() {
   const [nomSite, setNomSite] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const [motif, setMotif] = useState<MotifAjustement>('stock_initial');
+  /* Le motif de depart suit l'onglet d'ou l'on vient.
+   *
+     La page s'ouvrait toujours sur « Stock initial », une entree — meme
+     quand on arrivait depuis les sorties. Il fallait rechoisir le motif
+     a chaque fois, et le faire vite menait a enregistrer une entree pour
+     une casse : la marchandise rentrait au lieu de sortir.
+   *
+     On prend le premier motif du sens demande, pas un motif nomme : la
+     table reste la seule source, et ajouter un motif demain ne demandera
+     rien ici. */
+  const sensVoulu = searchParams.get('sens') === 'sortie' ? 'sortie' : 'entree';
+  const motifInitial = (Object.entries(MOTIFS_AJUSTEMENT)
+    .find(([, r]) => r.sens === sensVoulu)?.[0] ?? 'stock_initial') as MotifAjustement;
+  const [motif, setMotif] = useState<MotifAjustement>(motifInitial);
   const [date, setDate] = useState(aujourdhui());
   /* La marchandise préparée survit au rechargement : les lignes
      cherchées une à une ne doivent pas disparaître parce que la page

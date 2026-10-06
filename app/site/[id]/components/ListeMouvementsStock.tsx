@@ -296,8 +296,15 @@ export default function ListeMouvementsStock({
         )}
         {peutDeclarer(role) && siteEcriture && (
           <button type="button"
-            onClick={() => router.push(
-              `/site/${siteEcriture}/ajustements/nouveau${marqueOrigine(ensemble, false)}`)}
+            /* Le sens regarde part avec le clic : on ouvrait toujours sur
+               une entree, meme depuis l'onglet des sorties — il fallait
+               rechoisir le motif a chaque fois, et le faire vite menait a
+               enregistrer une entree pour une casse. */
+            onClick={() => {
+              const base = marqueOrigine(ensemble, false);
+              const url = `/site/${siteEcriture}/ajustements/nouveau${base}`;
+              router.push(`${url}${base ? '&' : '?'}sens=${sens}`);
+            }}
             className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-3 py-2 text-xs font-bold text-white transition-colors hover:bg-indigo-700">
             <Plus size={14} /> Nouveau mouvement
           </button>
