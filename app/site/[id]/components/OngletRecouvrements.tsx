@@ -370,8 +370,17 @@ export default function OngletRecouvrements({ siteId, userId, onCount, sites, ti
 
     const lignes = journalSnap
       .map(d => ({ id: d.id, source: 'auto', ...d.data() } as Recouvrement))
-      /* on garde tout l'historique : le filtre de période se fait à l'affichage */
-      .filter(l => l.reste > 0)
+      /* On garde tout l'historique : le filtre de période se fait à
+         l'affichage.
+       *
+         Et l'on garde aussi ce qui vient d'être soldé aujourd'hui. Une
+         échéance payée disparaissait à l'instant du versement : la ligne
+         s'effaçait, « Attendu » retombait à zéro, et plus rien ne disait
+         ce qu'on avait récupéré de la journée. C'est le contraire de ce
+         qu'on vient faire ici — on veut voir ce qui devait rentrer, et
+         ce qui est rentré. Elle reste donc visible jusqu'au lendemain,
+         avec son attendu et son versé. */
+      .filter(l => l.reste > 0 || l.date === today)
       .map(l => ({
         ...l,
         nomPartenaire: noms[l.partenaireId] ?? '—',
@@ -394,7 +403,10 @@ export default function OngletRecouvrements({ siteId, userId, onCount, sites, ti
        son chiffre depuis ses missions, et l'ecraser ici le ferait osciller
        entre les deux a chaque chargement. */
     if (roleSite !== 'recouvrement') {
-      onCount?.(lignes.filter(l => l.date === today).length);
+      /* La pastille dit ce qui reste à faire, pas ce qui est fait : une
+         échéance soldée aujourd'hui reste à l'écran pour qu'on lise son
+         attendu, mais elle ne compte plus comme un geste à poser. */
+      onCount?.(lignes.filter(l => l.date === today && l.reste > 0).length);
     }
     setLoading(false);
   }
@@ -1492,7 +1504,7 @@ export default function OngletRecouvrements({ siteId, userId, onCount, sites, ti
                   <span className={`shrink-0 rounded-xl px-2.5 py-1 text-xs font-bold ${sensRecouv === 'echu'
                     ? 'bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400'
                     : 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400'}`}>
-                    {lignesDuJour.length} {sensRecouv === 'echu' ? 'à traiter' : 'à venir'}
+                    {lignesDuJour.filter(l => l.reste > 0).length} {sensRecouv === 'echu' ? 'à traiter' : 'à venir'}
                   </span>
                 )}
                 {/* Un recouvrement se pose aussi d'ici : le partenaire se
