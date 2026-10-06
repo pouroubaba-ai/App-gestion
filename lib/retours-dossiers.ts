@@ -586,7 +586,26 @@ async function confirmerVraiment(params: {
      personne, cela se lit. Et le jour ou un responsable des commandes
      arrive, la regle revient d'elle-meme — c'est la meme mecanique que
      pour les ajustements. */
-  if (!params.seulAuCommerce && d.parUid === params.parUid) {
+  /* Le proprietaire confirme ce qu'il a ouvert.
+   *
+     La separation des deux mains vaut entre employes : l'un declare,
+     l'autre constate, et aucun ne peut faire disparaitre ce qu'il veut.
+     Elle ne vaut pas contre celui a qui appartient la marchandise — il
+     n'a personne a tromper, et l'y soumettre l'obligeait a demander a un
+     employe de valider son propre travail. Le dossier restait alors a
+     l'avant-derniere etape : stock pas rentre, client ni rembourse ni
+     credite.
+   *
+     Pour un employe, la regle tient — sauf s'il est seul aux commandes,
+     auquel cas elle n'arreterait que le travail.
+   *
+     Ce qui reste dans tous les cas : `parUid` dit qui a ouvert,
+     `confirmeParUid` qui a confirme. Quand c'est la meme personne, cela
+     se lit. */
+  const estProprietaire = params.roleSite === null
+    || params.roleSite === undefined;
+  if (!estProprietaire && !params.seulAuCommerce
+    && d.parUid === params.parUid) {
     throw new Error('On ne confirme pas le retour qu’on a ouvert soi-même.');
   }
   if (params.roleSite !== undefined && !peutTraiter(params.roleSite)) {

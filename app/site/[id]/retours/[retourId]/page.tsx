@@ -54,6 +54,10 @@ export default function FicheRetourPage() {
   /* Seul aux commandes sur ce site : la confirmation d'un dossier qu'on
      a ouvert soi-meme redevient possible. */
   const [seul, setSeul] = useState(false);
+  /* Le proprietaire confirme ce qu'il a ouvert : la separation des deux
+     mains vaut entre employes, pas contre celui a qui appartient la
+     marchandise. Voir `confirmerRetour`, meme regle. */
+  const peutConfirmerSonDossier = role === null || seul;
   const [loading, setLoading] = useState(true);
   const [enCours, setEnCours] = useState(false);
   const [erreur, setErreur] = useState('');
@@ -305,9 +309,10 @@ export default function FicheRetourPage() {
               {!clos && peutTraiter(role) && (
                 aConfirmer ? (
                   <button type="button" onClick={confirmer}
-                    disabled={enCours || (sonPropreDossier && !seul)}
+                    disabled={enCours
+                      || (sonPropreDossier && !peutConfirmerSonDossier)}
                     title={sonPropreDossier
-                      ? (seul
+                      ? (peutConfirmerSonDossier
                         ? 'Vous avez ouvert ce retour : la confirmation portera aussi votre nom.'
                         : 'On ne confirme pas le retour qu’on a ouvert soi-même.')
                       : undefined}
@@ -605,7 +610,7 @@ export default function FicheRetourPage() {
 
       {sonPropreDossier && aConfirmer && !clos && peutTraiter(role) && (
         <p className="mt-2 text-[11px] text-gray-400">
-          {seul
+          {peutConfirmerSonDossier
             ? 'Vous avez ouvert ce retour : la confirmation portera aussi votre nom.'
             : 'Vous avez ouvert ce retour : un autre doit le confirmer.'}
         </p>
