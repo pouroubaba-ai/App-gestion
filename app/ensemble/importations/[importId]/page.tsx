@@ -260,7 +260,10 @@ export default function FicheImportationPage() {
     if (!user || !dossier) return;
     roleSurSite(dossier.siteId, user.uid)
       .then(r => setRole(r))
-      .catch(() => setRole(null));
+      /* Une lecture qui echoue ne vaut pas « proprietaire ».
+         `null` dit « aucune restriction » : le rendre ici donnait les
+         pleins pouvoirs a qui perdait le reseau une seconde. */
+      .catch(() => setRole('aucun'));
   }, [user, dossier]);
 
   if (loading) return (

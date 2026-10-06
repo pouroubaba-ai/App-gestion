@@ -69,7 +69,10 @@ export async function ecrireEnCaisse(
 
   const [role, caissier] = await Promise.all([
     parUid
-      ? roleSurSite(parUid, saisie.siteId, adminUid).catch(() => null)
+      /* Une lecture qui echoue ne vaut pas « proprietaire » : `null`
+         ouvre l'apport et le retrait, qui disposent du capital. Sans
+         reponse, on ne desserre rien. */
+      ? roleSurSite(parUid, saisie.siteId, adminUid).catch(() => 'aucun' as const)
       : Promise.resolve(null),
     aUnCaissier(saisie.siteId).catch(() => false),
   ]);

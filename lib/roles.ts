@@ -17,7 +17,23 @@ import { oublierAuteur } from './auteur';
  * être gérante ici et responsable des commandes ailleurs.
  */
 
-export type RoleSite = 'gerant' | 'recouvrement' | 'commandes' | 'caissier';
+/**
+ * Un role sur un site.
+ *
+ * `aucun` n'est pas un poste : c'est la reponse donnee a qui n'en a pas.
+ *
+ * Elle existe parce que `null` en disait deux choses a la fois — « aucune
+ * restriction », qui est le proprietaire, et « pas de membre trouve », qui
+ * est l'inverse. Un compte etranger au site, ou une lecture qui echoue,
+ * obtenait donc les pleins pouvoirs : toutes les fonctions `peut*`
+ * commencent par `role === null`, et lui repondaient oui.
+ *
+ * `aucun` ne figure dans aucune table de permission, donc il ne peut rien
+ * par construction. C'est la bonne reponse a « je ne sais pas », et elle
+ * ne se confond avec rien.
+ */
+export type RoleSite =
+  'gerant' | 'recouvrement' | 'commandes' | 'caissier' | 'aucun';
 
 export interface Membre {
   id: string;
@@ -41,6 +57,9 @@ export const LIBELLES_ROLE: Record<RoleSite, string> = {
   recouvrement: 'Recouvrements',
   commandes: 'Commandes',
   caissier: 'Caisse',
+  /* Pas un poste : la reponse donnee a qui n'en a pas. Elle ne s'affiche
+     dans aucune liste de choix, mais le type exige qu'elle ait un nom. */
+  aucun: 'Aucun acces',
 };
 
 export const DESCRIPTIONS_ROLE: Record<RoleSite, string> = {
@@ -48,6 +67,7 @@ export const DESCRIPTIONS_ROLE: Record<RoleSite, string> = {
   recouvrement: 'Partenaires et recouvrements.',
   commandes: 'Achats et ventes, entrées et sorties.',
   caissier: 'Entrées et sorties de fonds.',
+  aucun: "Ce compte n'a pas de poste sur ce site.",
 };
 
 /**
@@ -91,6 +111,9 @@ const ONGLETS_PAR_ROLE: Record<RoleSite, string[] | null> = {
      Les autres rôles gardent tout sous « Fonds de caisse » — pour eux la
      caisse est une partie du travail, pas le travail. */
   caissier: ['fonds', 'mouvements', 'autorisations'],
+  /* Aucun onglet, et c'est volontaire : un compte sans poste ici ne doit
+     rien ouvrir. La liste vide est ce qui rend ce role inoffensif. */
+  aucun: [],
 };
 
 /**
@@ -151,7 +174,10 @@ export function peutPlanifierRecouvrement(role: RoleSite | null): boolean {
  * se voit.
  */
 export function peutReglerFournisseur(role: RoleSite | null): boolean {
-  return role !== 'recouvrement';
+  /* Defini par exclusion : il faut donc nommer `aucun`, qui n'est pas un
+     poste mais la reponse donnee a qui n'en a pas. Sans cela un compte
+     sans acces passerait, puisqu'il n'est pas du recouvrement. */
+  return role !== 'recouvrement' && role !== 'aucun';
 }
 
 /**
@@ -217,7 +243,9 @@ export function peutDisposerDuCapital(role: RoleSite | null): boolean {
  * trouve en comptant, que personne d'autre ne peut voir à sa place.
  */
 export function peutDeclarerMouvement(role: RoleSite | null): boolean {
-  return role !== 'caissier';
+  /* Meme raison qu'au reglement fournisseur : une regle par exclusion
+     laisse passer tout ce qu'elle n'a pas nomme. */
+  return role !== 'caissier' && role !== 'aucun';
 }
 
 /**
@@ -356,9 +384,15 @@ export async function membresDuSite(siteId: string): Promise<Membre[]> {
 /**
  * Le rôle d'un compte sur un site.
  *
- * `null` veut dire « aucune restriction » : soit le compte est l'admin de
- * l'activité, soit aucun membre ne le désigne et l'app se comporte comme
- * avant. On ne ferme jamais une porte par accident.
+ * `null` veut dire « aucune restriction », et une seule chose peut le
+ * valoir : etre l'admin de l'activite — ce que dit `adminUid`, verifie
+ * contre le document de l'activite.
+ *
+ * Un compte qu'aucun membre ne designe recoit `aucun`, pas `null`. Les
+ * deux se confondaient, et toutes les fonctions `peut*` commencent par
+ * `role === null` : un etranger au site, ou une lecture qui echoue,
+ * obtenait les pleins pouvoirs. On ne ferme jamais une porte par
+ * accident, mais on n'en ouvre pas une par ignorance.
  */
 /**
  * Ce qu'on a déjà demandé aux `membres`, le temps de la session.
@@ -398,7 +432,10 @@ export async function roleSurSite(
     where('compteUid', '==', uid)))
     .then(snap => snap.docs
       .map(d => d.data() as Membre)
-      .find(m => m.actif !== false)?.role ?? null)
+      /* Aucun membre actif : ce compte n'a pas de poste ici. Rendre
+         `null` le ferait passer pour le proprietaire — c'est ce que
+         `null` veut dire partout ailleurs. */
+      .find(m => m.actif !== false)?.role ?? 'aucun')
     .catch(e => {
       /* Un échec ne se retient pas : le garder condamnerait l'écran
          jusqu'au rechargement de la page. */

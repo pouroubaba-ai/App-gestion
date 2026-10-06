@@ -150,7 +150,10 @@ export default function SiteFichePage() {
     if (!user || !siteId) return;
     roleSurSite(user.uid, siteId, activite?.adminUid)
       .then(setRole)
-      .catch(() => setRole(null))
+      /* Une lecture qui echoue ne vaut pas « proprietaire ».
+         `null` dit « aucune restriction » : le rendre ici donnait les
+         pleins pouvoirs a qui perdait le reseau une seconde. */
+      .catch(() => setRole('aucun'))
       .finally(() => setRoleLu(true));
   }, [user, siteId, activite?.adminUid]);
 

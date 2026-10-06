@@ -125,7 +125,13 @@ export default function FicheAchatPage() {
   useEffect(() => {
     if (!user || !siteId) return;
     roleSurSite(user.uid, siteId, activite?.adminUid)
-      .then(setRole).catch(() => {}).finally(() => setRoleLu(true));
+      .then(setRole)
+      /* `catch(() => {})` laissait `role` a sa valeur initiale — `null`,
+         qui veut dire « aucune restriction » — tout en marquant la
+         lecture faite. Un reseau coupe montrait donc « Confirmer » a un
+         gerant et les prix a un responsable des commandes. */
+      .catch(() => setRole('aucun'))
+      .finally(() => setRoleLu(true));
   }, [user, siteId, activite?.adminUid]);
 
   const montreArgent = role !== 'commandes';

@@ -75,7 +75,10 @@ export default function FicheAjustementPage() {
     if (!user) return;
     roleSurSite(user.uid, siteId, activite?.adminUid)
       .then(setRole)
-      .catch(() => setRole(null));
+      /* Une lecture qui echoue ne vaut pas « proprietaire ».
+         `null` dit « aucune restriction » : le rendre ici donnait les
+         pleins pouvoirs a qui perdait le reseau une seconde. */
+      .catch(() => setRole('aucun'));
     /* Seul le propriétaire s'affranchit de la seconde main : un employé
        qui se retrouverait seul un matin ne doit pas pouvoir fermer ses
        propres dossiers. */

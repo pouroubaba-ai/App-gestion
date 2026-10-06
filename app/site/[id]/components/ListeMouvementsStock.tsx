@@ -99,7 +99,10 @@ export default function ListeMouvementsStock({
     if (!user || !siteEcriture) return;
     roleSurSite(user.uid, siteEcriture, activite?.adminUid)
       .then(setRole)
-      .catch(() => setRole(null));
+      /* Une lecture qui echoue ne vaut pas « proprietaire ».
+         `null` dit « aucune restriction » : le rendre ici donnait les
+         pleins pouvoirs a qui perdait le reseau une seconde. */
+      .catch(() => setRole('aucun'));
   }, [user, siteEcriture, activite?.adminUid, roleRecu]);
 
   /* Le responsable des commandes compte des sacs, pas des francs : ce
