@@ -126,12 +126,46 @@ export async function chargerPreparationsDuSite(
   return parDossier;
 }
 
-/** Ce qui a été préparé sur chaque ligne, les annulations déduites. */
+/**
+ * Ce qui a été préparé sur chaque ligne, les annulations déduites.
+ *
+ * Dans l'emballage de la ligne, jamais en unités de base : c'est à ce
+ * compte-là que le préparé se confronte au commandé, qui est lui aussi
+ * en cartons. Un carton de douze préparé vaut un, pas douze.
+ *
+ * Il rendait les unités. Elles repartaient ensuite dans
+ * `quantiteRecue`, qui est en cartons, et la livraison les
+ * remultipliait par la contenance : un carton commandé sortait douze
+ * cartons du stock, facturés douze fois le prix du carton. Le même
+ * nombre servait tour à tour de pièces et de colis.
+ *
+ * Les unités ont leur place — additionner deux dossiers qui prélèvent
+ * le même produit dans des emballages différents — mais c'est
+ * `prepareUnitesParLigne` qui les rend, et son nom le dit.
+ */
 export function prepareParLigne(preparations: Preparation[]): Record<number, number> {
   const parLigne: Record<number, number> = {};
   for (const p of preparations) {
     if (p.annulee) continue;
-    parLigne[p.ligneIndex] = (parLigne[p.ligneIndex] ?? 0) + (p.quantiteUnites ?? p.quantite);
+    parLigne[p.ligneIndex] = (parLigne[p.ligneIndex] ?? 0) + p.quantite;
+  }
+  return parLigne;
+}
+
+/**
+ * Le même préparé, en unités de base.
+ *
+ * Pour ce qui s'additionne entre dossiers : deux cartons ici et cinq
+ * pièces là ne font pas sept.
+ */
+export function prepareUnitesParLigne(
+  preparations: Preparation[],
+): Record<number, number> {
+  const parLigne: Record<number, number> = {};
+  for (const p of preparations) {
+    if (p.annulee) continue;
+    parLigne[p.ligneIndex] = (parLigne[p.ligneIndex] ?? 0)
+      + (p.quantiteUnites ?? p.quantite);
   }
   return parLigne;
 }
