@@ -18,7 +18,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
-import { roleSurSite, type RoleSite } from '@/lib/roles';
+import { roleSurSite, estSeulAuCommerce, type RoleSite } from '@/lib/roles';
 import { auteurCourant } from '@/lib/auteur';
 import LigneTotal from '../../components/LigneTotal';
 import { retourHistorique } from '@/lib/retour';
@@ -51,6 +51,9 @@ export default function FicheRetourPage() {
 
   const [d, setD] = useState<DossierRetour | null>(null);
   const [role, setRole] = useState<RoleSite | null>(null);
+  /* Seul aux commandes sur ce site : la confirmation d'un dossier qu'on
+     a ouvert soi-meme redevient possible. */
+  const [seul, setSeul] = useState(false);
   const [loading, setLoading] = useState(true);
   const [enCours, setEnCours] = useState(false);
   const [erreur, setErreur] = useState('');
@@ -76,8 +79,13 @@ export default function FicheRetourPage() {
     Promise.all([
       chargerRetour(retourId),
       roleSurSite(user.uid, siteId, activite?.adminUid),
+      /* Personne d'autre aux commandes : la separation des deux mains
+         s'efface, elle n'arreterait que le travail. */
+      estSeulAuCommerce(siteId, user.uid).catch(() => false),
     ])
-      .then(([dossier, r]) => { setD(dossier); setRole(r); })
+      .then(([dossier, r, seulIci]) => {
+        setD(dossier); setRole(r); setSeul(seulIci);
+      })
       .catch(() => setD(null))
       .finally(() => setLoading(false));
   }, [user, retourId, siteId, activite?.adminUid]);
@@ -119,6 +127,7 @@ export default function FicheRetourPage() {
         utilisateurFonction: a.utilisateurFonction,
         adminUid: activite?.adminUid ?? null,
         roleSite: role,
+        seulAuCommerce: seul,
       });
       /* Aux commandes on annonce le stock, pas l'argent : c'est leur
          effet à eux, et le seul qu'ils puissent constater. */
@@ -296,9 +305,11 @@ export default function FicheRetourPage() {
               {!clos && peutTraiter(role) && (
                 aConfirmer ? (
                   <button type="button" onClick={confirmer}
-                    disabled={enCours || sonPropreDossier}
+                    disabled={enCours || (sonPropreDossier && !seul)}
                     title={sonPropreDossier
-                      ? 'On ne confirme pas le retour qu’on a ouvert soi-même.'
+                      ? (seul
+                        ? 'Vous avez ouvert ce retour : la confirmation portera aussi votre nom.'
+                        : 'On ne confirme pas le retour qu’on a ouvert soi-même.')
                       : undefined}
                     className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-indigo-700 disabled:opacity-40">
                     {enCours ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
@@ -594,7 +605,9 @@ export default function FicheRetourPage() {
 
       {sonPropreDossier && aConfirmer && !clos && peutTraiter(role) && (
         <p className="mt-2 text-[11px] text-gray-400">
-          Vous avez ouvert ce retour : un autre doit le confirmer.
+          {seul
+            ? 'Vous avez ouvert ce retour : la confirmation portera aussi votre nom.'
+            : 'Vous avez ouvert ce retour : un autre doit le confirmer.'}
         </p>
       )}
       </div>

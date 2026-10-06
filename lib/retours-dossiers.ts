@@ -492,6 +492,13 @@ export async function confirmerRetour(params: {
   utilisateurFonction?: string | null;
   adminUid?: string | null;
   roleSite?: string | null;
+  /**
+   * Personne d'autre ne tient les commandes sur ce site.
+   *
+   * La separation des deux mains s'efface alors : elle ne protege rien
+   * quand il n'y a qu'une main, elle arrete seulement le travail.
+   */
+  seulAuCommerce?: boolean;
 }): Promise<{ deduit: number; rembourse: number; parts: PartFacture[] }> {
   /* Un seul passage à la fois par dossier. Le second appel n'en déclenche
      pas un autre : il attend le résultat du premier. */
@@ -511,6 +518,8 @@ async function confirmerVraiment(params: {
   utilisateurFonction?: string | null;
   adminUid?: string | null;
   roleSite?: string | null;
+  /** Voir `confirmerRetour` : la regle des deux mains s'efface. */
+  seulAuCommerce?: boolean;
 }): Promise<{ deduit: number; rembourse: number; parts: PartFacture[] }> {
   const d = params.dossier;
 
@@ -562,9 +571,22 @@ async function confirmerVraiment(params: {
   if (etapes.indexOf(d.etat) !== etapes.length - 2) {
     throw new Error('Ce retour n’est pas encore prêt à être confirmé.');
   }
-  /* Jamais celui qui a décidé. C'est toute la raison d'être du cycle :
-     séparées, les deux mains ne peuvent pas s'entendre. */
-  if (d.parUid === params.parUid) {
+  /* Seul au commerce, on ferme soi-meme ce qu'on a ouvert.
+   *
+     La separation des deux mains protege un registre que plusieurs
+     tiennent : l'un declare, l'autre va constater. Elle ne protege rien
+     quand il n'y a qu'une main — elle arrete le travail. Le dossier
+     restait a l'avant-derniere etape, la marchandise attendait au rayon
+     sans etre rentree, et le client n'etait ni rembourse ni credite.
+     Il aurait fallu inventer un second compte pour contourner, ce qui
+     vaudrait moins que tout.
+   *
+     Ce qui reste : les deux gestes s'inscrivent separement. `parUid` dit
+     qui a ouvert, `confirmeParUid` qui a confirme. Quand c'est la meme
+     personne, cela se lit. Et le jour ou un responsable des commandes
+     arrive, la regle revient d'elle-meme — c'est la meme mecanique que
+     pour les ajustements. */
+  if (!params.seulAuCommerce && d.parUid === params.parUid) {
     throw new Error('On ne confirme pas le retour qu’on a ouvert soi-même.');
   }
   if (params.roleSite !== undefined && !peutTraiter(params.roleSite)) {
