@@ -587,9 +587,13 @@ export async function annulerOrdre(params: {
   /* On lit l'état avant d'écrire : la porte par laquelle on arrive ne
      dit pas où en sont les deux autres dossiers. Un ordre dont la vente
      du destinataire est livrée a déjà bougé du stock et de l'argent. */
-  const [snapVente, snapTransfert] = await Promise.all([
+  const [snapVente, snapTransfert, snapSource, snapAchat] = await Promise.all([
     getDoc(doc(db, 'ventes', lien.venteDestId)),
     getDoc(doc(db, 'transferts', lien.transfertId)),
+    getDoc(doc(db, 'ventes', lien.commandeSourceId)),
+    lien.achatDestId
+      ? getDoc(doc(db, 'achats', lien.achatDestId))
+      : Promise.resolve(null),
   ]);
   if (snapVente.exists() && snapVente.data().etat === 'livre') {
     throw new Error(
@@ -598,6 +602,22 @@ export async function annulerOrdre(params: {
   if (snapTransfert.exists() && snapTransfert.data().etat === 'confirme') {
     throw new Error(
       'Le transfert est confirmé : la marchandise est arrivée, il faut un retour.');
+  }
+  /* Les deux autres dossiers comptent autant.
+   *
+     On ne regardait que la vente du destinataire et le transfert. Mais
+     une remise peut s'arreter en chemin : le bon de la source passe a
+     « livre » et l'achat a « confirme » avant que le reste aboutisse.
+     Annuler alors reecrivait « annule » par-dessus un dossier remis et
+     une dette inter-sites deja nee — la marchandise avait bouge, et plus
+     rien ne disait pourquoi. */
+  if (snapSource.exists() && snapSource.data().etat === 'livre') {
+    throw new Error(
+      'Le bon de la source est remis : la marchandise est partie, il faut un retour.');
+  }
+  if (snapAchat?.exists() && snapAchat.data().etat === 'confirme') {
+    throw new Error(
+      "L'achat entre sites est confirmé : la dette est née, il faut un retour.");
   }
 
   const batch = writeBatch(db);

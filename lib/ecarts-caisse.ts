@@ -65,6 +65,19 @@ export interface EcartCaisse {
      reconnaitra, et il se fige ici — un role change, le constat non. */
   parRoleSite?: string | null;
 
+  /**
+   * Cet ecart nait d'une entree refusee : l'argent n'est jamais entre.
+   *
+   * Un manque ordinaire sort de l'argent — la caisse en avait moins que
+   * le registre ne disait, et le registre se corrige en sortant la
+   * difference. Mais une entree refusee n'a jamais rien ajoute au solde :
+   * le faire sortir le retirerait une seconde fois, pour une somme que
+   * personne n'a jamais eue en main.
+   *
+   * Le constat reste — quelqu'un dit avoir remis, le caissier dit ne pas
+   * avoir recu, et cela doit se lire. Mais il se reconnait a zero.
+   */
+  entreeJamaisEntree?: boolean;
   etat: EtatEcart;
   /* Qui a reconnu, et quand. Absent tant que l'écart attend. */
   reconnuParUid?: string | null;
@@ -128,6 +141,8 @@ export async function declarerEcart(saisie: {
   parRoleSite: string | null;
   /** Ce que le registre annonce : un manque ne peut pas le dépasser. */
   soldeTheorique?: number | null;
+  /** Voir le champ du meme nom sur `Ecart` : se reconnait a zero. */
+  entreeJamaisEntree?: boolean;
 }): Promise<string> {
   if (saisie.montant <= 0) throw new Error('Le montant doit être positif.');
 
@@ -165,6 +180,7 @@ export async function declarerEcart(saisie: {
     parNom: saisie.parNom ?? null,
     parFonction: saisie.parFonction ?? null,
     parRoleSite: saisie.parRoleSite,
+    ...(saisie.entreeJamaisEntree ? { entreeJamaisEntree: true } : {}),
     etat: 'en_attente' as EtatEcart,
     createdAt: serverTimestamp(),
   });
@@ -204,20 +220,25 @@ export async function reconnaitreEcart(params: {
 
   /* Le mouvement porte le sens de l'écart : un excédent entre, un manque
      sort. C'est lui qui déplace le solde — l'écart ne fait que le dire. */
-  const mouvementId = await enregistrerMouvementCaisse({
-    siteId: e.siteId,
-    sens: e.sens === 'excedent' ? 'entree' : 'sortie',
-    motif: 'reajustement',
-    sousMotif: e.sens === 'excedent' ? 'Excédent constaté' : 'Manque constaté',
-    detail: (e.detail ? `${e.detail} — ` : '')
-      + `constaté par ${e.parNom ?? '—'}`
-      + (e.parFonction ? ` (${e.parFonction})` : ''),
-    montant: e.montant,
-    date: e.date,
-    utilisateur: params.parUid,
-    utilisateurNom: params.parNom ?? null,
-    partenaireId: null,
-  });
+  /* Un ecart ne d'une entree refusee se reconnait a zero : l'argent
+     n'est jamais entre, il n'y a rien a en faire sortir. Le constat,
+     lui, reste inscrit — c'est tout ce qu'il y avait a enregistrer. */
+  const mouvementId = e.entreeJamaisEntree
+    ? null
+    : await enregistrerMouvementCaisse({
+      siteId: e.siteId,
+      sens: e.sens === 'excedent' ? 'entree' : 'sortie',
+      motif: 'reajustement',
+      sousMotif: e.sens === 'excedent' ? 'Excédent constaté' : 'Manque constaté',
+      detail: (e.detail ? `${e.detail} — ` : '')
+        + `constaté par ${e.parNom ?? '—'}`
+        + (e.parFonction ? ` (${e.parFonction})` : ''),
+      montant: e.montant,
+      date: e.date,
+      utilisateur: params.parUid,
+      utilisateurNom: params.parNom ?? null,
+      partenaireId: null,
+    });
 
   await updateDoc(doc(db, 'ecarts_caisse', e.id), {
     etat: 'reconnu' as EtatEcart,

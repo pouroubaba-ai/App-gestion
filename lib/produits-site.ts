@@ -118,6 +118,15 @@ export async function ouvrirDetention(params: {
   prixMarche?: number | null;
   seuilAlerte?: number | null;
   variantes?: VarianteSite[];
+  /**
+   * Le dossier qui autorise d'ouvrir cette detention chez un autre site.
+   *
+   * Les regles l'exigent pour une detention qui nait du cote d'en face —
+   * un transfert ou la livraison d'un ordre vers un produit que le
+   * destinataire n'avait jamais detenu. Sans elle, la creation est
+   * refusee et le dossier s'arrete au premier produit nouveau.
+   */
+  marqueOuvrante?: Record<string, string>;
 }): Promise<string> {
   const existante = await detentionDe(params.siteId, params.produitId);
   if (existante) return existante.id;
@@ -133,6 +142,7 @@ export async function ouvrirDetention(params: {
     prixMarche: params.prixMarche ?? null,
     seuilAlerte: params.seuilAlerte ?? null,
     variantes: params.variantes ?? [],
+    ...(params.marqueOuvrante ?? {}),
     createdAt: serverTimestamp(),
   });
   return ref.id;

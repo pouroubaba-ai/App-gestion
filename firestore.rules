@@ -233,7 +233,14 @@ service cloud.firestore {
     function transfertOuvre(transfertId, siteDetention) {
       return transfertId is string && transfertId != ''
         && exists(/databases/$(database)/documents/transferts/$(transfertId))
-        && transfertLie(
+        /* La version econome : `transfertLie` passe par `travailleSur`,
+           qui lit le site, son activite, son proprietaire puis le membre
+           — quatre lectures, et deux fois, pour les deux bouts. Avec la
+           lecture du document et celle du transfert, le plafond de dix
+           lectures par regle etait franchi, et Firestore repondait
+           « permissions » sans dire que c'etait un budget epuise. Meme
+           correction que pour les ventes d'un ordre. */
+        && transfertLieLeger(
           get(/databases/$(database)/documents/transferts/$(transfertId)).data,
           siteDetention);
     }
@@ -872,7 +879,19 @@ service cloud.firestore {
         ]
         /* Un transfert se confirme à l'arrivée : la destination écrit
            ce qu'elle a réellement reçu, et elle seule peut le constater. */
-        && (travailleSur(siteDuDoc())
+        /* L'ordre des branches decide, pas seulement leur contenu.
+         *
+           Une regle ne peut lire que dix documents, et un `||` evalue
+           dans l'ordre : les quatre `travailleSur` qui ouvraient cette
+           liste coutent jusqu'a quatre lectures chacun. Le budget etait
+           epuise avant d'atteindre la branche du transfert, et Firestore
+           repondait « permissions » sans dire que c'etait un plafond.
+           Les branches econnomes passent donc devant. */
+        && ((col == 'produits_site'
+            && transfertOuvre(
+              request.resource.data.get('transfertOuvrant', ''),
+              siteDuDoc()))
+          || travailleSur(siteDuDoc())
           || travailleSur(siteDestDuDoc())
           || travailleSur(siteLieExistant())
           || travailleSur(siteLieTransfert())

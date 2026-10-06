@@ -462,6 +462,11 @@ export async function refuser(params: {
       parUid: params.parUid,
       parNom: params.parNom ?? null,
       parRoleSite: 'caissier',
+      /* L'argent n'est jamais entre : le solde ne l'a jamais compte.
+         Reconnaitre ce manque en sortant la somme la retirerait une
+         seconde fois, pour un argent que personne n'a eu en main. Le
+         constat vaut, son mouvement vaut zero. */
+      entreeJamaisEntree: true,
       /* Pas de plafond ici : l'écart ne sort rien du tiroir, il nomme une
          somme qui n'y est jamais entrée. Le borner au solde empêcherait
          de constater un manque plus grand que ce qui reste — exactement

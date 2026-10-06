@@ -834,6 +834,26 @@ async function appliquerLigne(
    */
   registre?: RegistreLignes,
 ): Promise<void> {
+  /* Ce qui autorise d'ecrire sur la detention d'un AUTRE site.
+   *
+     Les regles Firestore ne devinent pas qu'un transfert ou un ordre
+     relie deux sites : il faut le leur dire, en posant sur la detention
+     l'identifiant du dossier qui la fait bouger. Elles vont alors le
+     lire et verifier que ce dossier existe et relie bien ces deux
+     sites-la.
+   *
+     `mouvements.ts` le faisait deja ; ici on ne le faisait pas — et
+     c'est ici qu'un transfert et une livraison d'ordre ecrivent. Toute
+     ecriture chez le site d'en face etait donc refusee, sauf au
+     proprietaire, qui passe par un autre chemin : en pratique un gerant
+     ne pouvait pas livrer un ordre. */
+  const marque: Record<string, string> =
+    params.motif === 'transfert' && params.documentId
+      ? { transfertOuvrant: params.documentId }
+      : (params.motif === 'vente' && params.venteId
+        ? { venteOuvrante: params.venteId }
+        : {});
+
   const dejaLu = registre?.produits.get(params.produitId);
   const produit = dejaLu ?? (await (async () => {
     const snap = await getDoc(doc(db, 'produits', params.produitId));
@@ -868,6 +888,10 @@ async function appliquerLigne(
       variantes: variantesProduit.map(v => ({
         cle: v.cle, stock: 0, coutMoyen: 0, prixVente: v.prixVente ?? null,
       })),
+      /* Un produit que le destinataire n'avait jamais detenu : sa fiche
+         de rayon nait ici, et les regles veulent savoir au nom de quel
+         dossier on ecrit chez lui. */
+      marqueOuvrante: marque,
     });
     refDetention = doc(db, 'produits_site', detentionId);
     /* Une détention qui vient de naître est à zéro : la relire ne
@@ -1045,7 +1069,7 @@ async function appliquerLigne(
           prixVente: nouveauPrix ?? null,
         }];
     const total = maj.reduce((s, v) => s + v.stock, 0);
-    batch.update(refDetention, { variantes: maj, stock: total });
+    batch.update(refDetention, { variantes: maj, stock: total, ...marque });
     /* Le registre suit ce que le lot écrira.
      *
      * Deux lignes du même produit — le même article compté deux fois sur
@@ -1063,6 +1087,7 @@ async function appliquerLigne(
       stock: nouveauStock, coutMoyen: nouveauCout,
       coutInconnu: inconnuApres,
       ...(nouveauPrix != null ? { prixVente: nouveauPrix } : {}),
+      ...marque,
     });
     if (enMemoire || registre?.detentions.has(cle)) {
       registre?.detentions.set(cle, {
