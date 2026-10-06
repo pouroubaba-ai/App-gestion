@@ -30,6 +30,8 @@ interface Mouvement {
    */
   margeInconnue?: boolean;
   role: Role;
+  /** le site d'où vient la ligne ; la vue d'ensemble en couvre plusieurs */
+  siteId?: string | null;
   /** ce qui a produit la ligne ; porte le motif du document */
   type?: 'achat' | 'vente';
   produit: string;
@@ -502,12 +504,23 @@ export default function TransactionsSitePage() {
     });
   }, [filtres, retours, role]);
 
+  /* Le nom d'un site, pour la colonne qui le dit. Un identifiant qu'on ne
+     reconnait pas s'affiche en tiret plutot qu'en code : la ligne vient
+     d'un site supprime, et son code ne dirait rien a personne. */
+  const nomDuSite = (id: string | null | undefined) =>
+    (id && sitesConnus?.find(s => s.id === id)?.nom) || '—';
+
+  /* La colonne Site n'a de sens que si la vue en couvre plusieurs : sur un
+     seul, elle repeterait le meme nom a chaque ligne. */
+  const montreSite = venantDEnsemble && !filtreSite && (sitesConnus?.length ?? 0) > 1;
+
   /* Agrégation onglet document : les lignes d'un même dossier se regroupent
      sous lui. Une ligne sans dossier a été saisie à la main et reste seule. */
   const documents = useMemo(() => {
     const map = new Map<string, {
       cle: string; reference: string; achatId?: string | null; venteId?: string | null;
       nomPartenaire: string; date: string;
+      siteId: string | null;
       utilisateurNom: string | null; utilisateurFonction: string | null;
       produits: number; total: number; retour: number; verse: number;
       benefice: number; sansCout: number;
@@ -521,6 +534,9 @@ export default function TransactionsSitePage() {
         achatId: m.achatId ?? null,
         venteId: m.venteId ?? null,
         nomPartenaire: m.nomPartenaire ?? '—',
+        /* Toutes les lignes d'un dossier viennent du même site : la
+           première vue le dit pour l'ensemble. */
+        siteId: prev?.siteId ?? m.siteId ?? null,
         /* L'auteur du premier mouvement du dossier : c'est lui qui l'a conclu. */
         utilisateurNom: prev?.utilisateurNom ?? m.utilisateurNom ?? null,
         utilisateurFonction: prev?.utilisateurFonction ?? m.utilisateurFonction ?? null,
@@ -610,12 +626,14 @@ export default function TransactionsSitePage() {
 
   const documentsVus = applique(
     documents.filter(d =>
-      correspond(d.reference, d.nomPartenaire) && passeStatut(d.total, d.verse)),
+      correspond(d.reference, d.nomPartenaire) && passeStatut(Math.max(0, d.total - d.retour), d.verse)),
     (d, c) => ({
       reference: d.reference, partenaire: d.nomPartenaire, date: d.date,
-      produits: d.produits, total: d.total, verse: d.verse,
+      site: nomDuSite(d.siteId),
+      produits: d.produits, total: Math.max(0, d.total - d.retour),
+      verse: Math.min(d.verse, Math.max(0, d.total - d.retour)),
       benefice: d.benefice,
-      retour: d.retour, reste: Math.max(0, d.total - d.verse),
+      retour: d.retour, reste: Math.max(0, d.total - d.retour - d.verse),
     } as Record<string, number | string>)[c] ?? 0);
 
   const versementsVus = applique(
@@ -1078,6 +1096,10 @@ export default function TransactionsSitePage() {
                       <tr className="bg-indigo-600 text-white">
                         <th className="text-center px-4 py-3 font-medium">Référence</th>
                         <th className="text-center px-4 py-3 font-medium">{role === 'client' ? 'Client' : 'Fournisseur'}</th>
+                        {montreSite && (
+                          <EnTeteTri cle="site" actif={tri?.cle === 'site'}
+                            sens={tri?.sens ?? 'desc'} onTrier={trier}>Site</EnTeteTri>
+                        )}
                         <th className="text-center px-4 py-3 font-medium">Date</th>
                         <EnTeteTri cle="produits" actif={tri?.cle === 'produits'}
                           sens={tri?.sens ?? 'desc'} onTrier={trier}>Produits</EnTeteTri>
@@ -1103,7 +1125,25 @@ export default function TransactionsSitePage() {
                     </thead>
                     <tbody className="divide-y divide-gray-50 dark:divide-gray-800">
                       {documentsVus.map(d => {
-                        const reste = Math.max(0, d.total - d.verse);
+                        /* Ce que le dossier pese encore, une fois la
+                           marchandise rendue retiree. Le total brut et le
+                           retour s'affichaient cote a cote sans jamais se
+                           rencontrer : la ligne annoncait 55 000 dus sur
+                           une vente integralement rendue, et le total de
+                           la colonne ne tombait jamais juste. C'est la
+                           regle qu'applique deja cumuler() dans
+                           lib/soldes.ts, d'ou l'onglet Partenaires tire
+                           ses chiffres — les deux onglets disent
+                           desormais la meme chose. */
+                        const totalNet = Math.max(0, d.total - d.retour);
+                        /* Le verse est borne par ce qui reste du : un
+                           paiement fait avant le retour peut depasser le
+                           net, et la ligne afficherait plus que son
+                           total. L'argent en trop n'a pas disparu — il
+                           est rembourse ou reporte, et se lit sur le
+                           dossier, pas ici. */
+                        const verseVu = Math.min(d.verse, totalNet);
+                        const reste = Math.max(0, totalNet - d.verse);
                         const lien = d.achatId
                           ? `/site/${siteId}/achats/${d.achatId}`
                           : d.venteId ? `/site/${siteId}/ventes/${d.venteId}` : null;
@@ -1113,11 +1153,14 @@ export default function TransactionsSitePage() {
                             className={`hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors ${lien ? 'cursor-pointer' : ''}`}>
                             <td className="px-4 py-3 font-medium text-gray-900 dark:text-gray-100 text-center">{d.reference}</td>
                             <td className="px-4 py-3 text-gray-700 dark:text-gray-300 text-center">{d.nomPartenaire}</td>
+                            {montreSite && (
+                              <td className="px-4 py-3 text-gray-500 text-center">{nomDuSite(d.siteId)}</td>
+                            )}
                             <td className="px-4 py-3 text-gray-500 text-center">
                               {d.date ? new Date(d.date).toLocaleDateString('fr-FR') : '—'}
                             </td>
                             <td className="px-4 py-3 text-gray-500 text-center">{d.produits}</td>
-                            <td className="px-4 py-3 font-medium text-gray-900 dark:text-gray-100 text-center">{formatMontant(d.total)}</td>
+                            <td className="px-4 py-3 font-medium text-gray-900 dark:text-gray-100 text-center">{formatMontant(totalNet)}</td>
                             {/* Le benefice du dossier. Un tiret quand aucune
                                 de ses lignes ne sait ce qu'elle a coute :
                                 afficher le prix de vente entier ferait lire
@@ -1142,7 +1185,7 @@ export default function TransactionsSitePage() {
                                 )}
                               </td>
                             )}
-                            <td className="px-4 py-3 text-gray-700 dark:text-gray-300 text-center">{formatMontant(d.verse)}</td>
+                            <td className="px-4 py-3 text-gray-700 dark:text-gray-300 text-center">{formatMontant(verseVu)}</td>
                             <td className={`px-4 py-3 text-center ${
                               d.retour > 0 ? 'text-orange-500 font-medium' : 'text-gray-300 dark:text-gray-600'}`}>
                               {formatMontant(d.retour)}
