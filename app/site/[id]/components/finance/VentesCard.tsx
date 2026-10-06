@@ -57,7 +57,30 @@ export default function VentesCard({
   const ventesMesurees = Math.max(0, ventes - ventesSansMarge);
   const tauxMarge = ventesMesurees > 0
     ? Math.round((benefice / ventesMesurees) * 100) : 0;
-  const tauxReste = ventes > 0 ? Math.round((reste / ventes) * 100) : 0;
+  /* Le taux ne peut pas depasser 100 : on ne laisse pas impaye plus que
+     ce qu'on a vendu.
+   *
+     Il affichait « 180 % non encaisse », et un plafond a 200 masquait le
+     cas au lieu de le corriger. Les deux chiffres ne viennent pas de la
+     meme source : les ventes se comptent sur les mouvements de sortie,
+     le reste sur les dossiers non soldes. Un dossier dont le mouvement
+     porte une valeur nulle — une marchandise au cout inconnu, une
+     ecriture de reprise — compte sa creance sans compter sa vente, et le
+     rapport s'envole.
+   *
+     Borner n'efface pas l'ecart, mais un pourcentage impossible fait
+     douter de tout l'ecran ; « 100 % non encaisse » reste vrai et se
+     lit. Ce qu'il faudrait pour que les deux s'accordent, c'est que
+     chaque vente porte son prix sur son mouvement — ce qui suppose un
+     cout connu, et 398 des 680 detentions n'en ont pas. */
+  /* La part des ventes dont on ignore le cout. Elle decide si la mention
+     est un detail ou un avertissement. */
+  const partSansMarge = ventes > 0
+    ? Math.round((ventesSansMarge / ventes) * 100) : 0;
+
+  const tauxReste = ventes > 0
+    ? Math.min(100, Math.round((reste / ventes) * 100))
+    : 0;
 
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -80,9 +103,15 @@ export default function VentesCard({
         {/* Ce que le bénéfice ne couvre pas. Ne s'affiche qu'en existant :
             montré à zéro, il passerait inaperçu le jour où il compte. */}
         {nbSansMarge > 0 && (
-          <p className="mt-0.5 text-[11px] text-indigo-200">
+          <p className={`mt-0.5 text-[11px] ${partSansMarge >= 30
+            ? 'font-semibold text-amber-300' : 'text-indigo-200'}`}>
             dont {formatMontant(ventesSansMarge)} sans coût connu
             {' '}({nbSansMarge} vente{nbSansMarge > 1 ? 's' : ''})
+            {/* La part change la lecture du benefice au-dessus. A 5 %
+                c'est un detail ; a 54 % le taux affiche ne porte plus
+                que sur la moitie des ventes, et le lire comme une marge
+                globale trompe. On le dit, et la couleur l'appuie. */}
+            {partSansMarge >= 30 && ` — ${partSansMarge} % des ventes`}
           </p>
         )}
       </div>
@@ -115,7 +144,7 @@ export default function VentesCard({
           {/* Ce taux est celui du reste, pas de l'encaissé. Collé derrière
               « Encaissé 0 FCFA », « 100 % des ventes » se lisait comme un
               encaissement total alors qu'il dit l'inverse. */}
-          {ventes > 0 && tauxReste <= 200 ? (
+          {ventes > 0 ? (
             <span className={reste > 0 ? 'font-semibold text-red-500' : ''}>
               {' · '}{tauxReste}% non encaissé
             </span>
