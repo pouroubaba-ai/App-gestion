@@ -10,7 +10,22 @@
  */
 export function formatMontant(n: number | null | undefined): string {
   if (n == null || isNaN(n)) return '— FCFA';
-  return Math.round(n).toLocaleString('fr-FR') + ' FCFA';
+  /* Une espace insecable normale entre les milliers, pas l'espace fine.
+   *
+     `toLocaleString('fr-FR')` separe avec U+202F, une espace fine : a la
+     taille d'un indicateur elle disparait, et « 3 410 350 » se lit d'un
+     bloc — on croit voir trente-quatre millions la ou il y en a trois.
+     Sur des montants qui engagent de l'argent, une lecture de travers
+     coute plus cher qu'une typographie imparfaite. U+00A0 est plus large
+     et reste insecable : le nombre ne se coupe jamais en fin de ligne. */
+  /* Ecrites en echappement : deux espaces differentes se ressemblent
+     a l'oeil, et un editeur peut remplacer l'une par l'autre sans
+     qu'on le voie. */
+  const ESPACE_FINE = String.fromCharCode(0x202F);
+  const ESPACE_INSECABLE = String.fromCharCode(0x00A0);
+  return Math.round(n).toLocaleString('fr-FR')
+    .split(ESPACE_FINE).join(ESPACE_INSECABLE)
+    + ESPACE_INSECABLE + 'FCFA';
 }
 
 /**
