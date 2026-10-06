@@ -3,7 +3,7 @@ import { estEnsemble, racineRetour } from '@/lib/retour';
 import { useEffect, useState, useMemo, useRef } from 'react';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { lireParSite, type Portee } from '@/lib/portee';
-import { sitesDeLActivite } from '@/lib/produits-site';
+import { FiltreSite, type SiteConnu } from '../components/ContexteSites';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/lib/auth-context';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
@@ -158,21 +158,54 @@ export default function TransactionsSitePage() {
    * Elle lit donc une portée : le site de l'adresse quand il y en a un,
    * tous ceux de l'activité quand on vient de l'ensemble. */
   const venantDEnsemble = estEnsemble(searchParams);
-  const [sitesActivite, setSitesActivite] = useState<string[] | null>(null);
+  /* Les sites avec leur nom : le filtre les propose, et chaque ligne dit
+     d'où elle vient. Les identifiants seuls ne suffisaient plus. */
+  const [sitesConnus, setSitesConnus] = useState<SiteConnu[] | null>(null);
   useEffect(() => {
-    if (!venantDEnsemble || !activite?.id) { setSitesActivite(null); return; }
+    if (!venantDEnsemble || !activite?.id) { setSitesConnus(null); return; }
     let vivant = true;
-    sitesDeLActivite(activite.id)
-      .then(l => { if (vivant) setSitesActivite(l); })
-      .catch(() => { if (vivant) setSitesActivite(null); });
+    getDocs(query(collection(db, 'sites'),
+      where('activiteId', '==', activite.id)))
+      .then(snap => {
+        if (!vivant) return;
+        setSitesConnus(snap.docs
+          .map(d => ({ id: d.id, nom: (d.data().nom ?? '—') as string }))
+          .sort((a, b) => a.nom.localeCompare(b.nom)));
+      })
+      .catch(() => { if (vivant) setSitesConnus(null); });
     return () => { vivant = false; };
   }, [venantDEnsemble, activite?.id]);
 
+  /* Le site choisi dans le filtre, ou tous. Il voyage dans l'adresse,
+     comme la période : un rechargement ne doit pas rendre la vue à son
+     état d'origine.
+   *
+     `useVueUrl` ne convient pas ici : il fige la valeur au premier rendu
+     et refuse ce qui n'est pas dans sa liste — or les sites arrivent
+     après, et un `?site=` lu trop tôt serait rejeté puis perdu. On garde
+     donc l'état à la main, et l'on écrit l'adresse au changement. */
+  const [filtreSite, setFiltreSiteEtat] = useState<string>(
+    () => searchParams.get('site') ?? '');
+  const setFiltreSite = (v: string) => {
+    setFiltreSiteEtat(v);
+    const q = new URLSearchParams(window.location.search);
+    if (v) q.set('site', v); else q.delete('site');
+    const suite = q.toString();
+    window.history.replaceState(null, '',
+      suite ? `${window.location.pathname}?${suite}` : window.location.pathname);
+  };
+
   /* Tant que la liste n'est pas lue, on ne lit rien : lire le site de
      l'adresse en attendant ferait clignoter un montant partiel. */
-  const portee: Portee | null = venantDEnsemble
-    ? sitesActivite
-    : siteId;
+  /* Stable d'un rendu à l'autre : un tableau recréé à chaque passage
+     relancerait l'effet de chargement en boucle, et la page lirait la
+     base sans fin. */
+  const portee: Portee | null = useMemo(
+    () => (venantDEnsemble
+      ? (filtreSite ? [filtreSite] : (sitesConnus?.map(s => s.id) ?? null))
+      : siteId),
+    [venantDEnsemble, filtreSite, sitesConnus, siteId],
+  );
 
   const [role, setRole] = useState<Role>(roleParam);
   /* L'onglet d'arrivée se demande dans l'adresse.
@@ -698,6 +731,15 @@ export default function TransactionsSitePage() {
               retrouver ici permet de la déplier ou de la resserrer sans
               repartir du tableau de bord. */}
           <PeriodFilter periode={periode} onChange={setPeriode} />
+
+          {/* Le site, à côté de la période. Il ne paraît que lorsqu'il y
+              a plusieurs sites à départager — `FiltreSite` s'en charge
+              lui-même : un choix à une seule option n'est pas un choix. */}
+          <FiltreSite
+            sites={sitesConnus ?? []}
+            valeur={filtreSite}
+            onChange={setFiltreSite}
+          />
 
           {/* Seuls les tableaux qui portent un statut se filtrent ainsi : un
               versement est un fait accompli, il n'est ni soldé ni partiel. */}
