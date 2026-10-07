@@ -120,6 +120,15 @@ interface LignePanier extends LigneFlux {
    */
   prixRecommande?: number;
   prixMarche?: number | null;
+  /**
+   * Cette quantité vient de dehors.
+   *
+   * Posé des le clic, quand le rayon est vide — avant qu'on sache chez
+   * qui. `fournisseurId` ne le dirait pas : il reste nul tant que le nom
+   * n'est pas saisi, et le plafond du stock doit tomber des maintenant,
+   * sinon la ligne naitrait a zero et disparaitrait aussitot.
+   */
+  prisDehors?: boolean;
 }
 
 /**
@@ -152,6 +161,11 @@ export default function ComptoirPage() {
   const retourCycle = `${racineRetour(estEnsemble(searchParams), siteId)}?onglet=cycle-vente`;
 
   const [clients, setClients] = useState<ClientBref[]>([]);
+  /* Ceux chez qui on prend ce qu'on n'a pas. Reguliers et occasionnels
+     ensemble : au comptoir on ne se demande pas dans quelle categorie
+     range le voisin, on tape son nom. */
+  const [fournisseurs, setFournisseurs] = useState<
+    { id: string; nom: string; occasionnel: boolean }[]>([]);
   const [produits, setProduits] = useState<ProduitChoisissable[]>([]);
   const [loading, setLoading] = useState(true);
   /* `null` tant qu'on ne sait pas, puis le rôle — lui aussi `null` pour qui
@@ -283,6 +297,17 @@ export default function ComptoirPage() {
       setClients(partSnap.docs
         .filter(d => d.data().rolesClient)
         .map(d => ({ id: d.id, nom: d.data().nom as string })));
+      /* Ceux chez qui on va chercher ce qui manque. Le meme snapshot :
+         demander deux fois les partenaires pour les trier autrement
+         couterait une lecture pour rien.
+         Les occasionnels y sont, et les reguliers aussi — on prend chez
+         l'un comme chez l'autre, et c'est au moment de nommer qu'on
+         choisit. */
+      setFournisseurs(partSnap.docs
+        .filter(d => d.data().rolesFournisseur)
+        .map(d => ({ id: d.id, nom: d.data().nom as string,
+          occasionnel: !!d.data().occasionnel }))
+        .sort((a, b) => a.nom.localeCompare(b.nom)));
       /* `produitsDuSite` a deja joint le produit et la detention : les
          objets arrivent complets. */
       setProduits(prodSnap as ProduitChoisissable[]);
@@ -358,11 +383,15 @@ export default function ComptoirPage() {
         const a = articles.find(x => x.cle === l.cle);
         if (!a || a.stock === l.stockUnites) return l;
         change = true;
+        /* Ce qui vient de dehors ne depend pas du rayon : le ramener au
+           stock le ferait tomber a zero et disparaitre. */
+        if (l.prisDehors) return { ...l, stockUnites: a.stock };
         const max = Math.max(1, Math.floor(a.stock / Math.max(1, l.contenance)));
         return { ...l, stockUnites: a.stock,
           quantiteDemandee: Math.min(l.quantiteDemandee, max) };
-      /* Un produit épuisé depuis, ou retiré du catalogue, ne se vend plus. */
-      }).filter(l => l.stockUnites > 0);
+      /* Un produit épuisé depuis, ou retiré du catalogue, ne se vend plus —
+         sauf celui qu'on va chercher dehors, que le rayon ne borne pas. */
+      }).filter(l => l.prisDehors || l.stockUnites > 0);
       if (!change && maj.length === prev.length) return prev;
       return maj;
     });
@@ -419,15 +448,42 @@ export default function ComptoirPage() {
   const clientRequis = aCredit;
   const pret = panier.length > 0
     && panier.every(l => (l.prixVente ?? 0) > 0)
+    /* Une ligne prise dehors doit dire chez qui et a combien.
+     *
+       Sans le nom, la dette n'a personne a qui s'adresser. Sans le cout,
+       la marge compte le prix de vente entier en benefice — l'erreur
+       qu'on voulait justement eviter en ne passant pas « hors stock ». */
+    && panier.every(l => !l.prisDehors
+      || (!!l.fournisseurNom?.trim() && (l.valeurUnitaire ?? 0) > 0))
     && (!clientRequis || !!clientId)
     && !enCours;
 
   /** Ce qu'on peut encore prendre d'un article, dans l'emballage choisi. */
-  function plafond(stockUnites: number, contenance: number) {
+  /**
+   * Ce qu'on peut vendre d'une ligne.
+   *
+   * Le stock, d'ordinaire : au comptoir la marchandise part tout de
+   * suite, promettre ce qu'on n'a pas n'a pas de sens.
+   *
+   * Sauf quand la ligne dit d'ou vient le surplus. On traverse la rue le
+   * prendre chez le voisin, on le vend dans la minute, et on le regle
+   * apres — c'est une facon de vendre, pas un pret : le plafond du rayon
+   * ne la concerne pas.
+   */
+  function plafond(stockUnites: number, contenance: number, duTiers = false) {
+    if (duTiers) return Number.MAX_SAFE_INTEGER;
     return Math.floor(stockUnites / Math.max(1, contenance));
   }
 
-  function ajouter(a: Article) {
+  /**
+   * Mettre un article au panier.
+   *
+   * `duTiers` quand le rayon est vide : la ligne naît alors en attente
+   * de deux faits — chez qui on la prend, et a combien. Tant qu'ils
+   * manquent, la vente ne part pas : vendre sans savoir ce qu'on doit au
+   * voisin ferait un benefice qui n'existe pas.
+   */
+  function ajouter(a: Article, duTiers = false) {
     setFait(null);
     setPanier(prev => {
       const i = prev.findIndex(l => l.cle === a.cle);
@@ -435,7 +491,8 @@ export default function ComptoirPage() {
         const copie = [...prev];
         /* On ne vend pas ce qu'on n'a pas : au comptoir la marchandise part
            tout de suite, il n'y a pas de délai pour la réapprovisionner. */
-        const max = plafond(copie[i].stockUnites, copie[i].contenance);
+        const max = plafond(copie[i].stockUnites, copie[i].contenance,
+          !!copie[i].prisDehors);
         copie[i] = {
           ...copie[i],
           quantiteDemandee: Math.min(copie[i].quantiteDemandee + 1, max),
@@ -448,6 +505,10 @@ export default function ComptoirPage() {
       return [...prev, {
         cle: a.cle,
         produitId: a.produit.id,
+        /* Le voisin reste à nommer : la ligne porte la marque, pas
+           encore le nom. C'est le panier qui le demande. */
+        ...(duTiers ? { fournisseurId: null, fournisseurNom: null,
+          prisDehors: true } : {}),
         designation: a.produit.designation,
         varianteCle: a.varianteCle,
         varianteLibelle: a.varianteLibelle,
@@ -489,7 +550,7 @@ export default function ComptoirPage() {
         ? produits.find(x => x.id === l.produitId)?.emballages?.find(e => e.nom === nom)
         : null;
       const contenance = emb?.quantite ?? 1;
-      const max = plafond(l.stockUnites, contenance);
+      const max = plafond(l.stockUnites, contenance, !!l.prisDehors);
       return {
         ...l,
         emballage: nom,
@@ -504,6 +565,39 @@ export default function ComptoirPage() {
     }));
   }
 
+  /**
+   * Nommer le voisin chez qui la ligne a ete prise.
+   *
+   * Le nom se tape librement : la liste propose ceux qu'on connait, mais
+   * elle ne borne pas. Un voisin qui depanne pour la premiere fois n'a
+   * pas de fiche, et s'arreter pour lui en creer une avant de servir le
+   * client serait exactement ce qu'on cherche a eviter.
+   *
+   * L'identifiant suit quand le nom tombe sur quelqu'un de connu ; sinon
+   * il reste nul, et la fiche naitra avec la vente — jamais avant. Un
+   * panier abandonne ne doit laisser personne derriere lui.
+   */
+  function nommerFournisseur(cle: string, nom: string) {
+    const propre = nom.trim();
+    const connu = fournisseurs.find(
+      f => f.nom.toLowerCase() === propre.toLowerCase());
+    setPanier(prev => prev.map(l => l.cle === cle
+      ? { ...l, fournisseurNom: propre || null,
+          fournisseurId: connu?.id ?? null }
+      : l));
+  }
+
+  /** Ce qu'on devra au voisin pour cette ligne, dans l'emballage vendu. */
+  function changerCoutTiers(cle: string, montant: number) {
+    setPanier(prev => prev.map(l => l.cle === cle
+      ? { ...l, valeurUnitaire: Math.max(0, montant),
+          /* Le cout a l'unite suit : changer d'emballage le remultiplie,
+             et sans cette mise a jour il repartirait de l'ancien. */
+          coutUnitaire: l.contenance > 0
+            ? Math.max(0, montant) / l.contenance : Math.max(0, montant) }
+      : l));
+  }
+
   function changerQuantite(cle: string, q: number) {
     setDetail(null);
     setPanier(prev => prev
@@ -511,7 +605,8 @@ export default function ComptoirPage() {
         ? {
             ...l,
             quantiteDemandee: Math.max(0,
-              Math.min(q, plafond(l.stockUnites, l.contenance))),
+              Math.min(q, plafond(l.stockUnites, l.contenance,
+                !!l.prisDehors))),
           }
         : l)
       /* Zéro retire la ligne — c'est ce que disent la corbeille et le bouton
@@ -553,9 +648,55 @@ export default function ComptoirPage() {
          on a vendu, et c'est lui qui part au mouvement, dans la marge,
          dans le tableau de bord. Le reçu garde l'explication ; rien en
          aval n'a besoin de la connaître. */
+      /* Les voisins qu'on vient de nommer et qui n'avaient pas de fiche.
+       *
+         Elle nait ici, au moment ou la vente part — jamais avant. Un
+         panier abandonne, une ligne effacee, un comptoir qu'on quitte :
+         rien ne doit laisser derriere lui un fournisseur que personne
+         n'a jamais vu.
+       *
+         Occasionnel : il a depanne une fois, il n'est pas encore du
+         carnet. S'il revient souvent, on le promeut depuis sa page, et
+         son identifiant ne bouge pas — tout l'historique suit. */
+      const nes = new Map<string, string>();
+      for (const l of panier) {
+        if (!l.prisDehors || l.fournisseurId) continue;
+        const nom = l.fournisseurNom?.trim();
+        if (!nom || nes.has(nom.toLowerCase())) continue;
+        const ref = await addDoc(collection(db, 'partenaires'), {
+          userId: user!.uid,
+          siteId,
+          nom,
+          contact: '',
+          rolesFournisseur: true,
+          rolesClient: false,
+          categoriesFournisseur: [],
+          categoriesClient: [],
+          prochainRecouvrement: null,
+          occasionnel: true,
+          ...(await auteurCourant(siteId, user!.uid, user!.displayName)),
+          apporteur: null,
+          createdAt: serverTimestamp(),
+        });
+        nes.set(nom.toLowerCase(), ref.id);
+      }
+      if (nes.size > 0) {
+        setFournisseurs(f => [...f,
+          ...[...nes].map(([nom, id]) => ({ id, nom, occasionnel: true }))]
+          .sort((a, b) => a.nom.localeCompare(b.nom)));
+      }
+
+      /* Ce que le client emporte, et pour les lignes prises dehors, chez
+         qui — l'identifiant tout juste cree ou celui qu'on connaissait. */
       const lignes: LigneFlux[] = panier.map(
-        ({ cle, stockUnites, contenance, prixUnitaire, coutUnitaire, ...l }, i) => ({
+        ({ cle, stockUnites, contenance, prixUnitaire, coutUnitaire,
+          prisDehors, ...l }, i) => ({
           ...l,
+          ...(prisDehors ? {
+            fournisseurId: l.fournisseurId
+              ?? nes.get((l.fournisseurNom ?? '').trim().toLowerCase())
+              ?? null,
+          } : {}),
           prixVente: prixReels[i] ?? l.prixVente ?? 0,
           quantiteRecue: l.quantiteDemandee,
         }));
@@ -782,7 +923,7 @@ export default function ComptoirPage() {
      recopier aurait laissé les deux versions diverger au premier
      changement — et c'est l'écran où l'on encaisse. */
   function ligneDuPanier(l: typeof panier[number]) {
-    const max = plafond(l.stockUnites, l.contenance);
+    const max = plafond(l.stockUnites, l.contenance, !!l.prisDehors);
     const auPlafond = l.quantiteDemandee >= max;
     /* Ceux de cette déclinaison : les communs, plus les
        siens. Un carton de 10W n'a pas le même contenu
@@ -865,6 +1006,37 @@ export default function ComptoirPage() {
           );
         })()}
 
+        {/* D'ou vient cette marchandise, et ce qu'elle nous coute.
+         *
+           Deux champs, pas un ecran : le client est devant le comptoir.
+           Le nom se tape — s'il n'existe pas, il naitra avec la vente —
+           et le cout est ce qu'on devra au voisin, jamais ce qu'on
+           revend. La difference est notre marge.
+         *
+           Le fond ambre dit que cette ligne n'est pas comme les autres,
+           sans avoir a l'ecrire. */}
+        {l.prisDehors && (
+          <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50/60 p-2 dark:border-amber-800/40 dark:bg-amber-900/10">
+            <p className="mb-1.5 text-[11px] font-bold text-amber-700 dark:text-amber-500">
+              Pris dehors
+            </p>
+            <div className="flex items-center gap-1.5">
+              <input list={`fourn-${l.cle}`} value={l.fournisseurNom ?? ''}
+                onChange={e => nommerFournisseur(l.cle, e.target.value)}
+                placeholder="Chez qui ?"
+                className="min-w-0 flex-1 rounded-lg border border-amber-200 bg-white px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-amber-500 dark:border-amber-800/40 dark:bg-gray-800" />
+              <datalist id={`fourn-${l.cle}`}>
+                {fournisseurs.map(f => <option key={f.id} value={f.nom} />)}
+              </datalist>
+              {/* Ce qu'on lui devra, dans l'emballage vendu : un carton
+                  coute ce que coute le carton. */}
+              <ChampNombre valeur={l.valeurUnitaire ?? 0}
+                onChange={n => changerCoutTiers(l.cle, n)}
+                className="w-24 shrink-0 rounded-lg border border-amber-200 bg-white px-2 py-1 text-xs text-center focus:outline-none focus:ring-2 focus:ring-amber-500 dark:border-amber-800/40 dark:bg-gray-800" />
+            </div>
+          </div>
+        )}
+
         {/* L'emballage qu'on vend. Le plus petit par défaut ;
             en changer refait le prix et ramène la quantité. */}
         {embs.length > 0 && (
@@ -877,7 +1049,7 @@ export default function ComptoirPage() {
             </button>
             {embs.map(e => (
               <button key={e.nom} onClick={() => changerEmballage(l.cle, e.nom)}
-                disabled={l.stockUnites < e.quantite}
+                disabled={!l.prisDehors && l.stockUnites < e.quantite}
                 className={`px-2 py-1 rounded-lg text-xs font-bold transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${l.emballage === e.nom
                   ? 'bg-indigo-600 text-white'
                   : 'border border-gray-200 dark:border-gray-700 text-gray-500 hover:border-indigo-400'}`}>
@@ -915,8 +1087,15 @@ export default function ComptoirPage() {
         </div>
 
         <div className="mt-2 flex items-center justify-between border-t border-gray-200 pt-2 dark:border-gray-700">
-          <span className={`text-xs ${auPlafond ? 'text-orange-500' : 'text-gray-400'}`}>
-            {auPlafond
+          <span className={`text-xs ${
+            l.prisDehors ? 'text-amber-600 dark:text-amber-500'
+              : auPlafond ? 'text-orange-500' : 'text-gray-400'}`}>
+            {/* Le rayon ne borne pas ce qu'on va chercher dehors :
+                annoncer « 0 dispo. » dirait le contraire de ce que la
+                ligne permet. */}
+            {l.prisDehors
+              ? (l.fournisseurNom ? `chez ${l.fournisseurNom}` : 'à nommer')
+              : auPlafond
               ? 'tout le stock'
               : `${max} ${l.emballage ? l.emballage.toLowerCase() : uniteNom} dispo.`}
           </span>
@@ -1061,9 +1240,12 @@ export default function ComptoirPage() {
             {filtres.map(a => {
               const epuise = a.stock <= 0;
               return (
-                <button key={a.cle} onClick={() => ajouter(a)} disabled={epuise}
+                /* Un article epuise reste vendable : on le prend chez le
+                   voisin. Le clic l'ajoute en demandant chez qui et a
+                   combien — le rayon est vide, la vente ne l'est pas. */
+                <button key={a.cle} onClick={() => ajouter(a, epuise)}
                   className={`text-left p-3 rounded-xl border transition-colors ${epuise
-                    ? 'border-gray-100 dark:border-gray-800 opacity-40 cursor-not-allowed'
+                    ? 'border-dashed border-amber-300 hover:border-amber-400 hover:bg-amber-50/50 dark:border-amber-800/50 dark:hover:bg-amber-900/10'
                     : 'border-gray-200 dark:border-gray-700 hover:border-indigo-400 hover:bg-indigo-50/50 dark:hover:bg-indigo-900/10'}`}>
                   <p className="text-xs font-bold leading-tight line-clamp-2">{a.designation}</p>
                   {/* Le plus élevé des deux : si le marché paie mieux que
@@ -1082,7 +1264,9 @@ export default function ComptoirPage() {
                       ne compte en unités de base devant une étagère. */}
                   <p className="text-xs text-gray-400 mt-0.5 leading-tight">
                     {epuise
-                      ? 'épuisé'
+                      ? <span className="font-medium text-amber-600 dark:text-amber-500">
+                          épuisé · à prendre dehors
+                        </span>
                       : stockLisible(a.stock, a.produit.emballages, a.produit.unite).join(' · ')}
                   </p>
                 </button>

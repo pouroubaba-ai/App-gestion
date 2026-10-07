@@ -306,6 +306,33 @@ export interface LigneFlux {
    * « gratuit ». La première entrée réelle posera le coût.
    */
   coutInconnu?: boolean;
+  /**
+   * Cette quantité n'était pas à nous.
+   *
+   * On la prend chez un voisin au moment où le client la demande, on la
+   * vend dans la minute, et on règle le voisin après. Entre les deux, la
+   * marchandise n'a pas dormi chez nous : elle a traversé.
+   *
+   * Le cycle d'achat — commandé, reçu, compté, confirmé — répond aux
+   * questions que pose l'attente. Ici il n'y a pas d'attente, et le
+   * franchir une étape à la fois immobilise pendant que le client est
+   * devant le comptoir.
+   *
+   * Ce que ces deux champs ne font pas perdre, et que « hors stock »
+   * aurait perdu : le bénéfice de la ligne — le coût est su —, ce qu'on
+   * prend chez chaque voisin — la dette porte son nom —, et combien on a
+   * vendu de cette référence — le produit est le même produit, quelle
+   * que soit la façon dont il est entré.
+   *
+   * À la confirmation de la vente, la ligne écrit une entrée au coût du
+   * fournisseur puis sa sortie habituelle. Le stock passe par zéro net
+   * et le coût moyen ne bouge pas — non pas qu'on l'évite, mais qu'une
+   * entrée aussitôt annulée par sa sortie ne déplace aucune moyenne. Le
+   * registre, lui, est complet : dix savons entrent, dix sortent, et la
+   * trace dit d'où ils venaient.
+   */
+  fournisseurId?: string | null;
+  fournisseurNom?: string | null;
 }
 
 export interface Transfert {
@@ -1582,6 +1609,36 @@ export async function livrerVente(params: {
     const qte = l.quantiteRecue ?? l.quantiteDemandee;
     if (qte <= 0) continue;
 
+    /* La marchandise prise chez un voisin entre avant de sortir.
+     *
+       Elle n'a jamais dormi chez nous, mais le registre doit la voir
+       passer : sans cette entree, un audit du rayon trouve dix savons
+       vendus et aucune sortie correspondante — un trou qu'il faut aller
+       expliquer dans la fiche de vente.
+     *
+       Les deux mouvements se posent au meme instant, et le stock passe
+       par zero net. Le cout moyen ne bouge donc pas : une entree
+       aussitot annulee par sa sortie ne deplace aucune moyenne. */
+    if (l.fournisseurId) {
+      await appliquerLigne(batch, {
+        siteId: vente.siteId, userId: params.userId,
+        produitId: l.produitId, varianteCle: l.varianteCle,
+        sens: 'entree', motif: 'achat', date,
+        quantite: qte, emballage: l.emballage,
+        valeurUnitaire: l.valeurUnitaire,
+        partenaireId: l.fournisseurId,
+        partenaireNom: l.fournisseurNom ?? null,
+        documentId: vente.id,
+        designation: l.designation + (l.varianteLibelle ? ` · ${l.varianteLibelle}` : ''),
+        unite: l.unite ?? 'unité',
+        role: 'fournisseur', type: 'achat',
+        utilisateurNom: params.utilisateurNom ?? null,
+        utilisateurFonction: params.utilisateurFonction ?? null,
+        reference: vente.reference,
+        venteId: vente.id,
+      }, registre);
+    }
+
     await appliquerLigne(batch, {
       siteId: vente.siteId, userId: params.userId,
       produitId: l.produitId, varianteCle: l.varianteCle,
@@ -1648,6 +1705,28 @@ export async function livrerVente(params: {
   });
 
   await batch.commit();
+
+  /* Ce qu'on doit aux voisins qui ont dépanné.
+   *
+     Un dossier d'achat par fournisseur, déjà confirmé et sans mouvement :
+     la marchandise vient d'entrer et de sortir ci-dessus. L'achat ne
+     porte que la dette, et tout ce qui la lit — la fiche du partenaire,
+     les versements, les totaux — marche sans qu'une ligne ait changé.
+   *
+     Après le commit : si cette écriture échoue, la vente est livrée et
+     la dette manque — un défaut réparable, qui se voit. L'inverse
+     laisserait une dette envers un voisin pour une vente qui n'a pas
+     abouti, et celui-là ne se voit pas. */
+  /* Import tardif : `vente-fournisseur` lit les types d'ici, et
+     l'importer en tête formerait un cycle. */
+  const { creerAchatsDeVente } = await import('@/lib/vente-fournisseur');
+  await creerAchatsDeVente({
+    vente, date, userId: params.userId,
+    auteur: params.utilisateurNom
+      ? { nom: params.utilisateurNom, fonction: params.utilisateurFonction ?? '' }
+      : null,
+  });
+
   return { retourCaisse };
 }
 
