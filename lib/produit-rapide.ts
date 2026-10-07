@@ -1,4 +1,6 @@
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import {
+  collection, addDoc, deleteDoc, serverTimestamp,
+} from 'firebase/firestore';
 import { db } from './firebase';
 import { ouvrirPartout } from './produits-site';
 import type { Emballage } from './mouvements';
@@ -59,15 +61,30 @@ export async function creerProduitRapide(params: {
   /* Il apparaît aussitôt dans l'inventaire de chaque site, à zéro : sans
      cette ligne, un site ne pourrait pas recevoir un transfert d'une
      marchandise qu'il n'a jamais achetée lui-même. */
-  await ouvrirPartout({
-    produitId: ref.id,
-    siteIds: params.siteIds,
-    userId: params.userId,
-    ...(params.siteOrigine ? { siteOrigine: params.siteOrigine } : {}),
-    prixOrigine: params.prixVente ?? 0,
-    seuilOrigine: null,
-    variantesOrigine: [],
-  });
+  /* Si le rayon ne s'ouvre pas, le produit n'a pas lieu d'exister.
+   *
+     La fiche etait ecrite d'abord, les detentions ensuite : un refus sur
+     les secondes laissait un produit orphelin, invisible a l'inventaire
+     — qui lit les detentions — et impossible a vendre. Chaque nouvel
+     essai en creait un de plus, et le catalogue se remplissait de
+     doublons morts.
+   *
+     On defait donc la fiche quand son rayon ne s'ouvre pas, et l'on
+     laisse remonter la raison. */
+  try {
+    await ouvrirPartout({
+      produitId: ref.id,
+      siteIds: params.siteIds,
+      userId: params.userId,
+      ...(params.siteOrigine ? { siteOrigine: params.siteOrigine } : {}),
+      prixOrigine: params.prixVente ?? 0,
+      seuilOrigine: null,
+      variantesOrigine: [],
+    });
+  } catch (e) {
+    await deleteDoc(ref).catch(() => {});
+    throw e;
+  }
 
   /* Aucun stock de départ : il entrera par le bon qu'on est en train de
      saisir. En poser un ici ferait entrer la marchandise deux fois. */

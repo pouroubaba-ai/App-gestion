@@ -171,6 +171,9 @@ export default function ComptoirPage() {
   /* La creation d'un produit tient le bouton le temps d'ouvrir la fiche
      sur tous les sites : sans cela, deux clics font deux produits. */
   const [creationProduit, setCreationProduit] = useState(false);
+  /* L'echec de cette creation-la se dit sous son bouton, non au pied du
+     panier : les deux sont aux extremites de l'ecran. */
+  const [erreurCreation, setErreurCreation] = useState('');
   const [produits, setProduits] = useState<ProduitChoisissable[]>([]);
   const [loading, setLoading] = useState(true);
   /* `null` tant qu'on ne sait pas, puis le rôle — lui aussi `null` pour qui
@@ -600,7 +603,7 @@ export default function ComptoirPage() {
   async function creerEtPrendreDehors() {
     const nom = recherche.trim();
     if (!nom || !user || creationProduit) return;
-    setCreationProduit(true); setErreur('');
+    setCreationProduit(true); setErreurCreation('');
     try {
       const neuf = await creerProduitRapide({
         activiteId: activite?.id ?? null,
@@ -630,7 +633,8 @@ export default function ComptoirPage() {
       ajouter(article, true);
       setRecherche('');
     } catch (e: unknown) {
-      setErreur(e instanceof Error ? e.message : 'Création impossible.');
+      setErreurCreation(
+        e instanceof Error ? e.message : 'Création impossible.');
     } finally {
       setCreationProduit(false);
     }
@@ -1363,6 +1367,15 @@ export default function ComptoirPage() {
                         : <Plus size={13} />}
                       Le créer et le prendre dehors
                     </button>
+                    {/* L'echec se dit ici, sous le bouton qui l'a
+                        provoque. Il ne s'affichait qu'au pied du panier,
+                        a l'autre bout de l'ecran : le bouton paraissait
+                        simplement ne rien faire. */}
+                    {erreurCreation && (
+                      <p className="mx-auto mt-2 max-w-xs text-xs font-medium text-red-500">
+                        {erreurCreation}
+                      </p>
+                    )}
                   </>
                 ) : (
                   <p className="text-xs text-gray-400 mt-2">Aucun produit</p>

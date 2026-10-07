@@ -173,9 +173,27 @@ export async function ouvrirPartout(params: {
   seuilOrigine?: number | null;
   variantesOrigine?: VarianteSite[];
 }): Promise<void> {
-  for (const siteId of params.siteIds) {
+  /* Le site d'ou l'on cree passe en premier, et lui seul decide.
+   *
+     La boucle ouvrait les sites dans l'ordre recu, et un `await` sur
+     chacun : un gerant n'a de droits que sur sa boutique, donc la
+     premiere ecriture chez un autre site etait refusee et la boucle
+     levait. Le produit etait deja cree — il naissait orphelin, sans
+     aucune detention. Invisible a l'inventaire, qui lit les detentions,
+     et impossible a mettre au panier.
+   *
+     Son site passe donc devant, et son echec seul interrompt. Les autres
+     s'ouvrent au mieux : un site qu'on n'a pas le droit d'ouvrir le sera
+     par celui qui y travaille, ou par le proprietaire. Mieux vaut un
+     produit vivant chez soi qu'un produit nulle part. */
+  const ordre = params.siteOrigine
+    ? [params.siteOrigine,
+       ...params.siteIds.filter(x => x !== params.siteOrigine)]
+    : params.siteIds;
+
+  for (const siteId of ordre) {
     const estOrigine = siteId === params.siteOrigine;
-    await ouvrirDetention({
+    const ouvrir = () => ouvrirDetention({
       produitId: params.produitId,
       siteId,
       userId: params.userId,
@@ -197,6 +215,16 @@ export async function ouvrirPartout(params: {
             prixVente: v.prixVente ?? null,
           })),
     });
+
+    if (estOrigine) {
+      /* Chez soi, un refus doit se voir : le produit ne servirait a
+         rien, et l'appelant doit pouvoir le dire. */
+      await ouvrir();
+    } else {
+      /* Ailleurs, on ouvre au mieux. Ce site s'ouvrira quand quelqu'un
+         qui y travaille recevra la marchandise. */
+      await ouvrir().catch(() => {});
+    }
   }
 }
 
