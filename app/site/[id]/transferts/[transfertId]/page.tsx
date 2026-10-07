@@ -12,6 +12,7 @@ import {
 import { auteurCourant, auteurEtape } from '@/lib/auteur';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { ChampNombre } from '@/components/Champs';
+import BlocIdentite from '../../components/BlocIdentite';
 import {
   ArrowLeft,
   Loader2, Check, ArrowDownLeft, Truck, AlertTriangle, ShieldCheck, Package,
@@ -622,7 +623,11 @@ export default function FicheTransfertPage() {
 
       <div className="w-full p-4 sm:p-6 lg:p-8">
 
-        <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800 shadow-sm p-5 mb-4">
+        {/* Replie, le dossier se nomme par son trajet : c'est ce qui le
+            distingue des autres du jour. */}
+        <BlocIdentite
+          nom={`${transfert.siteSourceNom} → ${transfert.siteDestNom}`}
+          lignes={transfert.lignes.length} className="mb-4">
           {/* Sur un téléphone, ces cases se rangeaient deux par deux, chacune
               avec son libellé au-dessus de sa valeur : cinq cases faisaient
               trois rangées, et deux d'entre elles ne disaient rien — un
@@ -673,7 +678,7 @@ export default function FicheTransfertPage() {
               </div>
             ))}
           </div>
-        </div>
+        </BlocIdentite>
 
         {transfert.etat === 'preparation' && (
           <div className="flex items-start gap-2 px-4 py-3 mb-4 bg-indigo-50 dark:bg-indigo-900/10 border border-indigo-200 dark:border-indigo-800/30 rounded-2xl">

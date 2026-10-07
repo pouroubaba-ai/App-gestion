@@ -46,6 +46,7 @@ import {
 } from '@/lib/ordre-transfert';
 import { confirmerTransfert } from '@/lib/flux-marchandise';
 import ModalPlanification from '../../components/ModalPlanification';
+import BlocIdentite from '../../components/BlocIdentite';
 import {
   appliquerPlanification, lireChoix, type Planification,
 } from '@/lib/planification';
@@ -997,7 +998,8 @@ export default function FicheVentePage() {
 
       <div className="w-full p-4 sm:p-6 lg:p-8">
 
-        <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800 shadow-sm p-5 mb-4">
+        <BlocIdentite nom={vente.clientNom} lignes={vente.lignes.length}
+          className="mb-4">
           {/* Sur un téléphone, ces cases se rangeaient deux par deux, chacune
               avec son libellé au-dessus de sa valeur : beaucoup de hauteur
               pour des faits courts. Elles se lisent donc en lignes, le
@@ -1068,7 +1070,7 @@ export default function FicheVentePage() {
               </div>
             )}
           </div>
-        </div>
+        </BlocIdentite>
 
         <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800 shadow-sm p-5 mb-4">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">

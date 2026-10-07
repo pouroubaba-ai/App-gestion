@@ -13,6 +13,7 @@ import { ecrireEnCaisse } from '@/lib/ecrire-caisse';
 import { chargerDisponible } from '@/lib/attente-caisse';
 import DisponibleCaisse from '../../components/DisponibleCaisse';
 import ChoixOrigineArgent from '../../components/ChoixOrigineArgent';
+import BlocIdentite from '../../components/BlocIdentite';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { formatMontant } from '@/lib/format';
 import {
@@ -758,7 +759,8 @@ export default function FicheAchatPage() {
       <div className="w-full p-4 sm:p-6 lg:p-8">
 
 
-        <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800 shadow-sm p-5 mb-4">
+        <BlocIdentite nom={achat.fournisseurNom} lignes={achat.lignes.length}
+          className="mb-4">
 
           {/* Sur un téléphone, ces cases se rangeaient deux par deux, chacune
               avec son libellé au-dessus de sa valeur : beaucoup de hauteur
@@ -799,7 +801,7 @@ export default function FicheAchatPage() {
               </div>
             ))}
           </div>
-        </div>
+        </BlocIdentite>
 
         {achat.etat === 'en_attente' && (
           <div className="flex items-start gap-2 px-4 py-3 mb-4 bg-blue-50 dark:bg-blue-900/10 border border-blue-200 dark:border-blue-800/30 rounded-2xl">
