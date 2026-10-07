@@ -166,6 +166,31 @@ service cloud.firestore {
         && (suisProprietaire() || monRoleSur(siteId) != '');
     }
 
+    /**
+     * L'un des deux bouts d'un transfert, sans payer deux fois.
+     *
+     * Une règle ne peut lire que dix documents. `travailleSur(source)
+     * || travailleSur(dest)` en lit bien plus : chaque appel refait le
+     * profil, l'activité et son propriétaire avant d'arriver au membre.
+     * Le propriétaire passait à la première branche et un gérant de la
+     * source aussi — mais le gérant de la destination, lui, allait
+     * jusqu'à la seconde, et le plafond sautait avant la réponse. Son
+     * dossier devenait illisible : « Missing or insufficient
+     * permissions » sur un transfert qui arrivait chez lui.
+     *
+     * Ici le membre se lit en premier, sur l'un puis l'autre site :
+     * c'est la question la plus fréquente, et elle se tranche en trois
+     * lectures. `suisProprietaire()` ne vient qu'après, pour celui
+     * qu'aucun membre ne désigne.
+     */
+    function travailleSurLUnDes(siteA, siteB) {
+      return (siteA != '' && monSite(siteA) && monRoleSur(siteA) != '')
+        || (siteB != '' && monSite(siteB) && monRoleSur(siteB) != '')
+        || (suisProprietaire()
+          && ((siteA != '' && monSite(siteA))
+            || (siteB != '' && monSite(siteB))));
+    }
+
     /* Le site que porte le document, avant ou après écriture. */
     /* Le site d'un document.
      *
@@ -822,10 +847,11 @@ service cloud.firestore {
              plus. Elle vise un site, et c'est lui qui la comptera. */
           'importations'
         ]
-        && (travailleSur(siteDuDoc())
-          /* Un transfert se lit des deux bouts : celui qui envoie et
-             celui qui reçoit. */
-          || travailleSur(siteDestDuDoc())
+        /* Un transfert se lit des deux bouts : celui qui envoie et celui
+           qui reçoit. Les deux dans le même appel — enchaînés, ils
+           dépassaient les dix lectures qu'une règle peut faire, et le
+           gérant qui recevait se voyait refuser son propre dossier. */
+        && (travailleSurLUnDes(siteDuDoc(), siteDestDuDoc())
           /* Les dossiers de l'autre bout d'un ordre.
            *
            * L'écriture croisée était permise plus bas, mais pas la
