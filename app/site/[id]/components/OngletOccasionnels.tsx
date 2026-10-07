@@ -512,20 +512,35 @@ export default function OngletOccasionnels({
                          montant de six mois est une somme sans
                          justification consultable. */
                       <tr key={d.id}
-                        /* `ouvrable` pose la marque qui permet a la fiche
+                        /* On ouvre l'achat, jamais la vente.
+                         *
+                           La vente porte tout le recu — cinq lignes, dont
+                           une seule vient de ce voisin. L'ouvrir montrait
+                           quatre marchandises qui ne le concernent pas, et
+                           un total sans rapport avec ce qu'on lui doit.
+                           L'achat, lui, ne porte que ses lignes a lui :
+                           c'est le document de la dette.
+                         *
+                           `ouvrable` pose la marque qui permet a la fiche
                            de revenir ici plutot que de reconstruire une
                            adresse — sans elle, fermer tombait sur la fiche
                            du site, qu'on n'avait jamais ouverte. */
-                        onClick={() => d.venteOrigineId && router.push(ouvrable(
-                          `/site/${d.siteId}/ventes/${d.venteOrigineId}`
+                        onClick={() => router.push(ouvrable(
+                          `/site/${d.siteId}/achats/${d.id}`
                           + `?onglet=occasionnels${ctx.depuisEnsemble ? '&de=ensemble' : ''}`))}
-                        className={`${d.venteOrigineId
-                          ? 'cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50' : ''}`}>
+                        className="cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50">
                         <td className="px-4 py-3 text-center">
                           <span className="inline-flex items-center gap-1 font-mono text-xs font-medium text-indigo-600 dark:text-indigo-400">
                             <FileText size={11} className="shrink-0" />
-                            {d.venteOrigineReference ?? d.reference}
+                            {d.reference}
                           </span>
+                          {/* D'ou la dette est nee : le recu ou la
+                              marchandise est partie. */}
+                          {d.venteOrigineReference && (
+                            <span className="mt-0.5 block font-mono text-[10px] text-gray-400">
+                              {d.venteOrigineReference}
+                            </span>
+                          )}
                         </td>
                         <td className="px-4 py-3 text-center font-medium">
                           {d.fournisseurNom}
