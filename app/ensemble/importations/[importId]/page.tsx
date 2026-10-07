@@ -501,8 +501,20 @@ export default function FicheImportationPage() {
 
   const suivant = prochainEtat(dossier.etat, role, estAdmin);
   const peut = peutAvancer(dossier.etat, role, estAdmin);
-  /* C'est à la réception qu'on compte : avant, il n'y a rien à confronter. */
-  const saisieQuantites = dossier.etat === 'traitement';
+  /* C'est à la réception qu'on compte : avant, il n'y a rien à confronter.
+   *
+   * « À confirmer » reste ouvert au propriétaire. L'état ne dit pas que
+   * le comptage est fini, il dit que celui qui a compté ne peut pas
+   * clore : l'écart attend un autre œil. Or cet œil-là ne fait pas que
+   * regarder — il recompte, trouve le carton qu'on avait posé de côté,
+   * défait une quantité déclarée à tort. Fermer la saisie ici ne lui
+   * laissait que deux issues : confirmer un écart qu'il sait faux, ou
+   * faire reculer le dossier pour corriger. Le responsable des
+   * commandes, lui, n'y revient pas : il a rendu son compte, et le
+   * rouvrir à celui qui l'a fait annulerait le second regard. Ce que
+   * `peut` interdit déjà dans cet état. */
+  const saisieQuantites = dossier.etat === 'traitement'
+    || dossier.etat === 'attente_confirmation';
 
   /**
    * Déclarer ce qui est arrivé : une ligne, ou tout ce qui manque.
