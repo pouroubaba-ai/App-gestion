@@ -5,7 +5,7 @@ import { db } from '@/lib/firebase';
 import { useAuth } from '@/lib/auth-context';
 import { useParams, useRouter } from 'next/navigation';
 import { ArrowLeft, Loader2, Check, Ship, ArrowRight, X, CheckCheck, Plus, Undo2, Info,
-  Wallet, BarChart3, ArrowUpDown, Trash2 } from 'lucide-react';
+  Wallet, BarChart3, ArrowUpDown, Trash2, ChevronDown } from 'lucide-react';
 import { formatMontant, formatDate } from '@/lib/format';
 import { retourOnglet, fermerEcran } from '@/lib/retour';
 import { auteurCourant, auteurEtape } from '@/lib/auteur';
@@ -124,6 +124,21 @@ export default function FicheImportationPage() {
 
   /* Le bénéfice qu'on cherche sur le dossier entier. L'app en déduit des
      prix — produit par produit on perd le total de vue. */
+  /* L'identite du dossier, repliee sur telephone.
+   *
+   * Fournisseur, origine, destination, nombre de lignes, les huit etapes
+   * du voyage et la phrase d'aide : sur un ecran de telephone cela fait
+   * un ecran entier avant la premiere marchandise. Or on ne vient pas
+   * ici pour relire d'ou vient le conteneur — on le sait — mais pour
+   * compter ce qu'il portait. Ce bloc se lit une fois a l'ouverture du
+   * dossier, et jamais plus ; il ne doit pas repousser chaque jour ce
+   * pour quoi on ouvre l'ecran.
+   *
+   * Replie, il garde ce qui identifie le dossier d'un coup d'oeil : de
+   * qui vient la marchandise, et combien de lignes il reste a compter.
+   * Au bureau la place ne manque pas : le bloc y reste entier. */
+  const [identiteOuverte, setIdentiteOuverte] = useState(false);
+
   const [objectif, setObjectif] = useState(0);
   const [blocBenefice, setBlocBenefice] = useState(false);
   /* Le détail du scénario « au prix du marché » : quels produits
@@ -1003,6 +1018,28 @@ export default function FicheImportationPage() {
 
         {/* Ce que le dossier est, en un coup d'œil. */}
         <div className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+
+          {/* Le resume, sur telephone seulement : il ouvre et ferme le
+              reste. Au bureau le bloc est deja entier, et un bouton pour
+              replier ce qui tient sans gener serait un geste de plus
+              pour rien. */}
+          <button type="button" onClick={() => setIdentiteOuverte(o => !o)}
+            className="-m-1 flex w-[calc(100%+0.5rem)] items-center gap-2 rounded-xl p-1 text-left sm:hidden">
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm font-bold text-gray-900 dark:text-gray-100">
+                {dossier.fournisseurNom}
+              </span>
+              <span className="block text-[11px] font-medium text-gray-400">
+                {dossier.lignes.length} ligne{dossier.lignes.length > 1 ? 's' : ''}
+                {dossier.siteNom ? ` · ${dossier.siteNom}` : ''}
+              </span>
+            </span>
+            <ChevronDown size={16}
+              className={`shrink-0 text-gray-400 transition-transform ${
+                identiteOuverte ? 'rotate-180' : ''}`} />
+          </button>
+
+          <div className={identiteOuverte ? 'mt-4 sm:mt-0' : 'hidden sm:block'}>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             {([
               { label: 'Fournisseur', valeur: dossier.fournisseurNom },
@@ -1048,6 +1085,7 @@ export default function FicheImportationPage() {
               {AIDE_IMPORTATION[dossier.etat]}
             </p>
           )}
+          </div>
         </div>
 
         {/* La marchandise. */}

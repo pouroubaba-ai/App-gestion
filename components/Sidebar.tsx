@@ -340,6 +340,9 @@ export default function Sidebar({
        compte sur l'icône lui dit s'il reste quelque chose, sans ouvrir
        chaque onglet pour le découvrir. */
     if (href.includes('onglet=retours')) return attente.retours;
+    /* Un conteneur n'avance que si quelqu'un le pousse : la pastille dit
+       combien de dossiers sont encore en route ou a compter. */
+    if (href.includes('onglet=importations')) return attente.importations;
     return 0;
   }
 

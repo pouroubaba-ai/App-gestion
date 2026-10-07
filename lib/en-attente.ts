@@ -35,11 +35,17 @@ export interface EnAttente {
      fournisseurs et transferts l'obligerait à ouvrir chaque onglet pour
      savoir s'il lui reste quelque chose à faire. */
   retours: number;
+  /* Un conteneur traverse huit etapes avant d'entrer en stock, et chacune
+     se pose a la main : personne ne nous previent qu'il a quitte le port.
+     Sans pastille, il fallait ouvrir l'onglet pour savoir si un dossier
+     attendait — et le responsable des commandes, qui ne voit pas les
+     chiffres, n'avait aucun autre moyen de l'apprendre. */
+  importations: number;
 }
 
 export const AUCUNE_ATTENTE: EnAttente = {
   achats: 0, transferts: 0, ventes: 0, recouvrements: 0, autorisations: 0,
-  remises: 0, retours: 0,
+  remises: 0, retours: 0, importations: 0,
 };
 
 /**
@@ -81,6 +87,14 @@ const VENTES_EN_ATTENTE = ['commande', 'preparation', 'pret'];
  * simple et tient en trois lignes — si elle change là-bas, elle doit
  * changer ici.
  */
+/**
+ * Une importation attend tant qu'elle n'est pas entree en stock. Toutes
+ * les etapes du voyage se posent a la main — valide, expedie, arrive,
+ * dedouane — et celle qui suit la reception se compte. Seul `confirme`
+ * est clos, et `annule` abandonne.
+ */
+const IMPORTATIONS_FINIES = ['confirme', 'annule'];
+
 const FIN_RETOUR: Record<string, string> = {
   client: 'recu', fournisseur: 'livre', transfert: 'recu',
 };
@@ -109,7 +123,7 @@ export async function compterEnAttente(
      retenant de chacun que les étapes qui lui réclament un geste, et sans
      compter deux fois un dossier dont les deux sites sont dans la portée. */
   const [achats, sortants, entrants, ventes, echeances, attente, missions,
-    retoursDocs] =
+    retoursDocs, importations] =
     await Promise.all([
       lireParSite('achats', portee),
       lireParSite('transferts', portee, 'siteSourceId'),
@@ -121,6 +135,7 @@ export async function compterEnAttente(
          emporter, et qui n'est ni soldé ni annulé. */
       lireParSite('missions_paiement', portee),
       lireParSite('retours_dossiers', portee),
+      lireParSite('importations', portee),
     ]);
 
   /* Un retour attend tant qu'il n'a pas atteint son dernier état. Annulé,
@@ -173,6 +188,8 @@ export async function compterEnAttente(
         }).length
       : 0,
     retours,
+    importations: importations.filter(
+      d => !IMPORTATIONS_FINIES.includes((d.data() as any).etat)).length,
   };
 }
 
