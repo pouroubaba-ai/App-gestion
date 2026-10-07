@@ -21,7 +21,7 @@ import {
 import {
   Transfert, EtatTransfert, LIBELLES_TRANSFERT,
   ecartValeur, aUnEcart, lignesEnEcart, confirmerTransfert,
-  peutExpedier, peutRecevoir, peutArbitrerEcart, peutAnnulerDossier, Role,
+  peutExpedier, peutRecevoir, peutArbitrerEcart, peutAnnulerTransfert, Role,
   libelleTransfert, valeurEnvoyee,
 } from '@/lib/flux-marchandise';
 import {
@@ -485,7 +485,7 @@ export default function FicheTransfertPage() {
   async function annuler() {
     /* La garde tient aussi ici : cacher le bouton ne protège que l'écran,
        et la fonction reste appelable par d'autres chemins. */
-    if (!peutAnnulerDossier(ROLE_COURANT)) return;
+    if (!peutAnnulerTransfert(ROLE_COURANT)) return;
     setEnCours(true); setErreur('');
     try {
       /* Un transfert qui sert une commande n'est pas seul : le bon de la
@@ -574,7 +574,7 @@ export default function FicheTransfertPage() {
             </button>
             {/* « Annuler le transfert », jamais « Annuler » : ici l'action détruit le dossier. */}
             {(transfert.etat === 'en_cours' || transfert.etat === 'preparation'
-              || transfert.etat === 'expedie') && peutAnnulerDossier(ROLE_COURANT) && (
+              || transfert.etat === 'expedie') && peutAnnulerTransfert(ROLE_COURANT) && (
               <button onClick={annuler} disabled={enCours}
                 className="px-4 py-2 text-sm font-bold text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-50 rounded-xl transition-colors">
                 Annuler le transfert

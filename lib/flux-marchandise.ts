@@ -240,9 +240,25 @@ export function peutCommander(role: Role | null): boolean {
  * davantage. Il fait avancer ce qui existe. Corriger une réception ou une
  * préparation mal comptée reste son travail : là il rectifie sa propre
  * saisie, il ne défait pas l'engagement.
+ *
  */
 export function peutAnnulerDossier(role: Role | null): boolean {
   return role === null || role === 'admin' || role === 'gerant';
+}
+
+/**
+ * Annuler un transfert : le propriétaire, et lui seul.
+ *
+ * Un achat ou un bon de commande n'engagent que le site qui les porte :
+ * le gérant les a ouverts, il peut les refermer. Un transfert relie deux
+ * sites, et le gérant n'en tient qu'un. L'annuler fait reculer un
+ * engagement pris envers l'autre bout — qui attendait une marchandise
+ * qui ne viendra plus, décidé par quelqu'un qui ne répond pas de lui.
+ *
+ * Celui qui répond des deux tranche.
+ */
+export function peutAnnulerTransfert(role: Role | null): boolean {
+  return role === null || role === 'admin';
 }
 
 /* ═══════════════════════ LIGNES ═══════════════════════ */
