@@ -173,19 +173,12 @@ export async function ouvrirPartout(params: {
   seuilOrigine?: number | null;
   variantesOrigine?: VarianteSite[];
 }): Promise<void> {
-  /* Le site d'ou l'on cree passe en premier, et lui seul decide.
+  /* Le site d'ou l'on cree passe en premier.
    *
-     La boucle ouvrait les sites dans l'ordre recu, et un `await` sur
-     chacun : un gerant n'a de droits que sur sa boutique, donc la
-     premiere ecriture chez un autre site etait refusee et la boucle
-     levait. Le produit etait deja cree — il naissait orphelin, sans
-     aucune detention. Invisible a l'inventaire, qui lit les detentions,
-     et impossible a mettre au panier.
-   *
-     Son site passe donc devant, et son echec seul interrompt. Les autres
-     s'ouvrent au mieux : un site qu'on n'a pas le droit d'ouvrir le sera
-     par celui qui y travaille, ou par le proprietaire. Mieux vaut un
-     produit vivant chez soi qu'un produit nulle part. */
+     Non pour le privilegier — tous s'ouvrent — mais parce qu'il porte le
+     stock de depart et le prix quand il y en a : s'il echoue, autant
+     s'arreter avant d'avoir ouvert neuf rayons vides qu'il faudra
+     defaire. */
   const ordre = params.siteOrigine
     ? [params.siteOrigine,
        ...params.siteIds.filter(x => x !== params.siteOrigine)]
@@ -216,15 +209,12 @@ export async function ouvrirPartout(params: {
           })),
     });
 
-    if (estOrigine) {
-      /* Chez soi, un refus doit se voir : le produit ne servirait a
-         rien, et l'appelant doit pouvoir le dire. */
-      await ouvrir();
-    } else {
-      /* Ailleurs, on ouvre au mieux. Ce site s'ouvrira quand quelqu'un
-         qui y travaille recevra la marchandise. */
-      await ouvrir().catch(() => {});
-    }
+    /* Un echec interrompt, ou qu'il tombe : un produit n'appartient pas a
+       la boutique qui l'a saisi mais a l'activite, et il doit exister
+       partout. Un rayon manquant empeche le site de recevoir un transfert
+       d'une marchandise qu'il n'a jamais achetee lui-meme — et l'appelant
+       defait la fiche plutot que de la laisser a moitie ouverte. */
+    await ouvrir();
   }
 }
 

@@ -901,7 +901,29 @@ service cloud.firestore {
               || venteDOrdre(request.resource.data.get('venteOuvrante', ''))))
           /* Ce que la livraison d'un ordre écrit chez le destinataire. */
           || (col in ['mouvements', 'documents', 'lignes_vente']
-            && venteDOrdre(venteLieeEcrite())));
+            && venteDOrdre(venteLieeEcrite()))
+          /* Ouvrir un rayon vide chez un site de sa maison.
+           *
+             Un produit appartient a l'activite, pas a la boutique qui l'a
+             saisi : il doit exister partout des sa creation, sinon un
+             site ne peut pas recevoir un transfert d'une marchandise
+             qu'il n'a jamais achetee lui-meme.
+           *
+             La regle exigeait de travailler sur le site ou l'on ecrit. Un
+             gerant n'a qu'une boutique : la creation d'un produit etait
+             donc refusee des le deuxieme site, et le produit naissait
+             sans aucun rayon — invisible a l'inventaire, impossible a
+             vendre.
+           *
+             Ce qu'on ouvre ici est une coquille : stock zero, cout zero,
+             aucune variante. Rien a voler, rien a fausser. Tout ce qui y
+             mettra de la valeur passe par `update`, qui exige toujours de
+             travailler sur ce site-la. */
+          || (col == 'produits_site'
+            && memeActivite(siteDe(siteEnvoye()).get('activiteId', ''))
+            && request.resource.data.get('stock', 0) == 0
+            && request.resource.data.get('coutMoyen', 0) == 0
+            && request.resource.data.get('variantes', []).size() == 0));
 
       allow update, delete: if col in [
           'achats', 'ventes', 'lignes_vente', 'transferts', 'preparations',
