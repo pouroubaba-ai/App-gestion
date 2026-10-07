@@ -136,7 +136,9 @@ export default function FicheAjustementPage() {
      personne d'autre ne le peut. La séparation des deux mains n'a alors
      personne à séparer, et le dossier resterait ouvert pour toujours.
      Son nom s'inscrit en confirmation comme celui de n'importe qui. */
-  const sonPropreDossier = d.parUid === user?.uid && !seul;
+  /* Le propriétaire ne s'y heurte pas : la marchandise est la sienne, et
+     un dossier qu'il ne peut pas clore laisse le stock faux. */
+  const sonPropreDossier = d.parUid === user?.uid && !seul && role !== null;
 
   const totalDeclare = d.lignes.reduce((n, l) => n + l.quantiteDeclaree, 0);
   const totalConstate = d.lignes.reduce(

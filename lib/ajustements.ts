@@ -164,12 +164,21 @@ export function peutDeclarer(roleSite: string | null | undefined): boolean {
  * deux mains : sans cette séparation, un seul homme ferait disparaître ce
  * qu'il veut sans que personne n'aille voir.
  *
- * `null` désigne le propriétaire : il entre partout, sauf ici.
+ * Le propriétaire (`null`) en est aussi, à la demande expresse du
+ * propriétaire. La séparation protégeait d'abord contre lui : nul ne
+ * constate ce qu'il a déclaré. Mais la marchandise est la sienne, et
+ * personne au-dessus ne répond à sa place — un dossier qu'il ne peut
+ * pas clore reste ouvert, et le stock affiché reste faux.
+ *
+ * Ce que le registre garde ne change pas : chaque étape inscrit qui
+ * l'a faite. Qui a déclaré et qui a confirmé restent lisibles, même
+ * quand c'est le même nom.
  */
 export function peutTraiterAjustement(
   roleSite: string | null | undefined,
 ): boolean {
-  return roleSite === 'commandes';
+  return roleSite === 'commandes'
+    || roleSite === null || roleSite === undefined;
 }
 
 export interface LigneAjustement {
@@ -414,9 +423,13 @@ export async function confirmerAjustement(params: {
       && !peutTraiterAjustement(params.roleSite)) {
       throw new Error('Confirmer revient au responsable des commandes.');
     }
-    /* Jamais celui qui a déclaré. C'est toute la raison d'être du cycle :
-       séparées, les deux mains ne peuvent pas s'entendre. */
-    if (d.parUid === params.parUid) {
+    /* Jamais celui qui a déclaré, sauf le propriétaire. C'est la raison
+       d'être du cycle : séparées, les deux mains ne peuvent pas
+       s'entendre. Mais le propriétaire n'a pas de seconde main — la
+       marchandise est la sienne, et le dossier qu'il ne clôt pas laisse
+       le stock faux. Son nom s'inscrit aux deux étapes, et le registre
+       le dit. */
+    if (d.parUid === params.parUid && params.roleSite !== null) {
       throw new Error('On ne confirme pas le mouvement qu’on a déclaré.');
     }
   }

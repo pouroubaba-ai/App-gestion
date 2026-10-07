@@ -163,8 +163,23 @@ export default function FicheTransfertPage() {
     </div>
   );
 
-  const estSource = transfert.siteSourceId === siteId;
-  const estDest = transfert.siteDestId === siteId;
+  /* Le proprietaire est aux deux bouts.
+   *
+   * Un transfert se pilote depuis le site qu'on regarde : la source
+   * rassemble et charge, la destination accuse et compte. Cette
+   * position se lisait du seul `siteId` de l'adresse — or le
+   * proprietaire n'ouvre pas le dossier depuis un site, il l'ouvre
+   * depuis la vue d'ensemble, ou depuis l'un des deux sites qu'il
+   * possede tous les deux. Il se retrouvait donc etranger a l'un des
+   * bouts, et tous les boutons tombaient : le camion restait en route
+   * parce que personne, de son point de vue, ne pouvait l'accueillir.
+   *
+   * Lui donner les deux cotes ne lui montre pas deux jeux de boutons :
+   * chaque garde teste aussi l'etat, et un etat n'appartient jamais
+   * qu'a un seul cote. */
+  const estAdmin = ROLE_COURANT === null;
+  const estSource = estAdmin || transfert.siteSourceId === siteId;
+  const estDest = estAdmin || transfert.siteDestId === siteId;
   const ecart = ecartValeur(transfert.lignes);
   const enEcart = lignesEnEcart(transfert.lignes);
 
@@ -618,8 +633,17 @@ export default function FicheTransfertPage() {
               disparaît au défilement : ils restent ici. */}
           <div className="grid grid-cols-2 gap-1.5 text-xs sm:grid-cols-3 sm:gap-2 lg:grid-cols-5">
             {([
-              [estSource ? 'Destination' : 'Origine',
-                estSource ? transfert.siteDestNom : transfert.siteSourceNom],
+              /* Un site ne lit que l'autre bout : il sait ou il est, il
+                 veut savoir d'ou ca vient ou ou ca va. Le proprietaire
+                 n'est a aucun des deux et aux deux a la fois : lui doit
+                 lire le trajet entier, sinon la case nomme un site sans
+                 dire lequel des deux. */
+              ...(estAdmin
+                ? [['Trajet',
+                    `${transfert.siteSourceNom} → ${transfert.siteDestNom}`]]
+                : [[transfert.siteSourceId === siteId ? 'Destination' : 'Origine',
+                    transfert.siteSourceId === siteId
+                      ? transfert.siteDestNom : transfert.siteSourceNom]]),
               /* À qui la marchandise est destinée, quand ce transfert
                  sert une commande. Sans ce nom, le responsable lisait
                  deux sites et devait deviner laquelle des commandes du
