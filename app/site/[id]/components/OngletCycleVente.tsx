@@ -1,6 +1,6 @@
 'use client';
 import { useVueUrl } from '@/lib/vue-url';
-import { marqueOrigine } from '@/lib/retour';
+import { marqueOrigine, lienCreation, ouvrable } from '@/lib/retour';
 import { useEffect, useState } from 'react';
 import { formatMontant } from '@/lib/format';
 import { hankenGrotesk } from './finance/font';
@@ -109,6 +109,29 @@ export default function OngletCycleVente({ siteId, userId, role, sites, titre }:
    */
   const [modeVue, setModeVue] = useVueUrl<'encours' | 'statut'>(
     'mode', 'encours', ['encours', 'statut']);
+
+  /**
+   * Changer de carte sans effacer le reste de l'adresse.
+   *
+   * Les cartes réécrivaient l'URL entière — `?onglet=…&carte=…` — et
+   * tout ce qui s'y trouvait disparaissait avec, à commencer par
+   * `mode=statut`. On choisissait « Statut », on cliquait une carte, et
+   * l'adresse retombait en silence sur le mode « En cours » : rien ne
+   * bougeait à l'écran, mais le premier rechargement ramenait la page
+   * dans un mode qu'on n'avait pas demandé.
+   *
+   * On repart donc de l'adresse courante et l'on n'y change qu'un
+   * paramètre. Le chemin vient de `depuisEnsemble` : c'est la porte par
+   * laquelle on est entré, pas le nombre de sites regardés.
+   */
+  function allerCarte(cle: string) {
+    const q = new URLSearchParams(window.location.search);
+    q.set('onglet', 'cycle-vente');
+    q.set('carte', cle);
+    router.replace(
+      `${ctx.depuisEnsemble ? '/ensemble' : `/site/${siteId}`}?${q.toString()}`,
+      { scroll: false });
+  }
 
   /* Les statuts retenus dans la liste. Vide = tous, l'etat au repos.
      Il ne sert qu'en vue « en cours » : ailleurs, la carte active a deja
@@ -486,9 +509,7 @@ export default function OngletCycleVente({ siteId, userId, role, sites, titre }:
               onClick={() => {
                 const cible: EtatVente = c.cle === 'livre' ? 'livre' : 'commande';
                 setVue(cible); setTri(null);
-                router.replace(ctx.ensemble
-                  ? `/ensemble?onglet=cycle-vente&carte=${cible}`
-                  : `/site/${siteId}?onglet=cycle-vente&carte=${cible}`, { scroll: false });
+                allerCarte(cible);
               }}
               className={`block rounded-2xl p-3 text-left shadow-sm transition-all sm:p-5 ${
                 actif
@@ -547,9 +568,7 @@ export default function OngletCycleVente({ siteId, userId, role, sites, titre }:
               onClick={() => {
                 setVue(c.key); setTri(null);
                 /* l'URL suit la carte : la fiche saura où revenir */
-                router.replace(ctx.ensemble
-                  ? `/ensemble?onglet=cycle-vente&carte=${c.key}`
-                  : `/site/${siteId}?onglet=cycle-vente&carte=${c.key}`, { scroll: false });
+                allerCarte(c.key);
               }}
               className={`block rounded-2xl p-3 text-left shadow-sm transition-all sm:p-5 ${
                 actif
@@ -667,8 +686,16 @@ export default function OngletCycleVente({ siteId, userId, role, sites, titre }:
                 onClick={() => router.push(
                   /* L'origine suit la creation : sans elle, un dossier
                      ouvert depuis l'ensemble s'y refermerait dans le site. */
-                  `/site/${ctx.siteEcriture}/ventes/nouveau${vue === 'devis' ? '?type=devis' : ''}`
-                  + marqueOrigine(ctx.depuisEnsemble, vue !== 'devis'))}
+                  /* L'ecran quitte voyage avec l'origine : sans `mode`
+                     ni `carte`, fermer un devis a peine ouvert rendait
+                     le cycle en « En cours », sur la carte en cours —
+                     un ecran qu'on n'avait pas quitte. */
+                  lienCreation({
+                    base: `/site/${ctx.siteEcriture}/ventes/nouveau`,
+                    ensemble: ctx.depuisEnsemble,
+                    vue: new URLSearchParams(window.location.search),
+                    ...(vue === 'devis' ? { extra: { type: 'devis' } } : {}),
+                  }))}
                 className="flex items-center gap-1.5 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition-colors">
                 {vue === 'devis' ? <FileText size={14} /> : <Plus size={14} />}
                 {vue === 'devis' ? 'Nouveau devis' : 'Nouvelle commande'}
@@ -715,7 +742,7 @@ export default function OngletCycleVente({ siteId, userId, role, sites, titre }:
             /* La carte qu'on regardait part avec le lien : un devis
                transformé en commande se ferme sur Devis, là où on l'a ouvert. */
             onOuvrir={v => router.push(
-              `/site/${(v as any).siteId ?? ctx.siteEcriture}/ventes/${v.id}?carte=${vue}${ctx.ensemble ? '&de=ensemble' : ''}`)}
+              ouvrable(`/site/${(v as any).siteId ?? ctx.siteEcriture}/ventes/${v.id}?carte=${vue}${ctx.depuisEnsemble ? '&de=ensemble' : ''}`))}
             colonnes={[
               { cle: 'reference', label: 'Référence', rang: 'titre',
                 rendu: v => (

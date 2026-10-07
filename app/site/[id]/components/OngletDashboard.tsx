@@ -636,7 +636,7 @@ export default function OngletDashboard({ siteId, userId, onNaviguer, sites, tit
         onVoirAEncaisser={() => router.push(
           `/site/${ctx.siteEcriture ?? ctx.sitesVus[0]?.id ?? siteId}/transactions`
           + `?role=client&vue=document&periode=${periode}&depuis=dashboard`
-          + (ctx.ensemble ? '&de=ensemble' : ''))}
+          + (ctx.depuisEnsemble ? '&de=ensemble' : ''))}
       />
 
       {/* Ce qui attend le tiroir, en pleine largeur sous les trois cartes.

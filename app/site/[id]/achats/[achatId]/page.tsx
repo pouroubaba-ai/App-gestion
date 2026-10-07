@@ -38,7 +38,7 @@ import {
   peutConfirmerAchat,
   VersementAchat, peutAnnulerDossier, type Role,
 } from '@/lib/flux-marchandise';
-import { estEnsemble, retourHistorique } from '@/lib/retour';
+import { estEnsemble, retourHistorique, fermerEcran } from '@/lib/retour';
 import ModalPlanification from '../../components/ModalPlanification';
 import {
   appliquerPlanification, lireChoix, type Planification,
@@ -106,6 +106,11 @@ export default function FicheAchatPage() {
   })();
   const params = useParams();
   const siteId = params.id as string;
+  /* L'adresse de repli, en un seul endroit : les deux boutons de
+     fermeture la recopiaient, et l'une des copies pouvait dériver. */
+  const fermer = estEnsemble(searchParams)
+    ? `/ensemble${retourAchats}`
+    : `/site/${siteId}${retourAchats}`;
   const achatId = params.achatId as string;
 
   const [achat, setAchat] = useState<Achat | null>(null);
@@ -658,10 +663,7 @@ export default function FicheAchatPage() {
             <div className="flex items-center gap-2">
               {/* La flèche ne paraît que sur téléphone : au bureau,
                   « Fermer » reste plus clair qu'un chevron isolé. */}
-              <button onClick={() => router.push(
-                estEnsemble(searchParams)
-                  ? `/ensemble${retourAchats}`
-                  : `/site/${siteId}${retourAchats}`)}
+              <button onClick={() => fermerEcran(router, fermer)}
                 title="Fermer"
                 className="-ml-1 shrink-0 rounded-xl p-2 text-gray-500 transition-colors hover:bg-gray-50 dark:hover:bg-gray-800 sm:hidden">
                 <ArrowLeft size={18} />
@@ -682,10 +684,7 @@ export default function FicheAchatPage() {
                 demandé. */}
             {/* Ouvert depuis la vue d'ensemble, le dossier y retourne — avec
                 la carte et l'axe qu'on regardait. */}
-            <button onClick={() => router.push(
-              estEnsemble(searchParams)
-                ? `/ensemble${retourAchats}`
-                : `/site/${siteId}${retourAchats}`)}
+            <button onClick={() => fermerEcran(router, fermer)}
               className="hidden px-4 py-2 text-sm font-bold text-gray-500 hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl transition-colors sm:block">
               Fermer
             </button>

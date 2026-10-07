@@ -1,7 +1,10 @@
 'use client';
 import { produitsDuSite } from '@/lib/produits-site';
 import { useEffect, useState } from 'react';
-import { useBrouillon, cleBrouillon, oublierBrouillon } from '@/lib/brouillon';
+import {
+  useBrouillon, useBrouillonTiers, cleBrouillon, oublierBrouillon,
+} from '@/lib/brouillon';
+import ModalQuitterSaisie from '../../components/ModalQuitterSaisie';
 import { collection, query, where, getDocs, getDoc, doc, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/lib/auth-context';
@@ -12,7 +15,9 @@ import SelecteurProduits, { ProduitChoisissable } from '../../components/Selecte
 import { LigneFlux, referenceFlux, peutInitierTransfert, type Role } from '@/lib/flux-marchandise';
 import { roleSurSite, type RoleSite } from '@/lib/roles';
 import { SelectCherchable } from '@/components/Champs';
-import { estEnsemble, marqueOrigine, racineRetour } from '@/lib/retour';
+import {
+  estEnsemble, marqueOrigine, racineRetour, retourOnglet, fermerEcran,
+} from '@/lib/retour';
 import { creerOrdreTransfert } from '@/lib/ordre-transfert';
 import { auteurEtape } from '@/lib/auteur';
 
@@ -48,13 +53,31 @@ export default function NouveauTransfertPage() {
       .catch(() => setRoleLu(true));
   }, [user, siteId, activite?.adminUid]);
 
-  const [destId, setDestId] = useState('');
   /* La marchandise préparée survit au rechargement : vingt lignes
      cherchées une à une ne doivent pas disparaître parce que la page
      s'est rafraîchie. La destination et la date, elles, ne se gardent
      pas — on ne redate pas d'hier ce qu'on fait aujourd'hui. */
   const cleDraft = cleBrouillon('transfert', siteId);
   const [lignes, setLignes] = useBrouillon<LigneFlux[]>(cleDraft, []);
+  /* La destination se garde avec la marchandise, et disparaît avec
+     elle : un transfert préparé ne veut rien dire sans savoir où il
+     va — c'est pour ce site-là qu'on a compté ces quantités. */
+  const [tiersGarde, setTiersGarde, tiersRepris] = useBrouillonTiers(cleDraft);
+  const [destId, setDestIdEtat] = useState('');
+  const setDestId = (v: string) => {
+    setDestIdEtat(v); setTiersGarde(v || null);
+  };
+  /* On rend le tiers une fois la relecture faite, et une seule : le
+     réécrire à chaque rendu empêcherait de l'effacer à la main. */
+  const [tiersPose, setTiersPose] = useState(false);
+  useEffect(() => {
+    if (!tiersRepris || tiersPose) return;
+    setTiersPose(true);
+    if (tiersGarde) setDestIdEtat(tiersGarde);
+  }, [tiersRepris, tiersGarde, tiersPose]);
+
+  /* Quitter une saisie commencée se demande : voir ModalQuitterSaisie. */
+  const [quitter, setQuitter] = useState(false);
   const [date, setDate] = useState(aujourdhui());
   /* Le client du site destinataire, quand ce transfert sert une commande.
      Vide presque toujours : un transfert ordinaire réapprovisionne un
@@ -241,13 +264,25 @@ export default function NouveauTransfertPage() {
     }
   }
 
+  /* Sortir du formulaire : une seule porte, pour que le garde-fou ne
+     se contourne pas par un bouton qu'on aurait oublié. */
+  const sortir = () => fermerEcran(router,
+    `${racineRetour(vientEnsemble, siteId)}${retourOnglet('transferts', searchParams)}`);
+
+  /* On ne demande que s'il y a quelque chose à perdre : une destination
+     choisie et de la marchandise. En deçà, la question n'aurait pas
+     d'objet et ne ferait qu'un clic de plus. */
+  const aQuoiPerdre = !!destId && lignes.length > 0;
+  const demanderSortie = () => { if (aQuoiPerdre) setQuitter(true); else sortir(); };
+
   /* Initier un transfert, c'est décider qu'une marchandise quitte un site :
      celui qui fait avancer les dossiers charge et compte, il ne décide pas
      du mouvement. */
   if (roleLu && !peutInitierTransfert(role as Role | null)) return (
     <div className="min-h-screen flex flex-col items-center justify-center gap-3 bg-gray-50 dark:bg-gray-950">
       <p className="text-sm text-gray-400">Ce rôle ne crée pas de dossier.</p>
-      <button onClick={() => router.push(`${racineRetour(vientEnsemble, siteId)}?onglet=transferts`)}
+      {/* Rien n'a pu être saisi ici : on sort sans rien demander. */}
+      <button onClick={sortir}
         className="px-4 py-2 text-xs font-bold text-indigo-600 hover:underline">
         Retour
       </button>
@@ -271,7 +306,7 @@ export default function NouveauTransfertPage() {
             <h1 className="text-lg font-bold text-gray-900 dark:text-gray-100">Initier un transfert</h1>
           </div>
           <div className="flex gap-2">
-            <button onClick={() => router.push(`${racineRetour(vientEnsemble, siteId)}?onglet=transferts`)}
+            <button onClick={demanderSortie}
               className="px-4 py-2 text-sm font-bold text-gray-500 hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl transition-colors">
               Annuler
             </button>
@@ -398,6 +433,11 @@ export default function NouveauTransfertPage() {
         </div>
 
       </div>
+
+      <ModalQuitterSaisie ouvert={quitter} nomDocument="ce transfert"
+        onRester={() => setQuitter(false)}
+        onGarder={sortir}
+        onEffacer={() => { oublierBrouillon(cleDraft); sortir(); }} />
     </div>
   );
 }

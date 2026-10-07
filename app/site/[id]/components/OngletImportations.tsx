@@ -1,5 +1,6 @@
 'use client';
 import { useVueUrl } from '@/lib/vue-url';
+import { lienCreation, ouvrable } from '@/lib/retour';
 import { useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Loader2, Plus, ArrowUpDown } from 'lucide-react';
@@ -444,11 +445,8 @@ export default function OngletImportations({
             </button>
           ))}
         </div>
-        <button type="button"
-          onClick={() => router.push('/ensemble/importations/nouvelle')}
-          className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-3 py-2 text-xs font-bold text-white transition-colors hover:bg-indigo-700">
-          <Plus size={13} /> Nouvelle importation
-        </button>
+        {/* Le bouton a rejoint la carte du tableau, plus bas : il vivait
+            ici, seul en haut de page, loin des dossiers qu'il crée. */}
       </div>
 
       {modeVue === 'encours' ? (
@@ -583,6 +581,32 @@ export default function OngletImportations({
                 </button>
               ))}
             </div>
+            {/* Ouvrir une importation engage de l'argent auprès d'un
+                fournisseur : c'est le geste de celui qui répond du site.
+                Le responsable des commandes reçoit le conteneur et
+                compte ce qui arrive — il n'initie pas le dossier, comme
+                sur les achats où ce bouton lui est déjà fermé.
+
+                Et seulement là où une importation se posera : elle naît
+                « en attente », donc sous cette carte au statut, et sous
+                « En cours » dans l'autre mode. Ailleurs, le bouton
+                promettait une carte où le dossier créé n'apparaîtrait
+                pas — on le croyait perdu. */}
+            {role !== 'commandes'
+              && (modeVue === 'statut' ? vue === 'en_attente' : vue !== 'confirme') && (
+              <button type="button"
+                onClick={() => router.push(lienCreation({
+                  /* L'écran quitté voyage avec le lien : sans `mode` ni
+                     `carte`, fermer le formulaire rendait la vue par
+                     défaut, pas celle d'où l'on venait. */
+                  base: '/ensemble/importations/nouvelle',
+                  ensemble: true,
+                  vue: new URLSearchParams(window.location.search),
+                }))}
+                className="flex shrink-0 items-center gap-1.5 rounded-xl bg-indigo-600 px-3 py-2 text-xs font-bold text-white transition-colors hover:bg-indigo-700">
+                <Plus size={13} /> Nouvelle importation
+              </button>
+            )}
             {dossiers.length > 0 && (
               <ChampRecherche valeur={recherche} onChange={setRecherche}
                 placeholder="Référence, fournisseur, origine…" className="w-full sm:w-64" />
@@ -601,7 +625,7 @@ export default function OngletImportations({
             dossiers={affiches}
             colonnes={colonnes}
             cleDe={d => d.id}
-            onOuvrir={d => router.push(`/ensemble/importations/${d.id}`)}
+            onOuvrir={d => router.push(ouvrable(`/ensemble/importations/${d.id}`))}
             compte={`${affiches.length} dossier${affiches.length > 1 ? 's' : ''}`} />
         )}
       </div>

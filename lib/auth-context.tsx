@@ -80,7 +80,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
            fut écrit à l'inscription, quand rien ne le désignait. On le
            rattache ici, sinon il resterait bloqué à créer une activité qu'il
            n'aura jamais. */
-        if (p.role === 'admin' && !p.activiteId) {
+        /* La condition ne regarde plus le rôle, seulement l'activité.
+         *
+           Elle exigeait `role === 'admin'`. Un compte déjà passé à
+           `membre` mais resté sans activité — ce que produisait une
+           inscription dont le rattachement avait échoué à mi-chemin —
+           n'était jamais repris : il gardait un profil muet, et chaque
+           lecture de son site lui était refusée. Ce qu'on répare ici est
+           l'activité manquante ; le rôle n'y change rien. */
+        if (!p.activiteId) {
           try {
             const r = await rattacherCompte(u.uid, u.email ?? '');
             const sites = await sitesDuCompte(u.uid);
@@ -114,7 +122,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           role: invite > 0 ? 'membre' : 'admin',
           /* L'invitation porte l'activité : un membre en hérite, et sans
              elle les règles lui refusent toute lecture. */
-          activiteId: sonActivite,
+          /* Absent plutôt que `null` quand on ne la connaît pas encore.
+           *
+             Un champ présent valant `null` n'est pas un champ vide :
+             `get('activiteId', '')` rend alors `null`, pas `''`, et la
+             règle qui n'autorise à poser l'activité que sur un champ
+             vide refusait l'écriture. Le compte invité après son
+             inscription restait donc sans activité pour toujours — les
+             règles lui demandaient sa maison, il n'en nommait aucune, et
+             son propre site répondait « Site introuvable ». */
+          ...(sonActivite ? { activiteId: sonActivite } : {}),
         };
         await setDoc(ref, { ...p, createdAt: serverTimestamp() });
       }
@@ -137,27 +154,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setProfile({ ...p, activiteId: a.id });
         }
       }
-      /**
-       * Le profil apprend qu'il est propriétaire.
+      /* Le profil ne porte plus `adminUid`.
        *
-       * Les règles Firestore le demandent souvent — à chaque écriture, à
-       * chaque lecture d'un site. Sans ce champ, chacune doit aller lire
-       * l'activité : une requête de plus, un aller-retour de plus, et
-       * l'app rame dès qu'elle est loin du serveur.
+         Il servait de raccourci aux regles, qui ne le lisent plus : un
+         compte ecrit son propre profil, et poser `adminUid: moi` avec
+         l'activite d'un autre suffisait a s'y declarer proprietaire.
+         C'est l'activite qui repond maintenant, et elle seule.
        *
-       * On le pose ici parce que c'est le seul endroit où la réponse est
-       * déjà connue sans rien relire : l'activité vient d'être chargée.
-       * Les comptes créés depuis l'écran d'inscription l'ont déjà ; ceux
-       * d'avant le reçoivent à leur prochaine ouverture.
-       */
-      if (a && a.adminUid === u.uid && !(p as { adminUid?: string }).adminUid) {
-        try {
-          await setDoc(ref, { adminUid: u.uid }, { merge: true });
-        } catch {
-          /* Sans lui, tout marche encore — seulement un peu plus
-             lentement. On réessaiera à la prochaine ouverture. */
-        }
-      }
+         Le champ est donc interdit a la creation d'un profil. Mais
+         l'app continuait de l'ecrire a l'inscription : la regle
+         refusait, et tout compte cree sans invitation prealable butait
+         sur « Missing or insufficient permissions » — il ne pouvait
+         jamais entrer. */
 
       setActivite(a);
       setLoading(false);

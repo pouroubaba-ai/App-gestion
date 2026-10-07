@@ -1,6 +1,6 @@
 'use client';
 import { useVueUrl } from '@/lib/vue-url';
-import { marqueOrigine } from '@/lib/retour';
+import { lienCreation, ouvrable } from '@/lib/retour';
 import { useEffect, useState } from 'react';
 import { formatMontant } from '@/lib/format';
 import { hankenGrotesk } from './finance/font';
@@ -577,11 +577,25 @@ export default function OngletAchats({ siteId, userId, role, sites, titre }: Pro
           {/* Engager le site auprès d'un fournisseur, c'est décider d'une
               dépense : ce rôle reçoit la marchandise, il ne la commande pas.
               Une commande part d'un site : il faut le désigner. */}
-          {role !== 'commandes' && peutCommander(ROLE_COURANT) && ctx.siteEcriture && (
-            <button onClick={() => router.push(
-              /* Creer depuis l'ensemble passe par un site : l'origine doit
-                 suivre, sinon le dossier cree se refermera dans ce site. */
-              `/site/${ctx.siteEcriture}/achats/nouveau${marqueOrigine(ctx.depuisEnsemble)}`)}
+          {/* Et seulement là où un achat commence.
+           *
+             Le bouton s'affichait sous toutes les cartes — « Confirmé »,
+             « Reçu », « Annulé » comprises. Or un achat naît en attente :
+             l'ouvrir depuis « Confirmé » promettait une carte où le
+             dossier n'apparaîtrait pas, et l'on croyait l'avoir perdu.
+             Il ne reste donc que là où le nouveau dossier se posera :
+             « En attente » au statut, « En cours » dans l'autre mode. */}
+          {role !== 'commandes' && peutCommander(ROLE_COURANT) && ctx.siteEcriture
+            && (modeVue === 'statut' ? vue === 'en_attente' : vue !== 'confirme') && (
+            <button onClick={() => router.push(lienCreation({
+              /* L'origine doit suivre — creer depuis l'ensemble passe par
+                 un site, et sans elle le dossier s'y refermerait — et
+                 l'ecran quitte avec elle : sans `mode` ni `carte`, on
+                 revenait sur la vue par defaut. */
+              base: `/site/${ctx.siteEcriture}/achats/nouveau`,
+              ensemble: ctx.depuisEnsemble,
+              vue: new URLSearchParams(window.location.search),
+            }))}
               className="flex shrink-0 items-center gap-1.5 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition-colors">
               <Plus size={14} /> Nouvel achat
             </button>
@@ -644,7 +658,7 @@ export default function OngletAchats({ siteId, userId, role, sites, titre }: Pro
             cleDe={a => a.id}
             compte={`${affiches.length} dossier${affiches.length > 1 ? 's' : ''}`}
             onOuvrir={a => router.push(
-              `/site/${(a as any).siteId ?? ctx.siteEcriture}/achats/${a.id}?carte=${vue}&axe=${axe}${ctx.ensemble ? '&de=ensemble' : ''}`)}
+              ouvrable(`/site/${(a as any).siteId ?? ctx.siteEcriture}/achats/${a.id}?carte=${vue}&axe=${axe}${ctx.depuisEnsemble ? '&de=ensemble' : ''}`))}
             colonnes={[
               { cle: 'reference', label: 'Référence', rang: 'titre',
                 rendu: a => (

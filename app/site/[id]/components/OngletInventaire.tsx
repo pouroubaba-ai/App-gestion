@@ -1855,7 +1855,7 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
                       return (
                         <tr key={p.id}
                           onClick={() => router.push(
-                            `/site/${p.siteId || siteOuvert}/inventaire/${p.id}` + `?groupe=${groupe}${ctx.ensemble ? '&de=ensemble' : ''}`)}
+                            `/site/${p.siteId || siteOuvert}/inventaire/${p.id}` + `?groupe=${groupe}${ctx.depuisEnsemble ? '&de=ensemble' : ''}`)}
                           className="cursor-pointer transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/50">
                           <td className="px-3 py-2.5 font-medium text-gray-900 dark:text-gray-100 text-center">{p.designation}</td>
                           {ctx.ensemble && <CelluleSite nom={ctx.nomDe(p.siteId)} />}
@@ -1920,7 +1920,7 @@ export default function OngletInventaire({ siteId, userId, sites, titre }: Props
                       return (
                         <tr key={p.id}
                           onClick={() => router.push(
-                            `/site/${p.siteId || siteOuvert}/inventaire/${p.id}` + `?groupe=${groupe}${ctx.ensemble ? '&de=ensemble' : ''}`)}
+                            `/site/${p.siteId || siteOuvert}/inventaire/${p.id}` + `?groupe=${groupe}${ctx.depuisEnsemble ? '&de=ensemble' : ''}`)}
                           className="cursor-pointer transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/50">
                           <td className="px-3 py-2.5 font-medium text-gray-900 dark:text-gray-100 text-center">{p.designation}</td>
                           {ctx.ensemble && <CelluleSite nom={ctx.nomDe(p.siteId)} />}

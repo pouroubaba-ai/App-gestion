@@ -39,7 +39,7 @@ import {
   sousTotalOrigine, piedDocument, valeurEnFrancs, LIBELLES_SENS,
 } from '@/lib/reductions';
 import {
-  estEnsemble, retourHistorique, marqueOrigine, racineRetour,
+  estEnsemble, retourHistorique, marqueOrigine, racineRetour, fermerEcran,
 } from '@/lib/retour';
 import {
   propagerEtapeOrdre, remettreOrdre, annulerOrdre,
@@ -916,7 +916,7 @@ export default function FicheVentePage() {
             <div className="flex items-center gap-2">
             {/* La flèche ne paraît que sur téléphone : au bureau, « Fermer »
                 reste plus clair qu'un chevron isolé. */}
-            <button onClick={() => router.push(fermer)}
+            <button onClick={() => fermerEcran(router, fermer)}
               title="Fermer"
               className="-ml-1 shrink-0 rounded-xl p-2 text-gray-500 transition-colors hover:bg-gray-50 dark:hover:bg-gray-800 sm:hidden">
               <ArrowLeft size={18} />
@@ -948,7 +948,7 @@ export default function FicheVentePage() {
           <div className="mt-2.5 flex gap-2 [&>button]:flex-1 [&>button]:justify-center sm:mt-0 sm:[&>button]:flex-none">
             {/* on revient sur la carte du dossier qu'on quitte, pas sur
                 une carte par defaut : sinon on perd le fil de son travail */}
-            <button onClick={() => router.push(fermer)}
+            <button onClick={() => fermerEcran(router, fermer)}
               className="hidden px-4 py-2 text-sm font-bold text-gray-500 hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl transition-colors sm:block">
               Fermer
             </button>

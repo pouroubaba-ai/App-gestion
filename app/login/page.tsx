@@ -48,7 +48,6 @@ export default function LoginPage() {
                savent pas de quelle maison est ce compte et lui refusent
                toute lecture. */
             ...(r.activiteId ? { activiteId: r.activiteId } : {}),
-            ...(r.nb > 0 ? {} : { adminUid: cred.user.uid }),
             createdAt: serverTimestamp(),
           });
         } else {
@@ -161,7 +160,6 @@ export default function LoginPage() {
           nom: email,
           role: invite > 0 ? 'membre' : 'admin',
           ...(sonActivite ? { activiteId: sonActivite } : {}),
-          ...(invite > 0 ? {} : { adminUid: cred.user.uid }),
           createdAt: serverTimestamp(),
         });
         /**
@@ -222,12 +220,17 @@ export default function LoginPage() {
         </div>
 
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8">
+          {/* Changer d'onglet efface le message.
+              Il survivait au passage d'un formulaire a l'autre : un echec
+              de connexion laissait son rouge sous « Creer un compte », et
+              une inscription qui venait de reussir paraissait avoir
+              echoue. On corrigeait alors un bug qui n'existait plus. */}
           <div className="flex border-b border-gray-200 mb-6">
-            <button onClick={() => setTab('register')}
+            <button onClick={() => { setTab('register'); setError(''); }}
               className={`flex-1 pb-3 text-sm font-medium border-b-2 transition-colors ${tab === 'register' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-400'}`}>
               Créer un compte
             </button>
-            <button onClick={() => setTab('login')}
+            <button onClick={() => { setTab('login'); setError(''); }}
               className={`flex-1 pb-3 text-sm font-medium border-b-2 transition-colors ${tab === 'login' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-400'}`}>
               Se connecter
             </button>

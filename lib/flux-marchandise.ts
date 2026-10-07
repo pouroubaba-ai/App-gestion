@@ -122,7 +122,13 @@ export type EtatVente = 'devis' | 'commande' | 'preparation' | 'pret' | 'livre' 
 export const LIBELLES_VENTE: Record<EtatVente, string> = {
   devis: 'Devis',
   commande: 'Commande',
-  preparation: 'En préparation',
+  /* « En traitement », comme l'achat et l'importation au même moment du
+     cycle : on rassemble et l'on compte avant de conclure. Le même
+     travail portait trois noms selon l'écran, et il fallait apprendre
+     trois vocabulaires pour une seule étape. L'état reste `preparation`
+     dans la base — renommer un libellé ne renomme pas ce qui est
+     écrit. */
+  preparation: 'En traitement',
   pret: 'Prêt',
   /* « Livré / Récupéré » : le même fait, que le client vienne ou qu'on aille */
   livre: 'Livré',

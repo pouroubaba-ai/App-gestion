@@ -23,7 +23,9 @@ import {
   peutExpedier, peutRecevoir, peutArbitrerEcart, peutAnnulerDossier, Role,
   libelleTransfert, valeurEnvoyee,
 } from '@/lib/flux-marchandise';
-import { estEnsemble, retourHistorique, retourOnglet } from '@/lib/retour';
+import {
+  estEnsemble, retourHistorique, retourOnglet, fermerEcran,
+} from '@/lib/retour';
 import { annulerOrdre } from '@/lib/ordre-transfert';
 import { formatMontant } from '@/lib/format';
 
@@ -486,6 +488,19 @@ export default function FicheTransfertPage() {
     finally { setEnCours(false); }
   }
 
+  /* L'adresse de repli, en un seul endroit : les deux boutons de
+     fermeture portaient chacun leur copie de ce calcul. */
+  const fermer = (() => {
+    const de = searchParams.get('de');
+    const base = estEnsemble(searchParams) ? '/ensemble' : `/site/${siteId}`;
+    if (de === 'historique' || de === 'ensemble-historique') {
+      return `${base}${retourHistorique(searchParams)}`;
+    }
+    /* La vue quittée revient avec nous : on avait ouvert ce dossier
+       depuis une étape ou un statut précis. */
+    return `${base}${retourOnglet('transferts', searchParams)}`;
+  })();
+
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-950 text-gray-900 dark:text-gray-100">
 
@@ -507,16 +522,7 @@ export default function FicheTransfertPage() {
             <div className="flex items-start gap-2">
               {/* La flèche ne paraît que sur téléphone : au bureau,
                   « Fermer » reste plus clair qu'un chevron isolé. */}
-              <button onClick={() => router.push((() => {
-                const de = searchParams.get('de');
-                const base = estEnsemble(searchParams) ? '/ensemble' : `/site/${siteId}`;
-                if (de === 'historique' || de === 'ensemble-historique') {
-                  return `${base}${retourHistorique(searchParams)}`;
-                }
-                /* La vue quittée revient avec nous : on avait ouvert ce
-                   dossier depuis une étape ou un statut précis. */
-                return `${base}${retourOnglet('transferts', searchParams)}`;
-              })())}
+              <button onClick={() => fermerEcran(router, fermer)}
                 title="Fermer"
                 className="-ml-1 shrink-0 rounded-xl p-2 text-gray-500 transition-colors hover:bg-gray-50 dark:hover:bg-gray-800 sm:hidden">
                 <ArrowLeft size={18} />
@@ -546,14 +552,7 @@ export default function FicheTransfertPage() {
               sur téléphone où le pouce ne vise pas. */}
           <div className="mt-2.5 flex gap-2 [&>button]:flex-1 [&>button]:justify-center sm:mt-0 sm:[&>button]:flex-none">
             {/* On revient d'où l'on vient : l'historique mène aussi ici. */}
-            <button onClick={() => router.push((() => {
-              const de = searchParams.get('de');
-              const base = estEnsemble(searchParams) ? '/ensemble' : `/site/${siteId}`;
-              if (de === 'historique' || de === 'ensemble-historique') {
-                return `${base}${retourHistorique(searchParams)}`;
-              }
-              return `${base}${retourOnglet('transferts', searchParams)}`;
-            })())}
+            <button onClick={() => fermerEcran(router, fermer)}
               className="hidden px-4 py-2 text-sm font-bold text-gray-500 hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl transition-colors sm:block">
               Fermer
             </button>
@@ -1210,7 +1209,8 @@ export default function FicheTransfertPage() {
                 ? l.quantiteDemandee
                 : (l.quantiteExpediee ?? l.quantiteDemandee);
               const deja = (peutExpedierIci ? declareExp : declareRec)[ligneSaisie] ?? 0;
-              return (
+            
+  return (
                 <div className="mb-3 flex justify-between rounded-xl bg-gray-50 px-3 py-2 text-xs dark:bg-gray-800">
                   <span className="text-gray-400">
                     Attendu <span className="font-bold text-gray-700 dark:text-gray-200">{attendu}</span>

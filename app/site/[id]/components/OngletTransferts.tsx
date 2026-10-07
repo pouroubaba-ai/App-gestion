@@ -1,5 +1,5 @@
 'use client';
-import { marqueOrigine, marqueVue } from '@/lib/retour';
+import { marqueOrigine, marqueVue, lienCreation } from '@/lib/retour';
 import { useEffect, useState } from 'react';
 import { useVueUrl } from '@/lib/vue-url';
 import { hankenGrotesk } from './finance/font';
@@ -533,10 +533,20 @@ export default function OngletTransferts({ siteId, userId, sites, role, titre }:
               dossier, elle répond à celui qu'un autre site a ouvert. */}
           {/* Un transfert part d'un site : il faut savoir lequel. Depuis
               l'ensemble, il faut donc en avoir choisi un. */}
+          {/* Et seulement là où le transfert créé se posera : il naît
+              « en cours », donc sous cette carte au statut, et sous
+              « En cours » dans l'autre mode. Ailleurs — « Confirmé »,
+              « Reçu », « Expédié » — le bouton promettait une carte où
+              le dossier n'apparaîtrait pas, et l'on croyait l'avoir
+              perdu. */}
           {(ctx.ensemble ? true : sens === 'transfert') && peutInitierTransfert(ROLE_COURANT)
-            && ctx.siteEcriture && (
-            <button onClick={() => router.push(
-              `/site/${ctx.siteEcriture}/transferts/nouveau${marqueOrigine(ctx.depuisEnsemble)}`)}
+            && ctx.siteEcriture
+            && (modeVue === 'statut' ? etat === 'en_cours' : etat !== 'confirme') && (
+            <button onClick={() => router.push(lienCreation({
+              base: `/site/${ctx.siteEcriture}/transferts/nouveau`,
+              ensemble: ctx.depuisEnsemble,
+              vue: new URLSearchParams(window.location.search),
+            }))}
               className="flex shrink-0 items-center gap-1.5 rounded-xl bg-indigo-600 px-3 py-2 text-xs font-bold text-white transition-colors hover:bg-indigo-700">
               <Plus size={14} /> Initier un transfert
             </button>
@@ -555,14 +565,17 @@ export default function OngletTransferts({ siteId, userId, sites, role, titre }:
               /* Le dossier emporte la vue d'où on l'ouvre : sans elle, le
                  refermer ramenait sur « En cours », même si l'on venait
                  des confirmés ou d'une étape précise. */
-              onOuvrir={t => router.push((() => {
-                const base = `/site/${ctx.ensemble ? t.siteSourceId : siteId}/transferts/${t.id}`;
-                const vue = marqueVue(new URLSearchParams(window.location.search));
-                /* `marqueVue` rend un suffixe en `&…` : il lui faut un
-                   premier paramètre devant, que `de` fournit ou non. */
-                if (ctx.ensemble) return `${base}?de=ensemble${vue}`;
-                return vue ? `${base}?${vue.slice(1)}` : base;
-              })())}
+              onOuvrir={t => router.push(lienCreation({
+                /* La query se construit plutôt que de se recoller :
+                   `marqueVue` rendait un suffixe en `&…` qu'il fallait
+                   faire précéder d'un premier paramètre, et l'on
+                   découpait la chaîne à la main quand il n'y en avait
+                   pas. Un morceau vide suffisait à produire une adresse
+                   mal formée. */
+                base: `/site/${ctx.ensemble ? t.siteSourceId : siteId}/transferts/${t.id}`,
+                ensemble: ctx.depuisEnsemble,
+                vue: new URLSearchParams(window.location.search),
+              }))}
               colonnes={[
                 { cle: 'reference', label: 'Référence', rang: 'titre',
                   rendu: t => (

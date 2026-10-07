@@ -12,13 +12,13 @@
 import {
   LayoutDashboard, Wallet, RefreshCw, ShoppingCart, ArrowLeftRight, Package,
   Handshake, CalendarClock, Users, History, ClipboardList, Settings, HandCoins,
-  ListOrdered, ShieldCheck, Undo2, SlidersHorizontal,
+  ListOrdered, ShieldCheck, Undo2, SlidersHorizontal, Ship,
 } from 'lucide-react';
 import { ongletsDuRole, type RoleSite } from './roles';
 
 export type Onglet =
   | 'dashboard' | 'fonds' | 'cycle-vente' | 'achats' | 'transferts'
-  | 'inventaire' | 'partenaires' | 'recouvrements' | 'employes'
+  | 'importations' | 'inventaire' | 'partenaires' | 'recouvrements' | 'employes'
   | 'historique' | 'audit' | 'configuration' | 'remises' | 'retours'
   | 'mouvements' | 'mouvements-stock' | 'autorisations';
 
@@ -36,6 +36,12 @@ export const ONGLETS_SITE: { key: Onglet; label: string; icon: React.ElementType
   /* Agir, dans l'ordre du cycle */
   { key: 'cycle-vente',    label: 'Cycle de vente',   icon: RefreshCw },
   { key: 'achats',         label: 'Achats',           icon: ShoppingCart },
+  /* L'importation suit l'achat : c'est le meme dossier, venu de plus
+     loin. Elle appartient a l'activite tant qu'elle voyage, mais elle
+     arrive sur un site — et c'est la qu'on la deballe et qu'on la
+     compte. L'ouvrir ici evite au responsable des commandes de
+     reclamer l'etat d'un conteneur qu'il recevra lui-meme. */
+  { key: 'importations',   label: 'Importations',     icon: Ship },
   { key: 'transferts',     label: 'Transferts',       icon: ArrowLeftRight },
   /* Le retour défait ce que les trois précédents ont fait : il suit le
      cycle plutôt que de vivre à part. */

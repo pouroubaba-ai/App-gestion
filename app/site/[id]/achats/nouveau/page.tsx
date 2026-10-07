@@ -3,7 +3,10 @@ import { produitsDuSite, sitesDeLActivite } from '@/lib/produits-site';
 import { creerProduitRapide, creerGammeRapide } from '@/lib/produit-rapide';
 import ModalGammeProduit from '../../components/ModalGammeProduit';
 import { useEffect, useState } from 'react';
-import { useBrouillon, cleBrouillon, oublierBrouillon } from '@/lib/brouillon';
+import {
+  useBrouillon, useBrouillonTiers, cleBrouillon, oublierBrouillon,
+} from '@/lib/brouillon';
+import ModalQuitterSaisie from '../../components/ModalQuitterSaisie';
 import { collection, query, where, getDocs, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/lib/auth-context';
@@ -22,7 +25,9 @@ import {
 import SelecteurProduits, { ProduitChoisissable } from '../../components/SelecteurProduits';
 import { LigneFlux, referenceFlux } from '@/lib/flux-marchandise';
 import { SelectCherchable, ChampNombre } from '@/components/Champs';
-import { estEnsemble, marqueOrigine, racineRetour } from '@/lib/retour';
+import {
+  estEnsemble, marqueOrigine, racineRetour, retourOnglet, fermerEcran,
+} from '@/lib/retour';
 import { chargerCaisseDuSite, soldeCaisse } from '@/lib/caisse';
 import { enregistrerVersement } from '@/lib/versements-collection';
 
@@ -56,13 +61,31 @@ export default function NouvelAchatPage() {
       .catch(() => setRoleLu(true));
   }, [user, siteId, activite?.adminUid]);
 
-  const [fournisseurId, setFournisseurId] = useState('');
   /* La marchandise préparée survit au rechargement : les lignes
      cherchées une à une ne doivent pas disparaître parce que la page
-     s'est rafraîchie. Le partenaire et la date ne se gardent pas — on
-     ne réengage pas quelqu'un qu'on n'a pas revu. */
+     s'est rafraîchie. La date ne se garde pas — on ne date pas d'hier
+     ce qu'on fait aujourd'hui. */
   const cleDraft = cleBrouillon('achat', siteId);
   const [lignes, setLignes] = useBrouillon<LigneFlux[]>(cleDraft, []);
+  /* Le tiers se garde avec la marchandise, et disparaît avec elle :
+     un panier sans le nom de celui à qui il est destiné ne veut plus
+     rien dire — les prix et les quantités ont été saisis pour lui. */
+  const [tiersGarde, setTiersGarde, tiersRepris] = useBrouillonTiers(cleDraft);
+  const [fournisseurId, setFournisseurIdEtat] = useState('');
+  const setFournisseurId = (v: string) => {
+    setFournisseurIdEtat(v); setTiersGarde(v || null);
+  };
+  /* On rend le tiers une fois la relecture faite, et une seule : le
+     réécrire à chaque rendu empêcherait de l'effacer à la main. */
+  const [tiersPose, setTiersPose] = useState(false);
+  useEffect(() => {
+    if (!tiersRepris || tiersPose) return;
+    setTiersPose(true);
+    if (tiersGarde) setFournisseurIdEtat(tiersGarde);
+  }, [tiersRepris, tiersGarde, tiersPose]);
+
+  /* Quitter une saisie commencée se demande : voir ModalQuitterSaisie. */
+  const [quitter, setQuitter] = useState(false);
   /* immédiat = payé et reçu dans le même geste ; sinon la marchandise suivra */
   const [immediat, setImmediat] = useState(true);
   /* « immédiat » veut dire reçu à l'instant : la date se verrouille sur le jour.
@@ -465,6 +488,17 @@ export default function NouvelAchatPage() {
     }
   }
 
+  /* Sortir du formulaire : une seule porte, pour que le garde-fou ne
+     se contourne pas par un bouton qu'on aurait oublié. */
+  const sortir = () => fermerEcran(router,
+    `${racineRetour(vientEnsemble, siteId)}${retourOnglet('achats', searchParams)}`);
+
+  /* On ne demande que s'il y a quelque chose à perdre : un fournisseur
+     désigné et de la marchandise. En deçà, la question n'aurait pas
+     d'objet et ne ferait qu'un clic de plus. */
+  const aQuoiPerdre = !!fournisseurId && lignes.length > 0;
+  const demanderSortie = () => { if (aQuoiPerdre) setQuitter(true); else sortir(); };
+
   /* La déconnexion vide l'utilisateur avant que la navigation aboutisse. */
   if (!user) return null;
 
@@ -473,7 +507,7 @@ export default function NouvelAchatPage() {
   if (roleLu && role === 'commandes') return (
     <div className="min-h-screen flex flex-col items-center justify-center gap-3 bg-gray-50 dark:bg-gray-950">
       <p className="text-sm text-gray-400">Ce rôle ne crée pas de dossier.</p>
-      <button onClick={() => router.push(`${racineRetour(vientEnsemble, siteId)}?onglet=achats`)}
+      <button onClick={() => router.push(`${racineRetour(vientEnsemble, siteId)}${retourOnglet('achats', searchParams)}`)}
         className="px-4 py-2 text-xs font-bold text-indigo-600 hover:underline">
         Retour
       </button>
@@ -497,7 +531,7 @@ export default function NouvelAchatPage() {
             <h1 className="text-lg font-bold text-gray-900 dark:text-gray-100">Nouvelle commande</h1>
           </div>
           <div className="flex gap-2">
-            <button onClick={() => router.push(`${racineRetour(vientEnsemble, siteId)}?onglet=achats`)}
+            <button onClick={demanderSortie}
               className="px-4 py-2 text-sm font-bold text-gray-500 hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl transition-colors">
               Annuler
             </button>
@@ -682,6 +716,11 @@ export default function NouvelAchatPage() {
         </div>
 
       </div>
+
+      <ModalQuitterSaisie ouvert={quitter} nomDocument="cet achat"
+        onRester={() => setQuitter(false)}
+        onGarder={sortir}
+        onEffacer={() => { oublierBrouillon(cleDraft); sortir(); }} />
     </div>
   );
 }

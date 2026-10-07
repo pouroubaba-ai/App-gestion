@@ -7,6 +7,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { Loader2, Check, Ship, ArrowRight, X, CheckCheck, Plus, Undo2, Info,
   Wallet, BarChart3, ArrowUpDown, Trash2 } from 'lucide-react';
 import { formatMontant, formatDate } from '@/lib/format';
+import { retourOnglet, fermerEcran } from '@/lib/retour';
 import { auteurCourant, auteurEtape } from '@/lib/auteur';
 import { roleSurSite, type RoleSite } from '@/lib/roles';
 import PanneauFrais from '@/app/site/[id]/components/PanneauFrais';
@@ -266,6 +267,11 @@ export default function FicheImportationPage() {
       .catch(() => setRole('aucun'));
   }, [user, dossier]);
 
+  /* L'adresse de repli : l'écran quitté se rend tel qu'il était,
+     plutôt qu'un « ?onglet= » nu qui ramenait à la vue par défaut. */
+  const fermer = `/ensemble${retourOnglet('importations',
+    new URLSearchParams(typeof window === 'undefined' ? '' : window.location.search))}`;
+
   if (loading) return (
     <div className="flex min-h-screen items-center justify-center bg-gray-50 dark:bg-gray-950">
       <Loader2 size={24} className="animate-spin text-indigo-500" />
@@ -275,7 +281,7 @@ export default function FicheImportationPage() {
   if (!dossier) return (
     <div className="flex min-h-screen flex-col items-center justify-center gap-3 bg-gray-50 dark:bg-gray-950">
       <p className="text-sm text-gray-400">Dossier introuvable.</p>
-      <button onClick={() => router.push('/ensemble?onglet=importations')}
+      <button onClick={() => fermerEcran(router, fermer)}
         className="px-4 py-2 text-xs font-bold text-indigo-600 hover:underline">
         Retour
       </button>
@@ -864,7 +870,7 @@ export default function FicheImportationPage() {
             </span>
           </div>
           <div className="flex gap-2">
-            <button onClick={() => router.push('/ensemble?onglet=importations')}
+            <button onClick={() => fermerEcran(router, fermer)}
               className="rounded-xl px-4 py-2 text-sm font-bold text-gray-500 transition-colors hover:bg-gray-50 dark:hover:bg-gray-800">
               Fermer
             </button>
@@ -1857,7 +1863,8 @@ export default function FicheImportationPage() {
                      seul jugement qu'on porte sur un prix qu'on ne
                      décide pas. */
                   const perd = x.prix < reelLigne;
-                  return (
+                
+  return (
                     <div key={x.siteId}
                       className={`flex items-center justify-between gap-3 rounded-xl px-3 py-2 text-xs ${
                         x.siteId === dossier.siteId

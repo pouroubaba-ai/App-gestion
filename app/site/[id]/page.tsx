@@ -27,6 +27,7 @@ import OngletMouvements from './components/OngletMouvements';
 import OngletAutorisations from './components/OngletAutorisations';
 import OngletTransferts from './components/OngletTransferts';
 import OngletAchats from './components/OngletAchats';
+import OngletImportations from './components/OngletImportations';
 import OngletHistorique from './components/OngletHistorique';
 import OngletCycleVente from './components/OngletCycleVente';
 
@@ -56,7 +57,7 @@ interface Site {
 const ONGLETS_PRETS: Onglet[] = [
   'dashboard', 'fonds', 'mouvements', 'autorisations',
   'partenaires', 'recouvrements',
-  'employes', 'cycle-vente', 'achats', 'transferts', 'inventaire',
+  'employes', 'cycle-vente', 'achats', 'importations', 'transferts', 'inventaire',
   'mouvements-stock', 'historique',
   'remises',
   'retours',
@@ -435,6 +436,9 @@ export default function SiteFichePage() {
           {ongletCourant === 'achats' && (
             <OngletAchats siteId={siteId} userId={user!.uid} role={role} />
           )}
+          {ongletCourant === 'importations' && (
+            <OngletImportations siteId={siteId} userId={user!.uid} role={role} />
+          )}
           {ongletCourant === 'historique' && <OngletHistorique siteId={siteId} userId={user!.uid} />}
           {ongletCourant === 'cycle-vente' && (
             <OngletCycleVente siteId={siteId} userId={user!.uid} role={role} />
@@ -446,7 +450,9 @@ export default function SiteFichePage() {
               lectures étaient ensuite refusées, et leur écran restait
               blanc. C'est le site qu'on configure. */}
           {ongletCourant === 'configuration' && (
-            <OngletConfiguration siteId={siteId} activiteId={site.activiteId ?? activite?.id} role={role} />
+            <OngletConfiguration siteId={siteId} activiteId={site.activiteId ?? activite?.id}
+              role={role} nomSite={site.nom} etatSite={site.etat}
+              onEtatChange={e => setSite(s => (s ? { ...s, etat: e } : s))} />
           )}
           {!ONGLETS_PRETS.includes(ongletCourant) && (
             <div className="min-h-64 flex items-center justify-center">

@@ -409,6 +409,7 @@ service cloud.firestore {
             || (resource.data.get('role', '') == 'admin'
               && request.resource.data.get('role', '') == 'membre'))
           && (resource.data.get('activiteId', '') == ''
+            || resource.data.get('activiteId', '') == null
             || request.resource.data.get('activiteId', '')
                  == resource.data.get('activiteId', ''))));
       allow delete: if false;
@@ -946,8 +947,20 @@ service cloud.firestore {
          * une annulation, une contre-passation. Jamais en faisant
          * disparaitre la trace.
          */
+        /* Sauf pour celui qui repond de la maison.
+         *
+           Ce qui precede vaut pour un gerant ou un caissier : ils
+           corrigent, ils n'effacent pas. Mais le proprietaire doit
+           pouvoir vider sa propre base — c'est ce que fait « Vider les
+           donnees », et la regle le lui refusait. L'ecran annoncait
+           alors « La base a refuse d'effacer » en listant neuf
+           collections, et un site d'essai restait pour toujours.
+
+           `suisProprietaire()` lit l'activite, jamais le profil : un
+           compte ne peut pas se declarer proprietaire lui-meme. */
         && (request.method != 'delete'
-          || col == 'lignes_vente');
+          || col == 'lignes_vente'
+          || suisProprietaire());
     }
 
     /**

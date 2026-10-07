@@ -472,7 +472,7 @@ export default function OngletEmployes({ siteId, userId, sites, titre }: Props) 
                     const s = statutDe(e.reste, e.verse);
                     return (
                       <tr key={e.id} onClick={() => router.push(
-                        `/site/${e.siteId ?? ctx.siteEcriture}/employes/${e.id}${ctx.ensemble ? '?de=ensemble' : ''}`)} className="hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors cursor-pointer">
+                        `/site/${e.siteId ?? ctx.siteEcriture}/employes/${e.id}${ctx.depuisEnsemble ? '?de=ensemble' : ''}`)} className="hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors cursor-pointer">
                         <td className="px-4 py-3 font-medium text-gray-900 dark:text-gray-100 text-center">{e.nom}</td>
                         {ctx.ensemble && <CelluleSite nom={ctx.nomDe(e.siteId)} />}
                         <td className="px-4 py-3 text-gray-500 dark:text-gray-400 text-center">{e.fonction || '—'}</td>

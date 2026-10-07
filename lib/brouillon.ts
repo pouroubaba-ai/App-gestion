@@ -19,10 +19,18 @@ import { useEffect, useState } from 'react';
  * deux sites ne se mélangent pas, et un brouillon d'achat ne ressort
  * pas dans une vente.
  *
- * Ce qui s'y garde : la marchandise, c'est-à-dire ce qu'il a fallu
- * chercher. Pas le partenaire, pas le mode de paiement, pas la date —
- * les retrouver à l'ouverture ferait engager quelqu'un qu'on n'a pas
- * revu, ou dater d'hier ce qu'on fait aujourd'hui.
+ * Ce qui s'y garde : la marchandise, et le tiers à qui elle est
+ * destinée. Les deux ensemble, ou rien.
+ *
+ * Le tiers en était d'abord exclu — on craignait de réengager
+ * quelqu'un qu'on n'avait pas revu. C'était prendre le problème à
+ * l'envers : un brouillon sans son tiers n'est pas un brouillon, c'est
+ * une liste de marchandise qui ne veut plus rien dire. Les quantités,
+ * les prix, les remises ont été saisis pour quelqu'un ; le même panier
+ * destiné à un autre n'a ni le même sens ni forcément les mêmes prix.
+ *
+ * La date, elle, ne se garde jamais : dater d'hier un document
+ * d'aujourd'hui est une erreur qu'on ne voit pas.
  */
 
 /** La clé d'un brouillon : l'écran, puis le site. */
@@ -77,5 +85,52 @@ export function useBrouillon<T>(
 export function oublierBrouillon(cle: string): void {
   try {
     localStorage.removeItem(cle);
+    localStorage.removeItem(`${cle}:tiers`);
   } catch { /* rien à oublier si rien ne s'est gardé */ }
+}
+
+/**
+ * Le tiers d'un brouillon, qui vit et meurt avec lui.
+ *
+ * Il a d'abord été gardé une heure, puis oublié : on craignait de voir
+ * ressortir un client qu'on n'avait pas revu. Mais c'était prendre le
+ * problème à l'envers. Un brouillon sans son tiers n'est pas un
+ * brouillon, c'est une liste de marchandise qui ne veut plus rien dire
+ * — les quantités, les prix, les remises ont été saisis pour
+ * quelqu'un, et le même panier destiné à un autre n'a ni le même sens
+ * ni forcément les mêmes prix. Rendre l'un sans l'autre rendait
+ * quelque chose de faux.
+ *
+ * Le tiers suit donc exactement la marchandise : il revient tant
+ * qu'elle revient, et disparaît avec elle — à l'enregistrement, ou
+ * quand on choisit d'effacer en quittant.
+ *
+ * `null` est une valeur à part entière : « aucun tiers choisi ». On ne
+ * la garde pas, on retire la clé — un brouillon n'est pas la trace
+ * d'une absence.
+ */
+export function useBrouillonTiers(
+  cle: string,
+): [string | null, React.Dispatch<React.SetStateAction<string | null>>, boolean] {
+  const cleTiers = `${cle}:tiers`;
+  const [valeur, setValeur] = useState<string | null>(null);
+  const [repris, setRepris] = useState(false);
+
+  useEffect(() => {
+    try {
+      const brut = localStorage.getItem(cleTiers);
+      if (brut) setValeur(JSON.parse(brut) as string);
+    } catch { /* stockage refusé ou illisible : on repart sans tiers */ }
+    setRepris(true);
+  }, [cleTiers]);
+
+  useEffect(() => {
+    if (!repris) return;
+    try {
+      if (!valeur) localStorage.removeItem(cleTiers);
+      else localStorage.setItem(cleTiers, JSON.stringify(valeur));
+    } catch { /* indisponible : la saisie continue sans filet */ }
+  }, [valeur, cleTiers, repris]);
+
+  return [valeur, setValeur, repris];
 }

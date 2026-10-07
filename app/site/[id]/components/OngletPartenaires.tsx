@@ -809,7 +809,7 @@ export default function OngletPartenaires({ siteId, userId, sites, titre, defaul
                   const montant = estFourn ? p.dette : p.creance;
                   const dernier = dernierVersementDe(p.id, estFourn);
                   return (
-                    <tr key={p.id} onClick={() => router.push(`/site/${p.siteId ?? ctx.siteEcriture}/partenaires/${p.id}?vue=${vue}${ctx.ensemble ? '&de=ensemble' : ''}`)} className="hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors cursor-pointer">
+                    <tr key={p.id} onClick={() => router.push(`/site/${p.siteId ?? ctx.siteEcriture}/partenaires/${p.id}?vue=${vue}${ctx.depuisEnsemble ? '&de=ensemble' : ''}`)} className="hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors cursor-pointer">
                       <td className="px-4 py-3 font-medium text-gray-900 dark:text-gray-100 text-center">{p.nom}</td>
                       {ctx.ensemble && <CelluleSite nom={ctx.nomDe(p.siteId)} />}
                       <td className="px-4 py-3 text-center">

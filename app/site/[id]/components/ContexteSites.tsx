@@ -42,6 +42,13 @@ export function useSites(siteId: Portee, sites?: SiteConnu[]) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [cleSites],
   );
+  /* « Plusieurs sites », et rien d'autre.
+   *
+     Ne jamais s'en servir pour construire une adresse : voir
+     `depuisEnsemble` juste en dessous. Dix endroits l'avaient fait —
+     les cartes du cycle de vente, les lignes d'achats, d'employés, de
+     partenaires, d'inventaire, de transferts — et toutes renvoyaient
+     dans la fiche d'un site dès que la portée n'en couvrait qu'un. */
   const ensemble = ids.length > 1;
 
   /**

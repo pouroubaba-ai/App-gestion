@@ -101,8 +101,14 @@ const ONGLETS_PAR_ROLE: Record<RoleSite, string[] | null> = {
      déclare ce qui manque, le responsable va compter au rayon et
      confirme. Sans cet onglet il ne verrait jamais ce qu'on lui demande
      de constater. */
+  /* L'importation est un achat qui vient de loin : meme marchandise a
+     recevoir, meme comptage a l'arrivee. Le lui fermer l'obligeait a
+     reclamer l'etat d'un conteneur a quelqu'un d'autre, alors que c'est
+     lui qui le deballera. Il n'y voit pas les montants, et il n'ouvre
+     pas de dossier — comme pour les achats. */
   commandes: [
-    'cycle-vente', 'achats', 'transferts', 'retours', 'mouvements-stock',
+    'cycle-vente', 'achats', 'importations', 'transferts', 'retours',
+    'mouvements-stock',
   ],
   /* Trois écrans pour un seul métier : ce qu'il y a dans le tiroir, ce qui
      y est passé, ce qui attend d'y entrer. Le caissier travaille au

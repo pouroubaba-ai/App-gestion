@@ -1,6 +1,9 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { useBrouillon, cleBrouillon, oublierBrouillon } from '@/lib/brouillon';
+import {
+  useBrouillon, useBrouillonTiers, cleBrouillon, oublierBrouillon,
+} from '@/lib/brouillon';
+import ModalQuitterSaisie from '@/app/site/[id]/components/ModalQuitterSaisie';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/lib/auth-context';
@@ -14,6 +17,7 @@ import SelecteurProduits, { ProduitChoisissable } from '@/app/site/[id]/componen
 import { SelectCherchable } from '@/components/Champs';
 import { type LigneFlux } from '@/lib/flux-marchandise';
 import { creerImportation } from '@/lib/importations';
+import { retourOnglet, fermerEcran } from '@/lib/retour';
 
 interface Bref { id: string; nom: string }
 
@@ -41,7 +45,6 @@ export default function NouvelleImportationPage() {
   const [loading, setLoading] = useState(true);
 
   const [siteId, setSiteId] = useState('');
-  const [fournisseurId, setFournisseurId] = useState('');
   const [origine, setOrigine] = useState('');
   /* La marchandise préparée survit au rechargement : les lignes
      cherchées une à une ne doivent pas disparaître parce que la page
@@ -49,6 +52,25 @@ export default function NouvelleImportationPage() {
      ne réengage pas quelqu'un qu'on n'a pas revu. */
   const cleDraft = cleBrouillon('importation', 'ensemble');
   const [lignes, setLignes] = useBrouillon<LigneFlux[]>(cleDraft, []);
+  /* Le tiers se garde avec la marchandise, et disparaît avec elle :
+     un panier sans le nom de celui à qui il est destiné ne veut plus
+     rien dire — les prix et les quantités ont été saisis pour lui. */
+  const [tiersGarde, setTiersGarde, tiersRepris] = useBrouillonTiers(cleDraft);
+  const [fournisseurId, setFournisseurIdEtat] = useState('');
+  const setFournisseurId = (v: string) => {
+    setFournisseurIdEtat(v); setTiersGarde(v || null);
+  };
+  /* On rend le tiers une fois la relecture faite, et une seule : le
+     réécrire à chaque rendu empêcherait de l'effacer à la main. */
+  const [tiersPose, setTiersPose] = useState(false);
+  useEffect(() => {
+    if (!tiersRepris || tiersPose) return;
+    setTiersPose(true);
+    if (tiersGarde) setFournisseurIdEtat(tiersGarde);
+  }, [tiersRepris, tiersGarde, tiersPose]);
+
+  /* Quitter une saisie commencée se demande : voir ModalQuitterSaisie. */
+  const [quitter, setQuitter] = useState(false);
   const [note, setNote] = useState('');
   /* Les produits nés pendant cette saisie : une pastille les signale sur
      leur ligne, le temps qu'on relise le bon. */
@@ -259,6 +281,21 @@ export default function NouvelleImportationPage() {
     </div>
   );
 
+  /* Sortir du formulaire : une seule porte, pour que le garde-fou ne
+     se contourne pas par un bouton qu'on aurait oublié. */
+  const sortir = () => fermerEcran(router,
+    /* L'écran quitté se rend tel qu'il était : reconstruire « ?onglet= »
+       nu ramenait au mode et à la carte par défaut, pas là où l'on avait
+       cliqué. */
+    `/ensemble${retourOnglet('importations',
+      new URLSearchParams(window.location.search))}`);
+
+  /* On ne demande que s'il y a quelque chose à perdre : un fournisseur
+     désigné et de la marchandise. En deçà, la question n'aurait pas
+     d'objet et ne ferait qu'un clic de plus. */
+  const aQuoiPerdre = !!fournisseurId && lignes.length > 0;
+  const demanderSortie = () => { if (aQuoiPerdre) setQuitter(true); else sortir(); };
+
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900 dark:bg-gray-950 dark:text-gray-100">
 
@@ -273,7 +310,7 @@ export default function NouvelleImportationPage() {
             </h1>
           </div>
           <div className="flex gap-2">
-            <button onClick={() => router.push('/ensemble?onglet=importations')}
+            <button onClick={demanderSortie}
               className="rounded-xl px-4 py-2 text-sm font-bold text-gray-500 transition-colors hover:bg-gray-50 dark:hover:bg-gray-800">
               Annuler
             </button>
@@ -375,6 +412,11 @@ export default function NouvelleImportationPage() {
           </p>
         </div>
       </div>
+
+      <ModalQuitterSaisie ouvert={quitter} nomDocument="cette importation"
+        onRester={() => setQuitter(false)}
+        onGarder={sortir}
+        onEffacer={() => { oublierBrouillon(cleDraft); sortir(); }} />
     </div>
   );
 }

@@ -87,6 +87,11 @@ function cheminDossier(
   const q = new URLSearchParams({ de: ensemble ? 'ensemble-historique' : 'historique' });
   if (sens) q.set('sens', sens);
   if (vueHisto) q.set('vueHisto', vueHisto);
+  /* La fiche saura qu'elle a été ouverte depuis l'app : en fermant,
+     elle rendra l'historique gardé par le navigateur plutôt que d'en
+     reconstruire un — et l'on ne regarde pas tourner un chargement
+     pour un écran qu'on vient de quitter. */
+  q.set('ret', '1');
   const suffixe = `?${q.toString()}`;
   if (motif === 'vente') return `/site/${siteId}/ventes/${documentId}${suffixe}`;
   if (motif === 'achat') return `/site/${siteId}/achats/${documentId}${suffixe}`;
