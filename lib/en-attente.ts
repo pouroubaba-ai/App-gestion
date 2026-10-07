@@ -41,11 +41,16 @@ export interface EnAttente {
      attendait — et le responsable des commandes, qui ne voit pas les
      chiffres, n'avait aucun autre moyen de l'apprendre. */
   importations: number;
+  /* Les voisins chez qui l'on a pris et qu'on n'a pas encore regles.
+     On compte les gens, non les francs : une pastille dit combien de
+     gestes il reste, et aller voir trois voisins est trois gestes quel
+     que soit le montant. Le total vit sur leur page. */
+  occasionnels: number;
 }
 
 export const AUCUNE_ATTENTE: EnAttente = {
   achats: 0, transferts: 0, ventes: 0, recouvrements: 0, autorisations: 0,
-  remises: 0, retours: 0, importations: 0,
+  remises: 0, retours: 0, importations: 0, occasionnels: 0,
 };
 
 /**
@@ -123,7 +128,7 @@ export async function compterEnAttente(
      retenant de chacun que les étapes qui lui réclament un geste, et sans
      compter deux fois un dossier dont les deux sites sont dans la portée. */
   const [achats, sortants, entrants, ventes, echeances, attente, missions,
-    retoursDocs, importations] =
+    retoursDocs, importations, partenaires] =
     await Promise.all([
       lireParSite('achats', portee),
       lireParSite('transferts', portee, 'siteSourceId'),
@@ -136,6 +141,7 @@ export async function compterEnAttente(
       lireParSite('missions_paiement', portee),
       lireParSite('retours_dossiers', portee),
       lireParSite('importations', portee),
+      lireParSite('partenaires', portee),
     ]);
 
   /* Un retour attend tant qu'il n'a pas atteint son dernier état. Annulé,
@@ -190,6 +196,26 @@ export async function compterEnAttente(
     retours,
     importations: importations.filter(
       d => !IMPORTATIONS_FINIES.includes((d.data() as any).etat)).length,
+    /* Les occasionnels a qui l'on doit encore. La dette se deduit des
+       achats confirmes : on reprend donc les memes dossiers, filtres sur
+       ceux qui portent un voisin de passage. */
+    occasionnels: (() => {
+      const occ = new Set(partenaires.filter(
+        d => (d.data() as any).occasionnel).map(d => d.id));
+      if (occ.size === 0) return 0;
+      const doivent = new Set<string>();
+      for (const d of achats) {
+        const a = d.data() as any;
+        if (!a.fournisseurId || !occ.has(a.fournisseurId)) continue;
+        if (a.etat !== 'confirme') continue;
+        const total = (a.lignes ?? []).reduce(
+          (n: number, l: any) => n
+            + (l.valeurUnitaire ?? 0) * (l.quantiteRecue ?? l.quantiteDemandee ?? 0),
+          0);
+        if (total - (a.avanceVersee ?? 0) > 0) doivent.add(a.fournisseurId);
+      }
+      return doivent.size;
+    })(),
   };
 }
 

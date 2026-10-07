@@ -116,8 +116,10 @@ export default function NouvelleImportationPage() {
       /* Un import est un achat : ce sont les mêmes fournisseurs. Un
          partenaire peut cumuler les deux rôles — seul le côté
          fournisseur compte ici. */
+      /* Les occasionnels n'y sont pas : un voisin a qui l'on prend un
+         savon ne fait pas traverser un conteneur. Ils ont leur page. */
       setFournisseurs(partSnap.docs
-        .filter(d => d.data().rolesFournisseur)
+        .filter(d => d.data().rolesFournisseur && !d.data().occasionnel)
         .map(d => ({ id: d.id, nom: d.data().nom as string })));
       setProduits(prods as ProduitChoisissable[]);
       /* Changer de site change le catalogue : garder les lignes

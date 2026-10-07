@@ -346,6 +346,8 @@ export default function Sidebar({
     /* Un conteneur n'avance que si quelqu'un le pousse : la pastille dit
        combien de dossiers sont encore en route ou a compter. */
     if (href.includes('onglet=importations')) return attente.importations;
+    /* Combien de voisins attendent leur argent. */
+    if (href.includes('onglet=occasionnels')) return attente.occasionnels;
     return 0;
   }
 

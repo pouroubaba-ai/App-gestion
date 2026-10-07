@@ -1082,7 +1082,7 @@ export default function ComptoirPage() {
                   s'arreter pour la creer ailleurs ferait perdre la
                   vente. */}
               <div className="min-w-0 flex-1">
-                <SelectCherchable compact
+                <SelectCherchable compact effacable
                   valeur={l.fournisseurId ?? ''}
                   onChange={v => choisirFournisseur(l.cle, v)}
                   options={fournisseurs.map(f => ({
@@ -1497,6 +1497,27 @@ export default function ComptoirPage() {
                 Client obligatoire
               </p>
             ) : null}
+            {/* Dire ce qui manque. Un bouton gris sans raison se lit comme
+                une panne : on reclique, on recommence, on ne trouve pas.
+                Deux champs peuvent retenir une ligne prise dehors, et ils
+                ne sont pas au meme endroit de l'ecran. */}
+            {(() => {
+              const sansQui = panier.some(l => l.prisDehors && !l.fournisseurId);
+              const sansCout = panier.some(
+                l => l.prisDehors && !!l.fournisseurId && (l.valeurUnitaire ?? 0) <= 0);
+              const sansPrix = panier.some(l => (l.prixVente ?? 0) <= 0);
+              const manque = [
+                sansQui ? 'chez qui' : null,
+                sansCout ? 'le prix d’achat' : null,
+                sansPrix ? 'le prix de vente' : null,
+              ].filter(Boolean);
+              if (manque.length === 0) return null;
+              return (
+                <p className="mb-2 text-xs font-bold text-amber-600 dark:text-amber-500">
+                  Il manque {manque.join(', ')}
+                </p>
+              );
+            })()}
             <button onClick={valider} disabled={!pret}
               className="mb-3 flex w-full items-center justify-center gap-1.5 rounded-xl bg-indigo-600 px-7 py-3 text-sm font-bold text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-40">
               {enCours ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}

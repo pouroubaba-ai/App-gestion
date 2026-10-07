@@ -319,7 +319,11 @@ export default function OngletRecouvrements({ siteId, userId, onCount, sites, ti
 
     /* Le choix du partenaire se fait dans le modal : on garde la liste avec
        ses roles, un tiers pouvant etre client et fournisseur. */
-    setPartenaires(partenairesSnap.map(d => {
+    /* Pas les occasionnels : un voisin chez qui l'on prend au coup par
+       coup se regle le jour meme, il n'a pas d'echeance a planifier. Les
+       proposer ici noierait ceux qu'on suit vraiment. Sa dette reste
+       lisible et payable sur sa page. */
+    setPartenaires(partenairesSnap.filter(d => !d.data().occasionnel).map(d => {
       const x = d.data();
       const roles: Role[] = [];
       if (x.rolesFournisseur) roles.push('fournisseur');

@@ -144,8 +144,11 @@ export default function NouvelAchatPage() {
         })
         .catch(() => setSoldeCaisseSite(null));
       /* un partenaire peut cumuler les deux rôles : seul le côté fournisseur compte ici */
+      /* Les occasionnels n'y sont pas : on ne passe pas commande a
+         quelqu'un chez qui l'on prend au coup par coup. Ce qu'on lui
+         doit nait de la vente, et se regle sur sa page. */
       setFournisseurs(partSnap.docs
-        .filter(d => d.data().rolesFournisseur)
+        .filter(d => d.data().rolesFournisseur && !d.data().occasionnel)
         .map(d => ({ id: d.id, nom: d.data().nom as string })));
       /* `produitsDuSite` a deja joint le produit et la detention : les
          objets arrivent complets. */

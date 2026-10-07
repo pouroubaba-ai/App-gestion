@@ -22,7 +22,8 @@ interface Produit {
   variantes?: Variante[];
 }
 
-interface Partenaire { id: string; nom: string; rolesFournisseur: boolean; rolesClient: boolean }
+interface Partenaire { id: string; nom: string; rolesFournisseur: boolean;
+  rolesClient: boolean; occasionnel?: boolean }
 
 interface Props {
   siteId: string;
@@ -100,8 +101,12 @@ export default function ModalMouvement({ siteId, userId, produit, onClose, onEnr
 
   const besoinPartenaire = (sens === 'entree' && motif === 'achat')
     || (sens === 'sortie' && motif === 'vente');
+  /* Les occasionnels restent sur leur page : une entree de stock
+     declaree a leur nom n'aurait pas de vente derriere elle, et la dette
+     qu'elle creerait ne correspondrait a rien. */
   const partenairesFiltres = partenaires.filter(p =>
-    sens === 'entree' ? p.rolesFournisseur : p.rolesClient);
+    !p.occasionnel
+    && (sens === 'entree' ? p.rolesFournisseur : p.rolesClient));
 
   const sansSaisieValeur = motif === 'perte' || motif === 'transfert';
   const valide = qte > 0 && !depassement && (sansSaisieValeur || valeur > 0);
