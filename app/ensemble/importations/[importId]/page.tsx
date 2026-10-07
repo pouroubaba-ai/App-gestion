@@ -4,7 +4,7 @@ import { doc, getDoc, updateDoc, collection, query, where, getDocs } from 'fireb
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/lib/auth-context';
 import { useParams, useRouter } from 'next/navigation';
-import { Loader2, Check, Ship, ArrowRight, X, CheckCheck, Plus, Undo2, Info,
+import { ArrowLeft, Loader2, Check, Ship, ArrowRight, X, CheckCheck, Plus, Undo2, Info,
   Wallet, BarChart3, ArrowUpDown, Trash2 } from 'lucide-react';
 import { formatMontant, formatDate } from '@/lib/format';
 import { retourOnglet, fermerEcran } from '@/lib/retour';
@@ -151,7 +151,25 @@ export default function FicheImportationPage() {
   /* Le détail des réceptions d'une ligne, déplié à la demande : c'est
      là qu'une quantité posée par erreur s'annule. */
   const [detailLigne, setDetailLigne] = useState<number | null>(null);
+  /**
+   * Le tri des lignes selon ce qu'on a trouvé.
+   *
+   * Un conteneur de cinquante références arrive rarement juste : il
+   * manque trois cartons ici, il y en a deux de trop là. Chercher ces
+   * lignes-là en parcourant toute la liste prend du temps et l'on en
+   * oublie — alors que ce sont précisément celles qui demandent un
+   * arbitrage avant de confirmer.
+   *
+   * Réservé à qui connaît le commandé : pour celui qui compte, ces
+   * catégories n'existent pas — elles lui diraient ce qu'on attend.
+   */
+  const [filtreEcart, setFiltreEcart] =
+    useState<'tout' | 'conforme' | 'moins' | 'surplus' | 'attente'>('tout');
   const [ligneRecue, setLigneRecue] = useState<number | null>(null);
+  /* Quelle ligne s'écrit en ce moment. `enCours` grise tout le dossier :
+     sur une saisie ligne à ligne, il faut que seule la ligne concernée
+     montre qu'elle travaille. */
+  const [ligneEnCours, setLigneEnCours] = useState<number | null>(null);
   const [qteRecue, setQteRecue] = useState(0);
 
   async function charger() {
@@ -317,6 +335,27 @@ export default function FicheImportationPage() {
     ? dossier.lignes.reduce(
         (n, l, i) => n + (recu[i] ?? l.quantiteRecue ?? 0) * l.valeurUnitaire, 0)
     : valeurEnvoyee(dossier.lignes);
+  /**
+   * Où en est chaque ligne, par rapport à ce qu'on attendait.
+   *
+   * « À compter » n'est pas « en moins » : une ligne qu'on n'a pas
+   * encore ouverte ne manque pas, elle attend. Les confondre ferait
+   * paraître un conteneur entier comme un conteneur incomplet dès son
+   * arrivée.
+   */
+  function etatLigne(i: number): 'conforme' | 'moins' | 'surplus' | 'attente' {
+    const attendu = qtes[i] ?? dossier!.lignes[i].quantiteDemandee;
+    const trouve = recu[i] ?? 0;
+    if (trouve === 0) return 'attente';
+    if (trouve === attendu) return 'conforme';
+    return trouve > attendu ? 'surplus' : 'moins';
+  }
+
+  const parEtatLigne = dossier.lignes.reduce((acc, _l, i) => {
+    acc[etatLigne(i)]++;
+    return acc;
+  }, { conforme: 0, moins: 0, surplus: 0, attente: 0 } as Record<string, number>);
+
   const fraisTotal = totalFrais(frais);
   const total = marchandise + fraisTotal;
   const verse = dossier.avanceVersee ?? 0;
@@ -489,29 +528,59 @@ export default function FicheImportationPage() {
   }
 
   /** Une quantité partielle : le conteneur n'arrive pas toujours entier. */
+  /**
+   * Déclarer une quantité arrivée, sans que l'écran tressaille.
+   *
+   * Deux choses faisaient clignoter la fiche entière à chaque saisie.
+   * `setEnCours` est l'état de tout le dossier : le lever grisait les
+   * boutons partout, et l'écran se redessinait d'un bout à l'autre.
+   * Et l'on relisait ensuite toutes les réceptions du dossier — des
+   * dizaines sur un conteneur — pour en apprendre une seule, déjà
+   * connue. Sur un conteneur de cinquante lignes, cinquante flashes et
+   * autant d'allers-retours.
+   *
+   * Ici la ligne qui s'écrit est la seule à montrer qu'elle travaille,
+   * et la réception rejoint la liste telle qu'on vient de l'écrire.
+   * Rien d'autre ne bouge.
+   */
   async function ajouterReception() {
     if (ligneRecue == null || qteRecue <= 0 || !dossier || !user) return;
-    setEnCours(true); setErreur('');
+    const i = ligneRecue;
+    const quantite = qteRecue;
+    /* Le champ se referme tout de suite : on passe au produit suivant
+       pendant que celui-ci s'inscrit. */
+    setLigneRecue(null); setQteRecue(0);
+    setLigneEnCours(i); setErreur('');
     try {
-      const l = dossier.lignes[ligneRecue];
+      const l = dossier.lignes[i];
       const auteur = await auteurCourant(dossier.siteId, user.uid);
-      await enregistrerReception({
+      const saisie = {
         siteId: dossier.siteId,
         documentId: importId,
-        ligneIndex: ligneRecue,
+        ligneIndex: i,
         produitId: l.produitId ?? null,
         designation: l.designation,
-        quantite: qteRecue,
+        quantite,
         date: aujourdhui(),
         utilisateur: user.uid,
         utilisateurNom: auteur.utilisateurNom,
         utilisateurFonction: auteur.utilisateurFonction,
         note: null,
-      });
-      setReceptions(await chargerReceptions(importId));
-      setLigneRecue(null); setQteRecue(0);
-    } catch (e: any) { setErreur(e?.message ?? 'Échec.'); }
-    finally { setEnCours(false); }
+      };
+      const id = await enregistrerReception(saisie);
+      /* Ajoutée à la main plutôt que relue : on sait exactement ce
+         qu'on vient d'écrire. */
+      setReceptions(l2 => [...l2, {
+        ...saisie, id, annulee: false,
+        heure: new Date().toTimeString().slice(0, 5),
+      } as any]);
+    } catch (e: any) {
+      setErreur(e?.message ?? 'Échec.');
+      /* L'écriture a échoué : on relit, pour que l'écran dise la base
+         et non ce qu'on espérait. */
+      setReceptions(await chargerReceptions(importId).catch(() => receptions));
+    }
+    finally { setLigneEnCours(null); }
   }
 
   /* On n'ajuste pas une réception : on l'annule et on en saisit une
@@ -565,6 +634,14 @@ export default function FicheImportationPage() {
    * l'enregistrement. Ailleurs, le dossier seul.
    */
   const lignesVues = lignesModifiables && lignesSales ? lignes : dossier.lignes;
+
+  /* Ce que le filtre laisse passer. L'index d'origine voyage avec la
+     ligne : tout le reste de l'écran s'y réfère — les réceptions, les
+     champs, les boutons. Le perdre en filtrant ferait saisir sur la
+     mauvaise ligne. */
+  const lignesFiltrees = lignesVues
+    .map((l, i) => ({ l, i }))
+    .filter(({ i }) => filtreEcart === 'tout' || etatLigne(i) === filtreEcart);
 
   async function enregistrerLignes() {
     if (!dossier) return;
@@ -863,40 +940,61 @@ export default function FicheImportationPage() {
     <div className="min-h-screen bg-gray-50 text-gray-900 dark:bg-gray-950 dark:text-gray-100">
 
       <header className="sticky top-0 z-30 border-b border-gray-100 bg-white/90 backdrop-blur dark:border-gray-800 dark:bg-gray-900/90">
-        <div className="flex w-full flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6 lg:px-8">
-          <div className="flex items-center gap-2">
-            <Ship size={18} className="text-indigo-500" />
-            <h1 className="text-lg font-bold text-gray-900 dark:text-gray-100">
-              {dossier.reference}
-            </h1>
-            <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${
-              dossier.etat === 'confirme'
-                ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
-                : dossier.etat === 'annule'
-                ? 'bg-gray-100 text-gray-500 dark:bg-gray-800'
-                : dossier.etat === 'attente_confirmation'
-                ? 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400'
-                : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'}`}>
-              {LIBELLES_IMPORTATION[dossier.etat]}
-            </span>
-          </div>
-          <div className="flex gap-2">
-            <button onClick={() => fermerEcran(router, fermer)}
-              className="rounded-xl px-4 py-2 text-sm font-bold text-gray-500 transition-colors hover:bg-gray-50 dark:hover:bg-gray-800">
-              Fermer
-            </button>
-            {peut && suivant && (
-              <button onClick={avancer} disabled={enCours || !controle.juste}
-                title={controle.juste ? undefined : controle.motif}
-                className={`flex items-center gap-1.5 rounded-xl px-5 py-2 text-sm font-bold text-white transition-colors disabled:opacity-40 ${
-                  suivant === 'confirme'
-                    ? 'bg-green-600 hover:bg-green-700'
-                    : 'bg-indigo-600 hover:bg-indigo-700'}`}>
-                {enCours ? <Loader2 size={14} className="animate-spin" />
-                  : suivant === 'confirme' ? <Check size={14} /> : <ArrowRight size={14} />}
-                {suivant === 'confirme' ? 'Confirmer' : LIBELLES_IMPORTATION[suivant]}
+        {/* Sur téléphone, l'en-tête se lit en deux temps : quel dossier,
+            puis ce qu'on peut en faire. C'est la mise en page des
+            transferts et des achats — une seule rangée qui se replie,
+            c'était l'écran du bureau rétréci : « Fermer » prenait la
+            largeur d'un vrai bouton pour un geste de retour, et
+            l'action du dossier tombait à la ligne suivante sans jamais
+            atteindre le bord. */}
+        <div className="w-full px-4 py-3 sm:px-6 lg:px-8">
+          <div className="sm:flex sm:items-center sm:justify-between sm:gap-3">
+            <div className="flex items-start gap-2">
+              {/* La flèche ne paraît que sur téléphone : au bureau,
+                  « Fermer » reste plus clair qu'un chevron isolé. */}
+              <button onClick={() => fermerEcran(router, fermer)}
+                title="Fermer"
+                className="-ml-1 shrink-0 rounded-xl p-2 text-gray-500 transition-colors hover:bg-gray-50 dark:hover:bg-gray-800 sm:hidden">
+                <ArrowLeft size={18} />
               </button>
-            )}
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <Ship size={18} className="shrink-0 text-indigo-500" />
+                <h1 className="truncate text-lg font-bold text-gray-900 dark:text-gray-100">
+                  {dossier.reference}
+                </h1>
+                <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-bold ${
+                  dossier.etat === 'confirme'
+                    ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                    : dossier.etat === 'annule'
+                    ? 'bg-gray-100 text-gray-500 dark:bg-gray-800'
+                    : dossier.etat === 'attente_confirmation'
+                    ? 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400'
+                    : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'}`}>
+                  {LIBELLES_IMPORTATION[dossier.etat]}
+                </span>
+              </div>
+            </div>
+
+            {/* Les actions : en ligne au bureau, étirées en pleine
+                largeur sur téléphone où le pouce ne vise pas. */}
+            <div className="mt-2.5 flex gap-2 [&>button]:flex-1 [&>button]:justify-center sm:mt-0 sm:[&>button]:flex-none">
+              <button onClick={() => fermerEcran(router, fermer)}
+                className="hidden rounded-xl px-4 py-2 text-sm font-bold text-gray-500 transition-colors hover:bg-gray-50 dark:hover:bg-gray-800 sm:block">
+                Fermer
+              </button>
+              {peut && suivant && (
+                <button onClick={avancer} disabled={enCours || !controle.juste}
+                  title={controle.juste ? undefined : controle.motif}
+                  className={`flex items-center gap-1.5 rounded-xl px-5 py-2 text-sm font-bold text-white transition-colors disabled:opacity-40 ${
+                    suivant === 'confirme'
+                      ? 'bg-green-600 hover:bg-green-700'
+                      : 'bg-indigo-600 hover:bg-indigo-700'}`}>
+                  {enCours ? <Loader2 size={14} className="animate-spin" />
+                    : suivant === 'confirme' ? <Check size={14} /> : <ArrowRight size={14} />}
+                  {suivant === 'confirme' ? 'Confirmer' : LIBELLES_IMPORTATION[suivant]}
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </header>
@@ -958,11 +1056,62 @@ export default function FicheImportationPage() {
             {/* Le sélecteur porte déjà ce titre : le répéter ferait deux
                 fois le même mot l'un sous l'autre. */}
             {!lignesModifiables && (
-              <p className="text-sm font-bold text-gray-900 dark:text-gray-100">Marchandise</p>
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <p className="text-sm font-bold text-gray-900 dark:text-gray-100">Marchandise</p>
+                {/* Trier par ce qu'on a trouvé.
+                 *
+                   Un conteneur de cinquante références arrive rarement
+                   juste : il manque trois cartons ici, il y en a deux
+                   de trop là. Ce sont ces lignes-là qui demandent un
+                   arbitrage avant de confirmer, et les chercher en
+                   parcourant toute la liste prend du temps — on en
+                   oublie.
+
+                   Pas pour celui qui compte : ces catégories lui
+                   diraient ce qu'on attend, ce qu'on lui masque
+                   justement. */}
+                {montreArgent && compte && (
+                  <div className="flex flex-wrap items-center gap-1">
+                    {([
+                      { k: 'tout' as const, label: 'Tout', n: dossier.lignes.length,
+                        couleur: 'bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900' },
+                      { k: 'conforme' as const, label: 'Conforme', n: parEtatLigne.conforme,
+                        couleur: 'bg-green-600 text-white' },
+                      { k: 'moins' as const, label: 'En moins', n: parEtatLigne.moins,
+                        couleur: 'bg-orange-500 text-white' },
+                      { k: 'surplus' as const, label: 'En surplus', n: parEtatLigne.surplus,
+                        couleur: 'bg-blue-500 text-white' },
+                      { k: 'attente' as const, label: 'À compter', n: parEtatLigne.attente,
+                        couleur: 'bg-gray-500 text-white' },
+                    ])
+                      /* Une catégorie vide ne se propose pas : le filtre
+                         ne rendrait rien, et c'est un bouton de plus à
+                         lire pour rien. « Tout » reste toujours. */
+                      .filter(o => o.k === 'tout' || o.n > 0)
+                      .map(o => (
+                      <button key={o.k} type="button"
+                        onClick={() => setFiltreEcart(o.k)}
+                        className={`rounded-lg px-2 py-1 text-[11px] font-bold transition-colors ${
+                          filtreEcart === o.k
+                            ? o.couleur
+                            : 'bg-gray-100 text-gray-500 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-400'}`}>
+                        {o.label}
+                        <span className="ml-1 opacity-70">{o.n}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             )}
             {/* Tout recevoir d'un geste, quand le conteneur est conforme.
                 Il n'apparaît que s'il reste quelque chose à déclarer. */}
-            {saisieQuantites && peut && (() => {
+            {/* Et pas pour celui qui compte.
+                Le responsable des commandes déballe le conteneur et
+                déclare ce qu'il trouve, pièce par pièce. Un bouton qui
+                valide d'un coup tout le commandé lui ferait signer un
+                comptage qu'il n'a pas fait — et c'est précisément ce
+                comptage qu'on lui demande. Il ajoute par le « + ». */}
+            {saisieQuantites && peut && montreArgent && (() => {
               const reste = dossier.lignes.reduce(
                 (n, l, i) => n + Math.max(0, l.quantiteDemandee - (recu[i] ?? 0)), 0);
               if (reste <= 0) return null;
@@ -995,7 +1144,18 @@ export default function FicheImportationPage() {
             />
           )}
 
-          <div className="overflow-x-auto">
+          {/* Un filtre qui ne rend rien se dit : un tableau vide se
+              lit comme un dossier vide, et l'on cherche ce qui a
+              disparu. */}
+          {lignesFiltrees.length === 0 && (
+            <p className="py-6 text-center text-xs text-gray-400">
+              Aucune ligne dans cette catégorie.
+            </p>
+          )}
+
+          {/* Le tableau sert le bureau ; les cartes, plus bas, servent
+              le téléphone — comme sur un transfert. */}
+          <div className="hidden overflow-x-auto sm:block">
             <table className="w-full whitespace-nowrap text-center text-sm">
               <thead>
                 <tr className="bg-indigo-600 text-white">
@@ -1003,9 +1163,17 @@ export default function FicheImportationPage() {
                   <th className="px-3 py-2.5 font-medium">Emballage</th>
                   {/* Ce que le rayon détient déjà : mille pièces en stock
                       disent peut-être qu'il ne fallait pas commander
-                      cette ligne, dix disent l'inverse. */}
+                      cette ligne, dix disent l'inverse. Celui qui
+                      compte le voit comme les autres — c'est le rayon
+                      qu'il remplit. */}
                   <th className="px-3 py-2.5 font-medium">En stock</th>
-                  <th className="px-3 py-2.5 font-medium">Commandé</th>
+                  {/* Le commandé, lui, ne se montre pas à celui qui
+                      compte : savoir ce qu'on attend oriente le
+                      comptage, et l'on finit par recopier le commandé
+                      au lieu de déclarer le reçu. */}
+                  {montreArgent && (
+                    <th className="px-3 py-2.5 font-medium">Commandé</th>
+                  )}
                   <th className="px-3 py-2.5 font-medium">Reçu</th>
                   {montreArgent && <>
                     <th className="px-3 py-2.5 font-medium">Coût unitaire</th>
@@ -1051,13 +1219,22 @@ export default function FicheImportationPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50 dark:divide-gray-800">
-                {lignesVues.map((l, i) => {
+                {/* La liste filtrée, en gardant l'index d'origine :
+                    tout ce qui suit s'y réfère. */}
+                {lignesFiltrees.map(({ l, i }) => {
                   /* Ce qui est arrivé : la somme des réceptions, jamais
                      le commandé. Un reçu posé d'avance ferait que
                      personne ne compte. */
                   const recuLigne = recu[i] ?? (l.quantiteRecue ?? 0);
                   const lignesRecep = receptions.filter(r => r.ligneIndex === i);
-                  const nbRecep = lignesRecep.filter(r => !r.annulee).length;
+                  /* Toutes les réceptions, annulées comprises : le ⓘ
+                     ouvre le registre de la ligne, et une annulation y
+                     reste écrite. Ne compter que les vivantes faisait
+                     disparaître le bouton dès qu'on annulait tout — le
+                     détail restait déplié sans plus rien pour le
+                     replier, et l'on ne pouvait plus relire ce qui
+                     avait été annulé. */
+                  const nbRecep = lignesRecep.length;
                   const qte = compte ? recuLigne : l.quantiteDemandee;
                   const manque = l.quantiteDemandee - recuLigne;
                   const part = parts?.[i] ?? 0;
@@ -1076,7 +1253,9 @@ export default function FicheImportationPage() {
                   const sousLeCout = prixAffiche > 0 && prixAffiche < Math.round(reel);
                   const perteLigne = sousLeCout
                     ? (Math.round(reel) - prixAffiche) * Math.max(qte, 1) : 0;
-                  const ecart = compte && qte !== l.quantiteDemandee;
+                  /* L'écart ne se peint que pour qui connaît le
+                     commandé : voir la carte mobile, plus bas. */
+                  const ecart = montreArgent && compte && qte !== l.quantiteDemandee;
                   return (
                     <Fragment key={i}>
                     <tr className={ecart
@@ -1097,6 +1276,11 @@ export default function FicheImportationPage() {
                             −{formatMontant(perteLigne)}
                           </span>
                         )}
+                        {/* Ce que les colonnes repliées disaient, rendu
+                            sous le nom : sans cela l'emballage et le
+                            stock disparaissaient purement et simplement
+                            sur téléphone, et l'on comptait des cartons
+                            en croyant compter des pièces. */}
                       </td>
                       <td className="px-3 py-2.5 text-gray-500">
                         {l.emballage ?? l.unite ?? 'unité'}
@@ -1128,7 +1312,12 @@ export default function FicheImportationPage() {
                       {/* Le commandé se corrige : le fournisseur annonce
                           parfois autre chose que ce qu'on avait demandé,
                           et rouvrir le dossier pour un chiffre n'a pas
-                          de sens. Figé à la confirmation. */}
+                          de sens. Figé à la confirmation.
+
+                          Pas pour celui qui compte : il déclare ce
+                          qu'il trouve, et le commandé sous les yeux
+                          finit par se recopier. */}
+                      {montreArgent && (
                       <td className="px-3 py-2.5">
                         {chiffresEditables ? (
                           <ChampNombre valeur={qtes[i] ?? l.quantiteDemandee}
@@ -1143,6 +1332,7 @@ export default function FicheImportationPage() {
                           </span>
                         )}
                       </td>
+                      )}
                       <td className="px-3 py-2.5">
                         <span className="inline-flex items-center gap-1.5">
                           <span className={`font-medium ${!ecart
@@ -1284,7 +1474,12 @@ export default function FicheImportationPage() {
                       {saisieQuantites && peut && (
                         <td className="px-3 py-2.5">
                           <div className="flex items-center justify-center gap-1.5">
-                            {manque > 0 && (
+                            {/* « Tout recevoir sur cette ligne » affiche
+                                la quantité commandée et la valide d'un
+                                clic : pas pour celui qui compte, à qui
+                                l'on demande justement de constater ce
+                                qu'il trouve. Il saisit par « + ». */}
+                            {manque > 0 && montreArgent && (
                               <button onClick={() => completer(i)} disabled={enCours}
                                 title="Tout recevoir sur cette ligne"
                                 className="flex items-center gap-1 rounded-lg bg-indigo-600 px-2.5 py-1.5 text-xs font-bold text-white transition-colors hover:bg-indigo-700 disabled:opacity-40">
@@ -1319,8 +1514,11 @@ export default function FicheImportationPage() {
                       <tr>
                         {/* Le détail s'étend sur toute la ligne : les colonnes
                             d'argent et l'action ne sont pas toujours là. */}
-                        <td colSpan={5 + (montreArgent
-                            ? (parts ? 7 : 5) - (lignesModifiables ? 1 : 0) : 0)
+                        {/* Produit, Emballage, En stock, Reçu — puis
+                            « Commandé » et les colonnes d'argent quand
+                            on les montre. */}
+                        <td colSpan={4 + (montreArgent
+                            ? 1 + (parts ? 7 : 5) - (lignesModifiables ? 1 : 0) : 0)
                           + ((saisieQuantites && peut) || lignesModifiables ? 1 : 0)}
                           className="px-3 pb-3">
                           <div className="rounded-xl bg-gray-50 p-3 text-left dark:bg-gray-800/50">
@@ -1365,6 +1563,183 @@ export default function FicheImportationPage() {
                 })}
               </tbody>
             </table>
+          </div>
+
+          {/* Sur téléphone, une carte par ligne.
+           *
+             Le tableau du bureau rétréci devenait illisible : neuf
+             colonnes à faire défiler pour atteindre le bouton de
+             saisie, et le nom du produit perdu dès qu'on y arrivait.
+             On comptait un carton sans savoir lequel.
+
+             La carte porte ce qu'il faut pour déclarer : le produit,
+             son emballage, ce que le rayon détient, ce qu'on attend
+             quand on a le droit de le savoir, ce qui est déjà entré —
+             et les deux boutons, en bas, là où le pouce les trouve. */}
+          <div className="space-y-2 sm:hidden">
+            {lignesFiltrees.map(({ l, i }) => {
+              const recuLigne = recu[i] ?? 0;
+              const qte = qtes[i] ?? l.quantiteDemandee;
+              const manque = Math.max(0, qte - recuLigne);
+              /* L'écart ne se peint que pour qui connaît le commandé.
+               *
+                 La carte virait au bleu dès que le reçu dépassait, à
+                 l'ambre dès qu'il manquait. C'est un indicateur : il
+                 disait au responsable des commandes, sans qu'on le lui
+                 dise, qu'il était au-dessus ou en dessous de ce qu'on
+                 attendait. Un conteneur arrive souvent en plus ou en
+                 moins — c'est justement pourquoi on le compte, et
+                 pourquoi celui qui compte ne doit pas voir la cible. */
+              const ecart = montreArgent && recuLigne > 0 && recuLigne !== qte;
+              /* Annulées comprises : voir le tableau, plus haut. */
+              const nbRecep = receptions.filter(r => r.ligneIndex === i).length;
+              return (
+                <div key={i}
+                  className={`rounded-xl border p-3 ${!ecart
+                    ? 'border-gray-100 dark:border-gray-800'
+                    : recuLigne > qte
+                    ? 'border-blue-200 bg-blue-50/50 dark:border-blue-800/30 dark:bg-blue-900/10'
+                    : 'border-amber-200 bg-amber-50/50 dark:border-amber-800/30 dark:bg-amber-900/10'}`}>
+                  <p className="text-[13px] font-bold text-gray-900 dark:text-gray-100">
+                    {l.designation}
+                    {l.varianteLibelle && (
+                      <span className="ml-1.5 font-normal text-gray-400">{l.varianteLibelle}</span>
+                    )}
+                  </p>
+                  <p className="mt-0.5 text-[11px] text-gray-400">
+                    {l.emballage ?? l.unite ?? 'unité'}
+                  </p>
+
+                  <div className="mt-2.5 flex flex-wrap items-baseline gap-x-4 gap-y-1 border-t border-black/[0.06] pt-2 text-[11px] dark:border-white/10">
+                    {/* Ce que le rayon détient : il dit si la ligne
+                        valait la peine d'être commandée. */}
+                    <span className="flex items-baseline gap-1.5">
+                      <span className="text-gray-400">En stock</span>
+                      <span className={`font-bold ${rayon[i] && rayon[i]!.stock > 0
+                        ? 'text-gray-900 dark:text-gray-100'
+                        : 'text-orange-500'}`}>
+                        {!rayon[i] ? '—'
+                          : rayon[i]!.stock > 0
+                          ? rayon[i]!.stock.toLocaleString('fr-FR')
+                          : 'rupture'}
+                      </span>
+                    </span>
+                    {/* Le commandé, seulement à qui ne compte pas. */}
+                    {montreArgent && (
+                      <span className="flex items-baseline gap-1.5">
+                        <span className="text-gray-400">Commandé</span>
+                        <span className="font-bold text-gray-900 dark:text-gray-100">
+                          {qte.toLocaleString('fr-FR')}
+                        </span>
+                      </span>
+                    )}
+                    <span className="flex items-baseline gap-1.5">
+                      <span className="text-gray-400">Reçu</span>
+                      <span className={`font-bold ${!ecart
+                        ? 'text-gray-900 dark:text-gray-100'
+                        : recuLigne > qte ? 'text-blue-500' : 'text-orange-500'}`}>
+                        {recuLigne > 0 ? recuLigne.toLocaleString('fr-FR') : '—'}
+                      </span>
+                      {nbRecep > 0 && (
+                        <button onClick={() => setDetailLigne(detailLigne === i ? null : i)}
+                          title="Voir les réceptions"
+                          className="rounded p-0.5 text-gray-400 transition-colors hover:text-indigo-600">
+                          <Info size={12} />
+                        </button>
+                      )}
+                    </span>
+                  </div>
+
+                  {/* Déclarer ce qui est arrivé : la ligne entière, ou
+                      une quantité partielle. Rien n'est prérempli. */}
+                  {saisieQuantites && peut && (
+                    <div className="mt-2.5 flex gap-2">
+                      {/* « Tout recevoir sur cette ligne » suppose de
+                          connaître l'attendu : pas pour celui qui
+                          compte, qui saisit ce qu'il trouve. */}
+                      {manque > 0 && montreArgent && (
+                        <button onClick={() => completer(i)} disabled={enCours}
+                          className="flex flex-1 items-center justify-center gap-1 rounded-lg bg-indigo-600 px-2.5 py-2 text-xs font-bold text-white transition-colors hover:bg-indigo-700 disabled:opacity-40">
+                          <CheckCheck size={12} /> {manque}
+                        </button>
+                      )}
+                      {/* Le champ s'ouvre dans la carte, pas dans une
+                          fenêtre.
+                       *
+                          Un conteneur porte des dizaines de lignes :
+                          ouvrir et fermer une fenêtre à chacune
+                          multiplie les gestes par trois, et l'on perd
+                          de vue où l'on en est dans la liste. Ici on
+                          tape, on valide, la carte suivante est déjà
+                          sous le pouce. */}
+                      {ligneRecue === i ? (
+                        <div className="flex flex-1 gap-2">
+                          <ChampNombre valeur={qteRecue} onChange={setQteRecue}
+                            className="w-full min-w-0 rounded-lg border border-indigo-300 bg-white px-2 py-2 text-center text-sm font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:border-indigo-700 dark:bg-gray-800" />
+                          <button onClick={ajouterReception}
+                            disabled={ligneEnCours === i || qteRecue <= 0}
+                            className="flex shrink-0 items-center gap-1 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-bold text-white transition-colors hover:bg-indigo-700 disabled:opacity-40">
+                            {ligneEnCours === i
+                              ? <Loader2 size={12} className="animate-spin" />
+                              : <Check size={12} />}
+                          </button>
+                          <button onClick={() => { setLigneRecue(null); setQteRecue(0); }}
+                            className="shrink-0 rounded-lg border border-gray-300 px-2.5 py-2 text-gray-400 dark:border-gray-600">
+                            <X size={12} />
+                          </button>
+                        </div>
+                      ) : (
+                        <button onClick={() => { setLigneRecue(i); setQteRecue(0); }}
+                          className="flex flex-1 items-center justify-center gap-1 rounded-lg border border-gray-300 px-2.5 py-2 text-xs font-bold text-gray-600 transition-colors hover:border-indigo-400 dark:border-gray-600 dark:text-gray-300">
+                          <Plus size={12} /> Saisir
+                        </button>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Le détail des réceptions, dans la carte.
+                   *
+                     Il n'existait que dans le tableau, masqué sur
+                     téléphone : le ⓘ s'affichait, on cliquait, et rien
+                     ne se dépliait. C'est pourtant de là qu'une
+                     réception s'annule. */}
+                  {detailLigne === i && (
+                    <div className="mt-2.5 rounded-xl bg-gray-50 p-3 dark:bg-gray-800/50">
+                      <p className="mb-2 text-[11px] font-bold uppercase text-gray-400">Réceptions</p>
+                      <div className="flex flex-col gap-1.5">
+                        {receptions.filter(r => r.ligneIndex === i).map(r => (
+                          <div key={r.id}
+                            className={`rounded-lg bg-white px-2.5 py-2 text-[11px] dark:bg-gray-900 ${
+                              r.annulee ? 'opacity-50' : ''}`}>
+                            <div className="flex items-center justify-between gap-2">
+                              <span className={`font-bold ${r.annulee
+                                ? 'text-gray-400 line-through'
+                                : 'text-gray-900 dark:text-gray-100'}`}>
+                                {r.quantite.toLocaleString('fr-FR')}
+                              </span>
+                              {r.annulee ? (
+                                <span className="shrink-0 text-gray-400">Annulée</span>
+                              ) : saisieQuantites && peut ? (
+                                <button onClick={() => defaire(r.id)} disabled={enCours}
+                                  className="shrink-0 font-bold text-red-500 transition-colors hover:text-red-600 disabled:opacity-40">
+                                  Annuler
+                                </button>
+                              ) : null}
+                            </div>
+                            {/* Qui, quand : sur une ligne à part, l'écran
+                                étant trop étroit pour tout aligner. */}
+                            <p className="mt-0.5 text-gray-400">
+                              {formatDate(r.date)} {r.heure} · {r.utilisateurNom}
+                              {r.note && <> — {r.note}</>}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
 
           {/* La liste a changé : on l'inscrit, ou on revient au dossier. */}
@@ -1695,15 +2070,23 @@ export default function FicheImportationPage() {
 
       {/* Une quantité partielle : le conteneur n'arrive pas toujours
           entier, et ce qui manque arrivera plus tard. */}
+      {/* Au bureau seulement : sur téléphone la saisie se fait dans la
+          carte, sans fenêtre à ouvrir et à fermer pour chaque ligne. */}
       {ligneRecue != null && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
+        <div className="fixed inset-0 z-50 hidden items-center justify-center bg-black/40 p-4 backdrop-blur-sm sm:flex">
           <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-xl dark:bg-gray-900">
             <p className="text-sm font-bold text-gray-900 dark:text-gray-100">
               {dossier.lignes[ligneRecue].designation}
             </p>
+            {/* Le commandé, seulement à qui ne compte pas : le
+                rappeler ici revenait à souffler la réponse à celui
+                qu'on charge de constater. */}
             <p className="mt-1 text-xs text-gray-400">
-              Commandé {dossier.lignes[ligneRecue].quantiteDemandee.toLocaleString('fr-FR')}
-              {' · '}déjà reçu {(recu[ligneRecue] ?? 0).toLocaleString('fr-FR')}
+              {montreArgent && <>
+                Commandé {dossier.lignes[ligneRecue].quantiteDemandee.toLocaleString('fr-FR')}
+                {' · '}
+              </>}
+              déjà reçu {(recu[ligneRecue] ?? 0).toLocaleString('fr-FR')}
             </p>
             <div className="mt-3">
               <label className="mb-1.5 block text-xs font-bold text-gray-500 dark:text-gray-400">
@@ -1717,9 +2100,12 @@ export default function FicheImportationPage() {
                 className="flex-1 rounded-xl border border-gray-200 px-3 py-2 text-xs font-bold text-gray-500 dark:border-gray-700">
                 Annuler
               </button>
-              <button onClick={ajouterReception} disabled={enCours || qteRecue <= 0}
+              <button onClick={ajouterReception}
+                disabled={ligneEnCours != null || qteRecue <= 0}
                 className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-indigo-600 px-3 py-2 text-xs font-bold text-white hover:bg-indigo-700 disabled:opacity-40">
-                {enCours ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
+                {ligneEnCours != null
+                  ? <Loader2 size={13} className="animate-spin" />
+                  : <Check size={13} />}
                 Déclarer
               </button>
             </div>
