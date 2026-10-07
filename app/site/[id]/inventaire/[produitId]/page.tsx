@@ -6,6 +6,10 @@ import { Fragment, useEffect, useState } from 'react';
 import { doc, getDoc, updateDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/lib/auth-context';
+import { roleSurSite, type RoleSite } from '@/lib/roles';
+import {
+  etatDuProduit, supprimerProduit, type EtatProduit,
+} from '@/lib/supprimer-produit';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { formatMontant } from '@/lib/format';
 import { ArrowLeft, Loader2, Plus, X, Check, Trash2, Package, TrendingUp, Pencil, ArrowDownLeft, ArrowUpRight, ChevronDown, Lock } from 'lucide-react';
@@ -99,7 +103,7 @@ function statutStock(stock: number, seuil?: number | null): { label: string; col
 }
 
 export default function FicheProduitPage() {
-  const { user } = useAuth();
+  const { user, activite } = useAuth();
   const router = useRouter();
   const params = useParams();
   const searchParams = useSearchParams();
@@ -150,6 +154,18 @@ export default function FicheProduitPage() {
   const [embNom, setEmbNom] = useState('');
   const [embQte, setEmbQte] = useState('');
   const [suppEmballage, setSuppEmballage] = useState<Emballage | null>(null);
+  /* Mettre un produit dehors.
+   *
+     L'etat se lit a l'ouverture : le bouton ne s'affiche que si le
+     produit peut sortir. Un bouton qui refuse ensuite ferait cliquer
+     pour rien, et chercher pourquoi. */
+  const [etatSupp, setEtatSupp] = useState<EtatProduit | null>(null);
+  const [confirmeSupp, setConfirmeSupp] = useState(false);
+  const [suppEnCours, setSuppEnCours] = useState(false);
+  const [erreurSupp, setErreurSupp] = useState('');
+  /* Effacer une reference touche toute l'activite, pas un site : c'est au
+     proprietaire de le faire. `null` le designe. */
+  const [roleSite, setRoleSite] = useState<RoleSite | null | undefined>(undefined);
 
   /* caractéristiques */
   const [modalCarac, setModalCarac] = useState(false);
@@ -168,6 +184,34 @@ export default function FicheProduitPage() {
   const [erreurEdition, setErreurEdition] = useState('');
   /* Ce que ce site détient : son stock, son coût, son prix, son seuil. */
   const [detention, setDetention] = useState<ProduitSite | null>(null);
+
+  async function retirerProduit() {
+    setSuppEnCours(true); setErreurSupp('');
+    try {
+      await supprimerProduit(produitId);
+      /* L'inventaire du site : le produit n'y est plus, et revenir sur
+         sa fiche ouvrirait un document efface. */
+      router.push(`/site/${siteId}?onglet=inventaire`);
+    } catch (e: any) {
+      setErreurSupp(e?.message ?? 'Suppression impossible.');
+      setSuppEnCours(false);
+    }
+  }
+
+  /* Qui regarde, et ce que ce produit a vecu. Les deux decident du
+     bouton « Retirer » : il n'existe que pour le proprietaire, et
+     seulement sur un produit qui n'a rien vecu. */
+  useEffect(() => {
+    if (!user) return;
+    roleSurSite(user.uid, siteId, activite?.adminUid)
+      .then(r => setRoleSite(r as RoleSite | null))
+      .catch(() => setRoleSite('aucun' as RoleSite));
+  }, [user, siteId, activite?.adminUid]);
+
+  useEffect(() => {
+    if (!user) return;
+    etatDuProduit(produitId).then(setEtatSupp).catch(() => setEtatSupp(null));
+  }, [user, produitId]);
 
   useEffect(() => {
     if (!user) return;
@@ -534,6 +578,19 @@ export default function FicheProduitPage() {
                 className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:border-indigo-300 hover:text-indigo-600 text-xs font-bold transition-colors">
                 <Pencil size={12} /> Modifier
               </button>
+              {/* Retirer du catalogue.
+               *
+                 Le bouton n'existe que si le produit peut sortir : montrer
+                 un bouton qui refuse ensuite ferait cliquer pour rien,
+                 puis chercher pourquoi. Et seulement pour le
+                 proprietaire — effacer une reference touche toute
+                 l'activite, pas le site d'ou l'on regarde. */}
+              {roleSite === null && etatSupp?.supprimable && (
+                <button onClick={() => setConfirmeSupp(true)}
+                  className="flex items-center gap-1.5 rounded-xl border border-gray-200 px-3 py-2 text-xs font-bold text-gray-500 transition-colors hover:border-red-300 hover:text-red-600 dark:border-gray-700 dark:text-gray-400">
+                  <Trash2 size={12} /> Retirer
+                </button>
+              )}
             </div>
           </div>
 
@@ -1592,6 +1649,50 @@ export default function FicheProduitPage() {
           </div>
           );
         })()}
+
+        {/* Retirer un produit du catalogue : sans retour, et l'on dit ce
+            qui part avec lui. Un stock pose a la main disparait aussi —
+            il ne decrivait que ce produit. */}
+        {confirmeSupp && etatSupp && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+            onClick={() => !suppEnCours && setConfirmeSupp(false)}>
+            <div onClick={e => e.stopPropagation()}
+              className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-xl dark:bg-gray-900">
+              <div className="mb-3 flex justify-center">
+                <Trash2 size={18} className="text-red-500" />
+              </div>
+              <p className="text-center text-base font-bold text-gray-900 dark:text-gray-100">
+                Retirer « {produit.designation} » ?
+              </p>
+              <p className="mt-2 text-xs leading-relaxed text-gray-500">
+                Il n&apos;a jamais été acheté, vendu ni transféré : rien
+                dans l&apos;historique ne le nomme. Il quitte le catalogue
+                de toute l&apos;activité.
+              </p>
+              {etatSupp.stock > 0 && (
+                <p className="mt-2 rounded-xl bg-amber-50 p-2.5 text-xs text-amber-700 dark:bg-amber-900/10 dark:text-amber-500">
+                  Son stock de {etatSupp.stock} part avec lui : il avait été
+                  posé à la main, et ne décrivait que ce produit.
+                </p>
+              )}
+              {erreurSupp && (
+                <p className="mt-2 text-xs font-bold text-red-500">{erreurSupp}</p>
+              )}
+              <div className="mt-4 flex justify-end gap-2">
+                <button onClick={() => setConfirmeSupp(false)} disabled={suppEnCours}
+                  className="rounded-xl border border-gray-200 px-4 py-2 text-xs font-bold text-gray-500 transition-colors hover:bg-gray-50 disabled:opacity-40 dark:border-gray-700">
+                  Revenir
+                </button>
+                <button onClick={retirerProduit} disabled={suppEnCours}
+                  className="flex items-center gap-1.5 rounded-xl bg-red-600 px-4 py-2 text-xs font-bold text-white transition-colors hover:bg-red-700 disabled:opacity-40">
+                  {suppEnCours ? <Loader2 size={12} className="animate-spin" />
+                    : <Trash2 size={12} />}
+                  Retirer
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
