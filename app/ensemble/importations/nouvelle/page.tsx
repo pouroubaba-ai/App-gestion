@@ -1,10 +1,12 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   useBrouillon, useBrouillonTiers, cleBrouillon, oublierBrouillon,
 } from '@/lib/brouillon';
 import ModalQuitterSaisie from '@/app/site/[id]/components/ModalQuitterSaisie';
-import { collection, query, where, getDocs } from 'firebase/firestore';
+import {
+  collection, query, where, getDocs, addDoc, serverTimestamp,
+} from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/lib/auth-context';
 import { useRouter } from 'next/navigation';
@@ -56,6 +58,10 @@ export default function NouvelleImportationPage() {
      un panier sans le nom de celui à qui il est destiné ne veut plus
      rien dire — les prix et les quantités ont été saisis pour lui. */
   const [tiersGarde, setTiersGarde, tiersRepris] = useBrouillonTiers(cleDraft);
+  /* Le site du rendu précédent : il distingue « le site a changé » de
+     « le site vient d'être posé ». Une ref et non un état — le relire
+     ne doit pas provoquer de rendu. */
+  const siteVu = useRef<string | null>(null);
   const [fournisseurId, setFournisseurIdEtat] = useState('');
   const setFournisseurId = (v: string) => {
     setFournisseurIdEtat(v); setTiersGarde(v || null);
@@ -116,9 +122,20 @@ export default function NouvelleImportationPage() {
       setProduits(prods as ProduitChoisissable[]);
       /* Changer de site change le catalogue : garder les lignes
          laisserait commander des références que ce rayon ne tient
-         pas. */
-      setLignes([]);
-      setFournisseurId('');
+         pas.
+       *
+         Mais seulement quand le site change vraiment. Cet effet part
+         aussi au premier rendu, quand `siteId` prend sa valeur de
+         départ — et il vidait alors le brouillon que `useBrouillon`
+         venait de relire. On ouvrait « Nouvelle importation », la
+         marchandise préparée apparaissait un instant, puis
+         disparaissait : le travail était perdu sans qu'on y ait
+         touché, et le brouillon ne servait plus à rien ici. */
+      if (siteVu.current !== null && siteVu.current !== siteId) {
+        setLignes([]);
+        setFournisseurId('');
+      }
+      siteVu.current = siteId;
     })().catch(() => {});
   }, [siteId]);
 
@@ -242,6 +259,59 @@ export default function NouvelleImportationPage() {
   const total = lignes.reduce(
     (s, l) => s + l.quantiteDemandee * (l.valeurUnitaire ?? 0), 0);
 
+  /**
+   * Créer un fournisseur sans quitter le dossier.
+   *
+   * L'écran laissait créer un produit absent mais pas son
+   * fournisseur — alors qu'un import vient souvent d'une maison avec
+   * qui l'on traite pour la première fois, et que son commentaire
+   * dit lui-même qu'« un import est un achat : ce sont les mêmes
+   * fournisseurs ». Il fallait quitter l'écran, ouvrir les
+   * partenaires, créer, revenir — et retrouver un formulaire vidé.
+   *
+   * Elle naît fournisseur, et rien d'autre : ici on ne sait qu'une
+   * chose, c'est que cette maison nous vend.
+   */
+  async function creerFournisseur(nom: string): Promise<string | null> {
+    const propre = nom.trim();
+    if (!propre || !user || !siteId) return null;
+
+    /* Deux fiches du même nom deviendraient deux historiques pour un
+       seul fournisseur, et la dette se lirait à moitié. On rend celle
+       qui existe plutôt que d'en ouvrir une autre. */
+    const cle = (x: string) => x.trim().toLowerCase().normalize('NFD')
+      .replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ');
+    const deja = fournisseurs.find(f => cle(f.nom) === cle(propre));
+    if (deja) {
+      setErreur(`« ${deja.nom} » existe déjà.`);
+      return deja.id;
+    }
+
+    try {
+      const ref = await addDoc(collection(db, 'partenaires'), {
+        userId: user.uid,
+        siteId,
+        nom: propre,
+        contact: '',
+        rolesFournisseur: true,
+        rolesClient: false,
+        categoriesFournisseur: [],
+        categoriesClient: [],
+        prochainRecouvrement: null,
+        ...(await auteurCourant(siteId, user.uid, user.displayName)),
+        apporteur: null,
+        createdAt: serverTimestamp(),
+      });
+      setFournisseurs(l => [...l, { id: ref.id, nom: propre }]
+        .sort((a, b) => a.nom.localeCompare(b.nom)));
+      setErreur('');
+      return ref.id;
+    } catch (e: unknown) {
+      setErreur(e instanceof Error ? e.message : 'Création impossible.');
+      return null;
+    }
+  }
+
   async function enregistrer() {
     if (!pret || !user || !activite) return;
     setEnCours(true); setErreur('');
@@ -293,7 +363,14 @@ export default function NouvelleImportationPage() {
   /* On ne demande que s'il y a quelque chose à perdre : un fournisseur
      désigné et de la marchandise. En deçà, la question n'aurait pas
      d'objet et ne ferait qu'un clic de plus. */
-  const aQuoiPerdre = !!fournisseurId && lignes.length > 0;
+  /* L'un OU l'autre, pas les deux.
+   *
+     La condition exigeait les deux — un tiers désigné et de la
+     marchandise — et ne demandait donc rien à qui avait choisi son
+     client sans encore rien saisir, ou saisi trois lignes sans avoir
+     nommé personne. Dans les deux cas il y avait pourtant du travail
+     à perdre, et il partait sans un mot. */
+  const aQuoiPerdre = !!fournisseurId || lignes.length > 0;
   const demanderSortie = () => { if (aQuoiPerdre) setQuitter(true); else sortir(); };
 
   return (
@@ -344,6 +421,10 @@ export default function NouvelleImportationPage() {
               </label>
               <SelectCherchable valeur={fournisseurId} onChange={setFournisseurId}
                 options={fournisseurs.map(f => ({ valeur: f.id, label: f.nom }))}
+                /* Le nom tapé qui ne correspond à rien ouvre une
+                   fiche : voir `creerFournisseur`. */
+                surCreer={siteId ? creerFournisseur : undefined}
+                creerLibelle="Nouveau fournisseur"
                 vide={siteId ? 'Aucun fournisseur' : 'Choisir d’abord le site'} />
             </div>
 

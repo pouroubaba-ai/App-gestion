@@ -496,7 +496,14 @@ export default function NouvelAchatPage() {
   /* On ne demande que s'il y a quelque chose à perdre : un fournisseur
      désigné et de la marchandise. En deçà, la question n'aurait pas
      d'objet et ne ferait qu'un clic de plus. */
-  const aQuoiPerdre = !!fournisseurId && lignes.length > 0;
+  /* L'un OU l'autre, pas les deux.
+   *
+     La condition exigeait les deux — un tiers désigné et de la
+     marchandise — et ne demandait donc rien à qui avait choisi son
+     client sans encore rien saisir, ou saisi trois lignes sans avoir
+     nommé personne. Dans les deux cas il y avait pourtant du travail
+     à perdre, et il partait sans un mot. */
+  const aQuoiPerdre = !!fournisseurId || lignes.length > 0;
   const demanderSortie = () => { if (aQuoiPerdre) setQuitter(true); else sortir(); };
 
   /* La déconnexion vide l'utilisateur avant que la navigation aboutisse. */

@@ -14,6 +14,7 @@ import {
 import { formatMontant, abregeMontant, dansNJours, ecartJours } from '@/lib/format';
 import { hankenGrotesk } from '../../../components/finance/font';
 import { Settings, BookOpen, Loader2, Check, X, Plus, Calendar } from 'lucide-react';
+import ChoixOrigineArgent from '@/app/site/[id]/components/ChoixOrigineArgent';
 import { ChampNombre } from '@/components/Champs';
 import { valeurDossier } from '@/lib/ouverture';
 import FiltreDeroulant from '@/components/FiltreDeroulant';
@@ -81,6 +82,10 @@ export default function SectionRecouvrement({
       .then(setRoleSite).catch(() => setRoleSite(null));
   }, [userId, siteId, activite?.adminUid]);
   const peutRegler = peutReglerFournisseur(roleSite);
+  /* D'où sort l'argent quand on règle un fournisseur : voir
+     ChoixOrigineArgent. Remis à « caisse » à chaque ouverture, pour
+     qu'un choix d'hier n'engage pas le versement d'aujourd'hui. */
+  const [origine, setOrigine] = useState<'caisse' | 'admin'>('caisse');
   /* Le client d'abord : c'est l'argent qu'on attend, donc le travail à
      faire. Ce qu'on doit au fournisseur vient ensuite. */
   const [onglet, setOnglet] = useState<Onglet>(
@@ -492,6 +497,7 @@ export default function SectionRecouvrement({
         partenaireId,
         role, montant: total, couverture: couv,
         adminUid: activite?.adminUid ?? null,
+        horsCaisse: origine === 'admin',
         ...(await auteurCourant(siteId, userId ?? '')),
       });
       await chargerJournal(role);
@@ -937,8 +943,18 @@ export default function SectionRecouvrement({
 
             </div>
 
+            {/* Régler un fournisseur peut sortir de la poche du
+                propriétaire : la dette s'éteint sans que le tiroir
+                bouge. Un client qui paie, lui, fait entrer de l'argent
+                quelque part — s'il reste en main, c'est une remise, et
+                la remise a son propre chemin. */}
+            {versementRole === 'fournisseur' && (
+              <ChoixOrigineArgent className="shrink-0 pt-4"
+                role={roleSite} valeur={origine} onChange={setOrigine} />
+            )}
+
             <div className="shrink-0 flex gap-3 pt-4">
-              <button onClick={() => setVersementRole(null)}
+              <button onClick={() => { setVersementRole(null); setOrigine('caisse'); }}
                 className="flex-1 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 text-sm font-medium text-gray-500">
                 Annuler
               </button>

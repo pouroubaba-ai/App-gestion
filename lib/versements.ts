@@ -135,6 +135,20 @@ export async function verserAuTiers(params: {
   /* L'admin de l'activité : il n'a pas de rôle de site, on le reconnaît
      à son identifiant. */
   adminUid?: string | null;
+  /**
+   * L'argent ne vient pas du tiroir.
+   *
+   * Le propriétaire règle parfois un fournisseur de sa main — un
+   * virement, un retrait déjà fait. La dette s'éteint, mais la caisse
+   * du site n'a rien vu passer : l'y inscrire ferait mentir le solde,
+   * et l'on chercherait un argent sorti d'un tiroir où il n'est jamais
+   * entré.
+   *
+   * Ne vaut que pour un fournisseur : un client qui paie fait entrer
+   * de l'argent, et cet argent-là va quelque part. S'il reste en main,
+   * c'est une remise, et la remise a son propre chemin.
+   */
+  horsCaisse?: boolean;
 }): Promise<number> {
   const { siteId, userId, partenaireId, role, couverture } = params;
   const total = Math.min(params.montant, couverture.du);
@@ -233,7 +247,10 @@ export async function verserAuTiers(params: {
     });
   }
 
-  const ecriture = await ecrireEnCaisse({
+  /* Hors caisse, rien n'entre ni ne sort du tiroir : les versements
+     s'écrivent seuls, sans mouvement de caisse à leur rattacher. */
+  const horsCaisse = params.horsCaisse === true && role === 'fournisseur';
+  const ecriture = horsCaisse ? null : await ecrireEnCaisse({
     siteId,
     sens: role === 'client' ? 'entree' : 'sortie',
     motif: role === 'client' ? 'client' : 'fournisseur',
@@ -267,7 +284,11 @@ export async function verserAuTiers(params: {
    * versement porte `mouvementCaisseId` quand l'argent est entré, `null`
    * tant qu'il attend : c'est là que se lit la différence. */
   await Promise.all(aEcrire.map(v => enregistrerVersement({
-    ...v, mouvementCaisseId: ecriture.applique ? ecriture.id : null,
+    ...v,
+    mouvementCaisseId: ecriture && ecriture.applique ? ecriture.id : null,
+    /* L'origine voyage avec la ligne : on doit pouvoir dire, des mois
+       plus tard, d'où l'argent est parti. */
+    ...(horsCaisse ? { origine: 'admin' as const } : {}),
   })));
 
   /* La dette n'est plus écrite sur le partenaire : elle se déduit des

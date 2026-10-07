@@ -14,6 +14,7 @@ import {
   aUnCaissier, peutDisposerDuCapital, peutReglerFournisseur, type RoleSite,
 } from '@/lib/roles';
 import DisponibleCaisse from './DisponibleCaisse';
+import ChoixOrigineArgent from './ChoixOrigineArgent';
 import { useAuth } from '@/lib/auth-context';
 import {
   RoleTiers, CouvertureTiers, couvertureTiers, repartition, verserAuTiers,
@@ -66,6 +67,11 @@ export default function ModalVersementTiers({
      un montant sans savoir s'il est possible. Encaisser un client fait
      entrer de l'argent — la question ne se pose pas de ce côté. */
   const sortDeCaisse = role === 'fournisseur';
+  /* D'où sort l'argent : voir ChoixOrigineArgent. Ne vaut que pour un
+     fournisseur — un client qui paie fait entrer de l'argent, et cet
+     argent-là va quelque part. */
+  const [origine, setOrigine] = useState<'caisse' | 'admin'>('caisse');
+  const horsCaisse = sortDeCaisse && origine === 'admin';
   const [soldeCaisseSite, setSoldeCaisseSite] = useState<number | null>(null);
   /* Ce qu'on peut encore laisser sortir : le solde moins ce qui est déjà
      déclaré et pas encore passé par le tiroir. Comparé au seul solde, les
@@ -157,6 +163,7 @@ export default function ModalVersementTiers({
         partenaireNom: tiersChoisi.nom,
         montant, couverture, parRemise,
         adminUid: activite?.adminUid ?? null,
+        horsCaisse,
         ...(await auteurCourant(siteId, userId)),
       });
       onVerse(tiersChoisi.id, verse);
@@ -171,7 +178,10 @@ export default function ModalVersementTiers({
     ? repartition(Math.min(montant, couverture.du), couverture)
     : null;
 
-  const depasseCaisse = sortDeCaisse && soldeCaisseSite != null
+  /* La caisse ne laisse sortir que ce qu'elle a. La poche du
+     propriétaire ne connaît pas cette borne : l'app ne tient pas ses
+     comptes à lui. */
+  const depasseCaisse = sortDeCaisse && !horsCaisse && soldeCaisseSite != null
     && montant > soldeCaisseSite;
   const manque = depasseCaisse ? montant - (soldeCaisseSite ?? 0) : 0;
 
@@ -297,7 +307,15 @@ export default function ModalVersementTiers({
                 <>
                   {/* Ce qu'il y a en caisse, au même endroit que ce qui est dû :
                   les deux ensemble disent si le paiement est possible. */}
-              {sortDeCaisse && soldeCaisseSite != null && (
+              {/* L'origine se choisit avant le montant : c'est elle qui
+                  dit si la caisse borne la saisie. */}
+              {sortDeCaisse && (
+                <ChoixOrigineArgent className="mb-3"
+                  role={roleSite} valeur={origine} onChange={setOrigine} />
+              )}
+              {/* Hors caisse, le tiroir ne bouge pas : l'afficher ferait
+                  croire qu'il borne ce règlement. */}
+              {sortDeCaisse && !horsCaisse && soldeCaisseSite != null && (
                 <DisponibleCaisse className="mb-2"
                   solde={soldeReelCaisse ?? soldeCaisseSite}
                   engage={engageCaisse} disponible={soldeCaisseSite} />

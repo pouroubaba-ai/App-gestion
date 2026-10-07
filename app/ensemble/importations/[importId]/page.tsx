@@ -259,13 +259,24 @@ export default function FicheImportationPage() {
      marchandise, et c'est son responsable des commandes qui comptera. */
   useEffect(() => {
     if (!user || !dossier) return;
-    roleSurSite(dossier.siteId, user.uid)
+    /* L'ordre des arguments, et l'admin avec eux.
+     *
+       L'appel passait `(siteId, uid)` quand la signature attend
+       `(uid, siteId, adminUid)` : la requête cherchait un membre dont
+       le site serait un identifiant de compte, et ne trouvait jamais
+       rien. `adminUid` manquait en plus — or c'est lui qui fait
+       reconnaître le propriétaire, à qui la fonction rend `null`.
+
+       Le propriétaire n'était donc jamais admin sur cet écran, et
+       `peutAvancer` refuse d'avancer une importation à qui ne l'est
+       pas avant la réception : plus aucun dossier ne bougeait. */
+    roleSurSite(user.uid, dossier.siteId, activite?.adminUid)
       .then(r => setRole(r))
       /* Une lecture qui echoue ne vaut pas « proprietaire ».
          `null` dit « aucune restriction » : le rendre ici donnait les
          pleins pouvoirs a qui perdait le reseau une seconde. */
       .catch(() => setRole('aucun'));
-  }, [user, dossier]);
+  }, [user, dossier, activite?.adminUid]);
 
   /* L'adresse de repli : l'écran quitté se rend tel qu'il était,
      plutôt qu'un « ?onglet= » nu qui ramenait à la vue par défaut. */

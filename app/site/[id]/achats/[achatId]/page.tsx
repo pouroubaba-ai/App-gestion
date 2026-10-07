@@ -12,6 +12,7 @@ import { useAuth } from '@/lib/auth-context';
 import { ecrireEnCaisse } from '@/lib/ecrire-caisse';
 import { chargerDisponible } from '@/lib/attente-caisse';
 import DisponibleCaisse from '../../components/DisponibleCaisse';
+import ChoixOrigineArgent from '../../components/ChoixOrigineArgent';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { formatMontant } from '@/lib/format';
 import {
@@ -190,6 +191,26 @@ export default function FicheAchatPage() {
      sorties s'enchaînaient sur un chiffre qui ne bougeait pas. */
   const [engageCaisse, setEngageCaisse] = useState(0);
   const [soldeReelCaisse, setSoldeReelCaisse] = useState<number | null>(null);
+
+  /**
+   * D'où sort l'argent qui règle ce fournisseur.
+   *
+   * La caisse du site, ou la main du propriétaire — un virement, un
+   * retrait déjà fait, de l'argent qui n'a jamais vu le tiroir. Le
+   * second cas existait déjà pour les importations ; les achats de
+   * boutique, eux, n'avaient que la caisse.
+   *
+   * On s'en tirait par un apport : le propriétaire remettait d'abord
+   * l'argent en caisse, puis la caisse payait. Deux écritures pour un
+   * seul geste, et un tiroir qui gonflait d'un argent qui n'y est
+   * jamais entré — le solde affiché ne correspondait plus à ce qu'on
+   * aurait trouvé en l'ouvrant.
+   *
+   * Hors caisse, la dette s'éteint sans que le tiroir bouge. Le
+   * versement porte son origine, pour qu'on sache toujours d'où
+   * l'argent est parti.
+   */
+  const [origine, setOrigine] = useState<'caisse' | 'admin'>('caisse');
 
   /* Régler un fournisseur sort de l'argent : si la caisse ne suffit pas,
      l'apport se fait ici plutôt que d'obliger à quitter le dossier. */
@@ -487,7 +508,11 @@ export default function FicheAchatPage() {
 
   /* Le total n'est jamais saisi à part : il se recalcule depuis les
      versements, pour qu'un montant et son détail ne divergent jamais. */
-  const depasseCaisse = soldeCaisseSite != null && nouveauVersement > soldeCaisseSite;
+  /* La caisse ne laisse sortir que ce qu'elle a. La poche du
+     propriétaire ne connaît pas cette borne : l'app ne tient pas ses
+     comptes à lui. */
+  const depasseCaisse = origine === 'caisse'
+    && soldeCaisseSite != null && nouveauVersement > soldeCaisseSite;
   const manqueCaisse = depasseCaisse ? nouveauVersement - (soldeCaisseSite ?? 0) : 0;
   /* Un apport dispose du capital : le propriétaire seul en déclare un.
      Proposer la case à qui ne peut pas la suivre ferait échouer le
@@ -617,9 +642,14 @@ export default function FicheAchatPage() {
         achatId,
         reference: achat!.reference ?? null,
         par: user!.uid,
+        origine,
+        /* Hors caisse, le tiroir ne bouge pas : seule la dette
+           s'éteint. */
+        sansCaisse: origine === 'admin',
         ...(await auteurCourant(achat!.siteId, user!.uid)),
       });
       setNouveauVersement(0);
+      setOrigine('caisse');
       setAvecApport(false);
       setApport(0);
       setDetailApport('');
@@ -1488,6 +1518,10 @@ export default function FicheAchatPage() {
                   onChange={e => setDateVersement(e.target.value)}
                   className="w-full px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100" />
               </div>
+              {/* L'origine se choisit avant le montant : c'est elle qui
+                  dit si la caisse borne la saisie. Le composant ne rend
+                  rien pour qui ne dispose pas du capital. */}
+              <ChoixOrigineArgent role={role} valeur={origine} onChange={setOrigine} />
               <div>
                 <label className="text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5 block">Montant</label>
                 <ChampNombre valeur={nouveauVersement}
@@ -1499,7 +1533,9 @@ export default function FicheAchatPage() {
                 {/* Le calcul en entier quand quelque chose est engagé : un
                     tiroir qui affiche 50 000 et refuse 40 000 se lit comme
                     une panne tant qu'on ne dit pas ce qui est promis. */}
-                {soldeCaisseSite != null && (
+                {/* Hors caisse, le tiroir ne bouge pas : l'afficher
+                    ferait croire qu'il borne ce règlement. */}
+                {origine === 'caisse' && soldeCaisseSite != null && (
                   <DisponibleCaisse className="mt-2"
                     solde={soldeReelCaisse ?? soldeCaisseSite}
                     engage={engageCaisse} disponible={soldeCaisseSite} />
