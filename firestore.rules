@@ -933,10 +933,13 @@ service cloud.firestore {
             && transfertOuvre(
               request.resource.data.get('transfertOuvrant', ''),
               siteDuDoc()))
-          || travailleSur(siteDuDoc())
-          || travailleSur(siteDestDuDoc())
-          || travailleSur(siteLieExistant())
-          || travailleSur(siteLieTransfert())
+          /* Les deux bouts d'un transfert dans un seul appel. Enchaines,
+             ils refaisaient chacun le profil, l'activite et son
+             proprietaire avant d'arriver au membre : le plafond des dix
+             lectures sautait avant la seconde branche, et le gerant qui
+             recevait ne pouvait pas annuler son propre dossier. */
+          || travailleSurLUnDes(siteDuDoc(), siteDestDuDoc())
+          || travailleSurLUnDes(siteLieExistant(), siteLieTransfert())
           /* Le dossier qu'un ordre fait avancer depuis l'autre bout, et
              ce que sa livraison entraîne. */
           /* Le dossier de l'autre bout d'un ordre, et l'achat qui porte
