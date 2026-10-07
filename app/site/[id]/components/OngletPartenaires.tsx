@@ -371,7 +371,16 @@ export default function OngletPartenaires({ siteId, userId, sites, titre, defaul
     } else setEmployes([]);
     const soldes = await soldesDuSite(ctx.portee);
     chargerVerse(soldes);
-    const parts = partSnap.map(d => {
+    const parts = partSnap
+      /* Les voisins de passage ont leur page.
+       *
+         Ils naissent au comptoir, quand on prend chez eux ce qu'on n'a
+         pas : un depannage, pas une relation. Les meler au carnet le
+         remplirait de noms vus une fois, entre lesquels il faudrait
+         chercher les vrais fournisseurs. Leur page les montre, et c'est
+         de la qu'on en promeut un quand il revient souvent. */
+      .filter(d => !d.data().occasionnel)
+      .map(d => {
       const brut = { id: d.id, ...d.data() } as Partenaire;
       return {
         ...brut,

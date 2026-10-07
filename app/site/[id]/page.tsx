@@ -14,6 +14,7 @@ import {
 } from '@/lib/onglets-site';
 import { chargerMissions } from '@/lib/missions';
 import OngletPartenaires from './components/OngletPartenaires';
+import OngletOccasionnels from './components/OngletOccasionnels';
 import OngletRecouvrements from './components/OngletRecouvrements';
 import OngletRemises from './components/OngletRemises';
 import OngletRetours from './components/OngletRetours';
@@ -413,6 +414,9 @@ export default function SiteFichePage() {
             séparer et ne ferait qu'encadrer la page. */}
         <div className={membre ? '' : 'bg-white dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800 shadow-sm p-4 sm:p-6'}>
           {ongletCourant === 'partenaires' && <OngletPartenaires siteId={siteId} userId={user!.uid} roleSite={role} defaultVue={(searchParams.get('vue') as 'clients' | 'fournisseurs') ?? 'clients'} />}
+          {ongletCourant === 'occasionnels' && (
+            <OngletOccasionnels siteId={siteId} userId={user!.uid} roleSite={role} />
+          )}
           {ongletCourant === 'recouvrements' && <OngletRecouvrements siteId={siteId} userId={user!.uid} roleSite={role} onCount={setCountRecouvrements} />}
           {ongletCourant === 'remises' && <OngletRemises siteId={siteId} userId={user!.uid} />}
           {ongletCourant === 'retours' && <OngletRetours siteId={siteId} userId={user!.uid} role={role} />}

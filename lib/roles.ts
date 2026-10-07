@@ -82,7 +82,8 @@ const ONGLETS_PAR_ROLE: Record<RoleSite, string[] | null> = {
      remises » lui dit où en sont ses déclarations, sans lui donner le droit
      de les autoriser lui-même. */
   gerant: [
-    'dashboard', 'fonds', 'partenaires', 'recouvrements', 'employes',
+    'dashboard', 'fonds', 'partenaires', 'occasionnels', 'recouvrements',
+    'employes',
     'cycle-vente', 'achats', 'transferts', 'retours', 'inventaire',
     'mouvements-stock', 'historique', 'remises', 'audit',
   ],

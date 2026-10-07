@@ -20,6 +20,7 @@ import type { SiteConnu } from '@/app/site/[id]/components/ContexteSites';
 import OngletDashboard from '@/app/site/[id]/components/OngletDashboard';
 import OngletFonds from '@/app/site/[id]/components/OngletFonds';
 import OngletPartenaires from '@/app/site/[id]/components/OngletPartenaires';
+import OngletOccasionnels from '@/app/site/[id]/components/OngletOccasionnels';
 import OngletRecouvrements from '@/app/site/[id]/components/OngletRecouvrements';
 import OngletRemises from '@/app/site/[id]/components/OngletRemises';
 import OngletRetours from '@/app/site/[id]/components/OngletRetours';
@@ -32,7 +33,8 @@ import OngletInventaire from '@/app/site/[id]/components/OngletInventaire';
 import OngletHistorique from '@/app/site/[id]/components/OngletHistorique';
 
 export type OngletEnsemble =
-  | 'dashboard' | 'fonds' | 'partenaires' | 'recouvrements' | 'employes'
+  | 'dashboard' | 'fonds' | 'partenaires' | 'occasionnels' | 'recouvrements'
+  | 'employes'
   | 'cycle-vente' | 'achats' | 'importations' | 'transferts' | 'inventaire'
   | 'historique' | 'remises' | 'retours';
 
@@ -43,6 +45,7 @@ const TITRES: Record<OngletEnsemble, string> = {
   dashboard: 'Tableau de bord',
   fonds: 'Fonds disponible',
   partenaires: 'Partenaires',
+  occasionnels: 'Fournisseurs occasionnels',
   recouvrements: 'Recouvrements',
   /* Le propriétaire vend lui aussi : ces ventes attendent la caisse comme
      celles de ses gérants, et il n'avait nulle part où les suivre. */
@@ -174,6 +177,9 @@ function Ensemble() {
             {onglet === 'partenaires' && (
               <OngletPartenaires {...commun}
                 defaultVue={(searchParams.get('vue') as 'clients' | 'fournisseurs') ?? 'clients'} />
+            )}
+            {onglet === 'occasionnels' && (
+              <OngletOccasionnels {...commun} roleSite={null} />
             )}
             {onglet === 'recouvrements' && <OngletRecouvrements {...commun} />}
             {onglet === 'remises' && <OngletRemises {...commun} />}

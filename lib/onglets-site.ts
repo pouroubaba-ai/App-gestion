@@ -18,7 +18,8 @@ import { ongletsDuRole, type RoleSite } from './roles';
 
 export type Onglet =
   | 'dashboard' | 'fonds' | 'cycle-vente' | 'achats' | 'transferts'
-  | 'importations' | 'inventaire' | 'partenaires' | 'recouvrements' | 'employes'
+  | 'importations' | 'inventaire' | 'partenaires' | 'occasionnels'
+  | 'recouvrements' | 'employes'
   | 'historique' | 'audit' | 'configuration' | 'remises' | 'retours'
   | 'mouvements' | 'mouvements-stock' | 'autorisations';
 
@@ -55,6 +56,11 @@ export const ONGLETS_SITE: { key: Onglet; label: string; icon: React.ElementType
 
   /* Ceux qui doivent, ceux à qui l'on doit */
   { key: 'partenaires',    label: 'Partenaires',      icon: Handshake },
+  /* Ceux chez qui on prend ce qu'on n'a pas. Ils naissent au comptoir,
+     d'un depannage, et ne sont pas du carnet : les y meler le remplirait
+     de noms vus une fois. C'est ici qu'on regle ce qu'on leur doit, et
+     qu'on decide si l'un d'eux merite d'entrer au carnet. */
+  { key: 'occasionnels',   label: 'Occasionnels',     icon: HandCoins },
   { key: 'recouvrements',  label: 'Recouvrements',    icon: CalendarClock },
   /* L'argent encaissé dehors, avant qu'il entre en caisse : il suit les
      recouvrements, puisqu'il en naît. */
@@ -122,7 +128,7 @@ const GROUPES: { label: string; cles: Onglet[] }[] = [
   { label: 'Marchandise',
     cles: ['cycle-vente', 'achats', 'transferts', 'retours',
       'inventaire', 'mouvements-stock'] },
-  { label: 'Comptes', cles: ['partenaires', 'employes'] },
+  { label: 'Comptes', cles: ['partenaires', 'occasionnels', 'employes'] },
   { label: 'Activité', cles: ['historique', 'audit', 'configuration'] },
 ];
 

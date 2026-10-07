@@ -75,6 +75,9 @@ const nav: NavItem[] = [
      recouvrement, lui, est resté devant, puisqu'il se fait chaque jour. */
   { type: 'accordion', label: 'Comptes', icon: Handshake, children: [
     { label: 'Partenaires', href: '/ensemble?onglet=partenaires', icon: Handshake },
+    /* Les voisins qui depannent. Ils ne sont pas du carnet : les y meler
+       le remplirait de noms vus une fois. */
+    { label: 'Occasionnels', href: '/ensemble?onglet=occasionnels', icon: HandCoins },
     { label: 'Employés', href: '/ensemble?onglet=employes', icon: Users },
   ] },
 
