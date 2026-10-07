@@ -1,8 +1,7 @@
 import {
-  collection, addDoc, deleteDoc, serverTimestamp,
+  collection, doc, writeBatch, serverTimestamp,
 } from 'firebase/firestore';
 import { db } from './firebase';
-import { ouvrirPartout } from './produits-site';
 import type { Emballage } from './mouvements';
 import {
   cleVariante, genererCodeBarre,
@@ -43,7 +42,26 @@ export async function creerProduitRapide(params: {
 
   const unite = params.unite.trim() || 'pièce';
 
-  const ref = await addDoc(collection(db, 'produits'), {
+  /* Tout part ensemble : la fiche et ses rayons.
+   *
+     Chacun partait seul, et chaque rayon se faisait preceder d'une
+     lecture pour verifier qu'il n'existait pas deja. Sur trois sites
+     cela faisait sept allers-retours en file — et depuis Brazzaville un
+     aller-retour coute un sixieme de seconde. Creer dix produits
+     demandait dix secondes pour un geste qui n'ecrit rien de lourd.
+   *
+     La lecture ne servait a rien : un produit qu'on vient de creer n'a
+     aucun rayon, la question avait toujours la meme reponse.
+   *
+     Un lot resout les deux. L'identifiant se choisit a l'avance — `doc()`
+     sans donnees n'interroge personne — donc les rayons peuvent designer
+     un produit que le serveur n'a pas encore vu. Un seul envoi, et il
+     passe en entier ou pas du tout : plus de produit a moitie ouvert a
+     defaire ensuite. */
+  const ref = doc(collection(db, 'produits'));
+  const lot = writeBatch(db);
+
+  lot.set(ref, {
     userId: params.userId,
     activiteId: params.activiteId ?? null,
     designation,
@@ -71,20 +89,27 @@ export async function creerProduitRapide(params: {
    *
      On defait donc la fiche quand son rayon ne s'ouvre pas, et l'on
      laisse remonter la raison. */
-  try {
-    await ouvrirPartout({
+  for (const siteId of params.siteIds) {
+    lot.set(doc(collection(db, 'produits_site')), {
       produitId: ref.id,
-      siteIds: params.siteIds,
+      siteId,
       userId: params.userId,
-      ...(params.siteOrigine ? { siteOrigine: params.siteOrigine } : {}),
-      prixOrigine: params.prixVente ?? 0,
-      seuilOrigine: null,
-      variantesOrigine: [],
+      stock: 0,
+      coutMoyen: 0,
+      /* Aucun rayon ne sait ce qu'il a paye : la premiere entree le
+         posera. Zero n'est pas « gratuit ». */
+      coutInconnu: true,
+      /* Le prix se propose partout des la naissance : un site qui recoit
+         un transfert doit pouvoir vendre sans reparametrer sa fiche. */
+      prixVente: params.prixVente ?? 0,
+      prixMarche: null,
+      seuilAlerte: null,
+      variantes: [],
+      createdAt: serverTimestamp(),
     });
-  } catch (e) {
-    await deleteDoc(ref).catch(() => {});
-    throw e;
   }
+
+  await lot.commit();
 
   /* Aucun stock de départ : il entrera par le bon qu'on est en train de
      saisir. En poser un ici ferait entrer la marchandise deux fois. */
@@ -155,7 +180,10 @@ export async function creerGammeRapide(params: {
     ...(d.prix ? { prixVente: d.prix } : {}),
   }));
 
-  const ref = await addDoc(collection(db, 'produits'), {
+  const ref = doc(collection(db, 'produits'));
+  const lot = writeBatch(db);
+
+  lot.set(ref, {
     userId: params.userId,
     activiteId: params.activiteId ?? null,
     designation,
@@ -174,17 +202,32 @@ export async function creerGammeRapide(params: {
     createdAt: serverTimestamp(),
   });
 
-  await ouvrirPartout({
-    produitId: ref.id,
-    siteIds: params.siteIds,
-    userId: params.userId,
-    ...(params.siteOrigine ? { siteOrigine: params.siteOrigine } : {}),
-    prixOrigine: prixProduit,
-    seuilOrigine: null,
-    variantesOrigine: variantes.map(v => ({
-      cle: v.cle, stock: 0, coutMoyen: 0, prixVente: v.prixVente ?? null,
-    })),
-  });
+  /* Les rayons partent avec la fiche, dans le meme lot : voir
+     `creerProduitRapide`. Une gamme en ouvre autant que de sites, et les
+     envoyer un par un faisait de la creation d'un produit a trois
+     declinaisons une attente de plusieurs secondes. */
+  for (const siteId of params.siteIds) {
+    lot.set(doc(collection(db, 'produits_site')), {
+      produitId: ref.id,
+      siteId,
+      userId: params.userId,
+      stock: 0,
+      coutMoyen: 0,
+      coutInconnu: true,
+      prixVente: prixProduit,
+      prixMarche: null,
+      seuilAlerte: null,
+      /* Chaque declinaison a son rayon : un carton de 15 W n'est pas un
+         carton de 40 W, et leurs stocks ne se melent pas. */
+      variantes: variantes.map(v => ({
+        cle: v.cle, stock: 0, coutMoyen: 0, coutInconnu: true,
+        prixVente: v.prixVente ?? null,
+      })),
+      createdAt: serverTimestamp(),
+    });
+  }
+
+  await lot.commit();
 
   return { id: ref.id, designation, unite, variantes };
 }
