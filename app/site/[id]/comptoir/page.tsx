@@ -25,6 +25,8 @@ import {
   appliquerPlanification, lireChoix, type Planification,
 } from '@/lib/planification';
 import { ChampRecherche, ChampNombre, SelectCherchable } from '@/components/Champs';
+import { creerProduitRapide } from '@/lib/produit-rapide';
+import { sitesDeLActivite } from '@/lib/produits-site';
 import type { ProduitChoisissable } from '../components/SelecteurProduits';
 import ModalMargeRecu from '../components/ModalMargeRecu';
 import PanneauMontants from '../components/PanneauMontants';
@@ -166,6 +168,9 @@ export default function ComptoirPage() {
      range le voisin, on tape son nom. */
   const [fournisseurs, setFournisseurs] = useState<
     { id: string; nom: string; occasionnel: boolean }[]>([]);
+  /* La creation d'un produit tient le bouton le temps d'ouvrir la fiche
+     sur tous les sites : sans cela, deux clics font deux produits. */
+  const [creationProduit, setCreationProduit] = useState(false);
   const [produits, setProduits] = useState<ProduitChoisissable[]>([]);
   const [loading, setLoading] = useState(true);
   /* `null` tant qu'on ne sait pas, puis le rôle — lui aussi `null` pour qui
@@ -454,7 +459,7 @@ export default function ComptoirPage() {
        la marge compte le prix de vente entier en benefice — l'erreur
        qu'on voulait justement eviter en ne passant pas « hors stock ». */
     && panier.every(l => !l.prisDehors
-      || (!!l.fournisseurNom?.trim() && (l.valeurUnitaire ?? 0) > 0))
+      || (!!l.fournisseurId && (l.valeurUnitaire ?? 0) > 0))
     && (!clientRequis || !!clientId)
     && !enCours;
 
@@ -577,14 +582,106 @@ export default function ComptoirPage() {
    * il reste nul, et la fiche naitra avec la vente — jamais avant. Un
    * panier abandonne ne doit laisser personne derriere lui.
    */
-  function nommerFournisseur(cle: string, nom: string) {
-    const propre = nom.trim();
-    const connu = fournisseurs.find(
-      f => f.nom.toLowerCase() === propre.toLowerCase());
+  /**
+   * Creer la marchandise qu'on n'a jamais vendue, et la prendre dehors.
+   *
+   * Le voisin depanne parfois sur une reference absente du catalogue.
+   * Elle n'existe donc pas comme carte, et sans ce chemin la vente n'en
+   * a aucun : le client repart, ou l'on vend hors de l'app.
+   *
+   * Le produit nait complet — il s'ouvre a zero sur tous les sites, comme
+   * toute marchandise creee a la volee. Ce n'est pas un article de
+   * passage : si le voisin le fournit une fois, il le fournira peut-etre
+   * encore, et c'est precisement ce qu'on veut pouvoir lire plus tard.
+   *
+   * Il entre au panier deja marque « pris dehors » : on vient de dire
+   * qu'on ne l'a pas.
+   */
+  async function creerEtPrendreDehors() {
+    const nom = recherche.trim();
+    if (!nom || !user || creationProduit) return;
+    setCreationProduit(true); setErreur('');
+    try {
+      const neuf = await creerProduitRapide({
+        activiteId: activite?.id ?? null,
+        userId: user.uid,
+        designation: nom,
+        unite: 'pièce',
+        siteIds: activite?.id
+          ? await sitesDeLActivite(activite.id) : [siteId],
+        siteOrigine: siteId,
+      });
+      const article: Article = {
+        cle: neuf.id,
+        produit: { id: neuf.id, designation: neuf.designation,
+          unite: neuf.unite, coutMoyen: 0, prixVente: 0, stock: 0,
+          emballages: [], variantes: [] } as ProduitChoisissable,
+        varianteCle: null,
+        varianteLibelle: null,
+        designation: neuf.designation,
+        stock: 0,
+        coutMoyen: 0,
+        prixVente: 0,
+        prixMarche: null,
+      };
+      /* Il rejoint le catalogue de l'ecran : la carte existe des la
+         vente suivante, sans recharger. */
+      setProduits(p => [...p, article.produit]);
+      ajouter(article, true);
+      setRecherche('');
+    } catch (e: unknown) {
+      setErreur(e instanceof Error ? e.message : 'Création impossible.');
+    } finally {
+      setCreationProduit(false);
+    }
+  }
+
+  function choisirFournisseur(cle: string, id: string) {
+    const f = fournisseurs.find(x => x.id === id);
     setPanier(prev => prev.map(l => l.cle === cle
-      ? { ...l, fournisseurNom: propre || null,
-          fournisseurId: connu?.id ?? null }
+      ? { ...l, fournisseurId: id || null, fournisseurNom: f?.nom ?? null }
       : l));
+  }
+
+  /**
+   * Un voisin qui depanne pour la premiere fois.
+   *
+   * Occasionnel : il n'est pas du carnet, il a rendu service. S'il
+   * revient souvent, on le promeut depuis sa page et son identifiant ne
+   * bouge pas — tout l'historique suit.
+   *
+   * La fiche nait au clic, pas a la validation. C'est le prix d'un vrai
+   * selecteur, qui travaille avec des identifiants : un fournisseur cree
+   * par erreur reste visible sur sa page, sans document, et se
+   * supprime.
+   */
+  async function creerFournisseurOccasionnel(nom: string): Promise<string | null> {
+    const propre = nom.trim();
+    if (!propre || !user) return null;
+    try {
+      const ref = await addDoc(collection(db, 'partenaires'), {
+        userId: user.uid,
+        siteId,
+        nom: propre,
+        contact: '',
+        rolesFournisseur: true,
+        rolesClient: false,
+        categoriesFournisseur: [],
+        categoriesClient: [],
+        prochainRecouvrement: null,
+        occasionnel: true,
+        ...(await auteurCourant(siteId, user.uid, user.displayName)),
+        apporteur: null,
+        createdAt: serverTimestamp(),
+      });
+      setFournisseurs(f => [...f, { id: ref.id, nom: propre, occasionnel: true }]
+        .sort((a, b) => a.nom.localeCompare(b.nom)));
+      setErreur('');
+      return ref.id;
+    } catch (e: unknown) {
+      setErreur(e instanceof Error ? e.message : 'Création impossible.');
+      return null;
+    }
   }
 
   /** Ce qu'on devra au voisin pour cette ligne, dans l'emballage vendu. */
@@ -648,55 +745,13 @@ export default function ComptoirPage() {
          on a vendu, et c'est lui qui part au mouvement, dans la marge,
          dans le tableau de bord. Le reçu garde l'explication ; rien en
          aval n'a besoin de la connaître. */
-      /* Les voisins qu'on vient de nommer et qui n'avaient pas de fiche.
-       *
-         Elle nait ici, au moment ou la vente part — jamais avant. Un
-         panier abandonne, une ligne effacee, un comptoir qu'on quitte :
-         rien ne doit laisser derriere lui un fournisseur que personne
-         n'a jamais vu.
-       *
-         Occasionnel : il a depanne une fois, il n'est pas encore du
-         carnet. S'il revient souvent, on le promeut depuis sa page, et
-         son identifiant ne bouge pas — tout l'historique suit. */
-      const nes = new Map<string, string>();
-      for (const l of panier) {
-        if (!l.prisDehors || l.fournisseurId) continue;
-        const nom = l.fournisseurNom?.trim();
-        if (!nom || nes.has(nom.toLowerCase())) continue;
-        const ref = await addDoc(collection(db, 'partenaires'), {
-          userId: user!.uid,
-          siteId,
-          nom,
-          contact: '',
-          rolesFournisseur: true,
-          rolesClient: false,
-          categoriesFournisseur: [],
-          categoriesClient: [],
-          prochainRecouvrement: null,
-          occasionnel: true,
-          ...(await auteurCourant(siteId, user!.uid, user!.displayName)),
-          apporteur: null,
-          createdAt: serverTimestamp(),
-        });
-        nes.set(nom.toLowerCase(), ref.id);
-      }
-      if (nes.size > 0) {
-        setFournisseurs(f => [...f,
-          ...[...nes].map(([nom, id]) => ({ id, nom, occasionnel: true }))]
-          .sort((a, b) => a.nom.localeCompare(b.nom)));
-      }
-
-      /* Ce que le client emporte, et pour les lignes prises dehors, chez
-         qui — l'identifiant tout juste cree ou celui qu'on connaissait. */
+      /* Ce que le client emporte. Les lignes prises dehors portent deja
+         leur fournisseur : il a ete choisi, ou cree, au moment ou on l'a
+         nomme. */
       const lignes: LigneFlux[] = panier.map(
         ({ cle, stockUnites, contenance, prixUnitaire, coutUnitaire,
           prisDehors, ...l }, i) => ({
           ...l,
-          ...(prisDehors ? {
-            fournisseurId: l.fournisseurId
-              ?? nes.get((l.fournisseurNom ?? '').trim().toLowerCase())
-              ?? null,
-          } : {}),
           prixVente: prixReels[i] ?? l.prixVente ?? 0,
           quantiteRecue: l.quantiteDemandee,
         }));
@@ -1021,13 +1076,27 @@ export default function ComptoirPage() {
               Pris dehors
             </p>
             <div className="flex items-center gap-1.5">
-              <input list={`fourn-${l.cle}`} value={l.fournisseurNom ?? ''}
-                onChange={e => nommerFournisseur(l.cle, e.target.value)}
-                placeholder="Chez qui ?"
-                className="min-w-0 flex-1 rounded-lg border border-amber-200 bg-white px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-amber-500 dark:border-amber-800/40 dark:bg-gray-800" />
-              <datalist id={`fourn-${l.cle}`}>
-                {fournisseurs.map(f => <option key={f.id} value={f.nom} />)}
-              </datalist>
+              {/* Le meme selecteur que pour le client : on cherche, et ce
+                  qu'on cherche se cree s'il n'existe pas. Un voisin qui
+                  depanne pour la premiere fois n'a pas de fiche, et
+                  s'arreter pour la creer ailleurs ferait perdre la
+                  vente. */}
+              <div className="min-w-0 flex-1">
+                <SelectCherchable compact
+                  valeur={l.fournisseurId ?? ''}
+                  onChange={v => choisirFournisseur(l.cle, v)}
+                  options={fournisseurs.map(f => ({
+                    valeur: f.id,
+                    label: f.nom,
+                    /* D'ou il vient : le carnet, ou un depannage. Sans
+                       cette mention, on ne sait pas lequel des deux
+                       noms proches on vient de choisir. */
+                    detail: f.occasionnel ? 'occasionnel' : 'fournisseur',
+                  }))}
+                  placeholder="Chez qui ?"
+                  surCreer={creerFournisseurOccasionnel}
+                  creerLibelle="Nouveau fournisseur" />
+              </div>
               {/* Ce qu'on lui devra, dans l'emballage vendu : un carton
                   coute ce que coute le carton. */}
               <ChampNombre valeur={l.valeurUnitaire ?? 0}
@@ -1275,7 +1344,29 @@ export default function ComptoirPage() {
             {filtres.length === 0 && (
               <div className="col-span-full py-10 text-center">
                 <Package size={22} className="mx-auto text-gray-300 dark:text-gray-700" />
-                <p className="text-xs text-gray-400 mt-2">Aucun produit</p>
+                {/* Ce qu'on n'a jamais vendu.
+                 *
+                   Le voisin depanne parfois sur une reference qui n'est
+                   pas au catalogue : sans ce bouton, il n'y a aucune
+                   carte a toucher et la vente n'a pas de chemin. Le nom
+                   est deja tape — c'est en le cherchant qu'on a decouvert
+                   qu'il n'existait pas. */}
+                {recherche.trim() ? (
+                  <>
+                    <p className="mt-2 text-xs text-gray-400">
+                      « {recherche.trim()} » n&apos;est pas au catalogue
+                    </p>
+                    <button onClick={creerEtPrendreDehors} disabled={creationProduit}
+                      className="mt-3 inline-flex items-center gap-1.5 rounded-xl border border-amber-300 px-3 py-2 text-xs font-bold text-amber-700 transition-colors hover:bg-amber-50 disabled:opacity-40 dark:border-amber-800/50 dark:text-amber-500 dark:hover:bg-amber-900/10">
+                      {creationProduit
+                        ? <Loader2 size={13} className="animate-spin" />
+                        : <Plus size={13} />}
+                      Le créer et le prendre dehors
+                    </button>
+                  </>
+                ) : (
+                  <p className="text-xs text-gray-400 mt-2">Aucun produit</p>
+                )}
               </div>
             )}
           </div>
