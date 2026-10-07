@@ -1768,6 +1768,18 @@ export async function chargerVentesDuSite(siteId: Portee): Promise<Vente[]> {
   return (await lireDocs<Vente>('ventes', siteId))
     /* Voir `chargerAchatsDuSite` : une ouverture n'est pas une vente. */
     .filter(v => !(v as any).ouverture)
+    /* Un dossier sans marchandise.
+     *
+     * La collection ne porte pas que des ventes complètes : des soldes
+     * d'ouverture y vivent, et un document interrompu avant sa première
+     * ligne y reste. Le type promet `lignes`, la base ne le garantit
+     * pas — et treize endroits de l'écran le lisent sans le demander.
+     * Une liste entière tombait sur `v.lignes.length` pour un seul
+     * document mal formé.
+     *
+     * Le tableau vide dit la vérité : ce dossier ne porte rien. Mieux
+     * vaut une ligne à zéro produit qu'un écran qui ne s'ouvre pas. */
+    .map(v => v.lignes ? v : { ...v, lignes: [] })
     .sort((a, b) => (b.createdAt?.seconds ?? 0) - (a.createdAt?.seconds ?? 0));
 }
 
@@ -1793,5 +1805,9 @@ export async function chargerAchatsDuSite(siteId: Portee): Promise<Achat[]> {
        laisser ici les ferait attendre une réception qui ne viendra
        jamais. Ils se lisent sur la fiche du partenaire. */
     .filter(a => !(a as any).ouverture)
+    /* Même précaution que pour les ventes : le type promet `lignes`, la
+       base ne le garantit pas, et un seul dossier mal formé fait tomber
+       la liste entière. */
+    .map(a => a.lignes ? a : { ...a, lignes: [] })
     .sort((a, b) => (b.dateCommande ?? '').localeCompare(a.dateCommande ?? ''));
 }
