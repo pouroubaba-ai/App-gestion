@@ -298,7 +298,7 @@ export default function FicheAjustementPage() {
               <thead>
                 <tr className="bg-indigo-600 text-white">
                   <th className="px-4 py-3 text-center text-xs font-bold">Produit</th>
-                  <th className="px-4 py-3 text-center text-xs font-bold">Unité</th>
+                  <th className="px-4 py-3 text-center text-xs font-bold">Emballage</th>
                   {voitLArgent && (
                     <>
                       <th className="px-4 py-3 text-center text-xs font-bold">Coût</th>
@@ -315,8 +315,13 @@ export default function FicheAjustementPage() {
                     <td className="px-4 py-3 text-center font-medium">
                       {l.designation}
                     </td>
+                    {/* Ce dans quoi la quantité est comptée. L'emballage
+                        d'abord quand il y en a un : « 2 » ne veut pas dire
+                        la même chose en cartons qu'en pièces, et le stock
+                        se trompe du contenu du carton. L'unité de base
+                        sinon, pour la marchandise qui se compte nue. */}
                     <td className="px-4 py-3 text-center text-gray-400">
-                      {l.unite ?? '—'}
+                      {l.emballage ?? l.unite ?? '—'}
                     </td>
                     {voitLArgent && (
                       <>
