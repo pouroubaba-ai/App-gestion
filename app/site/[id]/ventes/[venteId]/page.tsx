@@ -248,7 +248,11 @@ export default function FicheVentePage() {
 
     if (snap.exists()) {
       const d = snap.data() as any;
-      setVente({ id: snap.id, ...d } as Vente);
+      /* Un dossier sans marchandise ne doit pas entrer sans ses lignes :
+         un document de test, une vente interrompue avant sa premiere
+         ligne, et toute la fiche tombe sur `lignes.reduce`. Le tableau
+         vide dit la verite — ce dossier ne porte rien. */
+      setVente({ id: snap.id, ...d, lignes: d.lignes ?? [] } as Vente);
 
       /* Qui a servi : écrit sur le dossier depuis peu, à retrouver sur
          le transfert pour ceux d'avant. */

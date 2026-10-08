@@ -627,13 +627,14 @@ function valeurLigne(l: LigneFlux, quantite: number | null | undefined): number 
 }
 
 /** Ce que la source déclare avoir envoyé, à défaut ce qui a été demandé. */
-export function valeurEnvoyee(lignes: LigneFlux[]): number {
-  return lignes.reduce((s, l) => s + valeurLigne(l, l.quantiteExpediee ?? l.quantiteDemandee), 0);
+export function valeurEnvoyee(lignes: LigneFlux[] | null | undefined): number {
+  return (lignes ?? []).reduce(
+    (s, l) => s + valeurLigne(l, l.quantiteExpediee ?? l.quantiteDemandee), 0);
 }
 
 /** Ce que le destinataire déclare avoir reçu ; 0 tant qu'il n'a pas compté. */
-export function valeurRecue(lignes: LigneFlux[]): number {
-  return lignes.reduce((s, l) => s + valeurLigne(l, l.quantiteRecue), 0);
+export function valeurRecue(lignes: LigneFlux[] | null | undefined): number {
+  return (lignes ?? []).reduce((s, l) => s + valeurLigne(l, l.quantiteRecue), 0);
 }
 
 /**
@@ -667,8 +668,8 @@ export function ecartValeur(lignes: LigneFlux[]): number {
 }
 
 /** Un écart ligne à ligne, pour montrer où le désaccord se situe. */
-export function lignesEnEcart(lignes: LigneFlux[]): LigneFlux[] {
-  return lignes.filter(l =>
+export function lignesEnEcart(lignes: LigneFlux[] | null | undefined): LigneFlux[] {
+  return (lignes ?? []).filter(l =>
     l.quantiteRecue != null &&
     (l.quantiteExpediee ?? l.quantiteDemandee) !== l.quantiteRecue
   );
@@ -684,11 +685,13 @@ export function aUnEcart(lignes: LigneFlux[]): boolean {
  * problème qu'un qui livre trop. Additionnés, les deux s'annuleraient
  * et un partenaire irrégulier passerait pour exact.
  */
-export function ecartsSepares(lignes: LigneFlux[]): { positif: number; negatif: number } {
+export function ecartsSepares(
+  lignes: LigneFlux[] | null | undefined,
+): { positif: number; negatif: number } {
   /* Ligne à ligne, pas sur le net : un dossier où 5 000 manquent sur un
      produit et 5 000 dépassent sur un autre a deux écarts à trancher, pas
      zéro. Les solder d'avance les ferait disparaître de la vue. */
-  return lignes.reduce((acc, l) => {
+  return (lignes ?? []).reduce((acc, l) => {
     /* Rien reçu vaut zéro, pas « autant que commandé » : une commande sans
        livraison manque entièrement, elle n'est pas conforme. */
     const e = valeurLigne(l, l.quantiteDemandee) - valeurLigne(l, l.quantiteRecue ?? 0);
@@ -708,9 +711,9 @@ export function ecartsSepares(lignes: LigneFlux[]): { positif: number; negatif: 
  * une réclamation.
  */
 export function produitsEnEcart(
-  lignes: LigneFlux[],
+  lignes: LigneFlux[] | null | undefined,
 ): { manque: number; surplus: number } {
-  return lignes.reduce((acc, l) => {
+  return (lignes ?? []).reduce((acc, l) => {
     const attendu = l.quantiteExpediee ?? l.quantiteDemandee;
     const recu = l.quantiteRecue ?? 0;
     if (recu === attendu) return acc;
@@ -1765,14 +1768,17 @@ export async function chargerTransfertsDuSite(siteId: Portee): Promise<Transfert
  * Sur une vente, `valeurUnitaire` porte le coût du produit — il sert à figer
  * le bénéfice à la sortie. Ce que le client doit, c'est `prixVente`.
  */
-export function valeurVente(lignes: LigneFlux[]): number {
-  return lignes.reduce((s, l) =>
+export function valeurVente(lignes: LigneFlux[] | null | undefined): number {
+  /* Un dossier peut arriver sans ses lignes — un document de test, une
+     vente interrompue. Le tableau vide vaut zero, la ou `undefined`
+     faisait tomber toute la fiche. */
+  return (lignes ?? []).reduce((s, l) =>
     s + (l.quantiteRecue ?? l.quantiteDemandee) * (l.prixVente ?? 0), 0);
 }
 
 /** Marge attendue : ce que la vente dégagerait aux prix portés par les lignes. */
-export function beneficeAttendu(lignes: LigneFlux[]): number {
-  return lignes.reduce((s, l) => {
+export function beneficeAttendu(lignes: LigneFlux[] | null | undefined): number {
+  return (lignes ?? []).reduce((s, l) => {
     const qte = l.quantiteRecue ?? l.quantiteDemandee;
     return s + qte * ((l.prixVente ?? 0) - l.valeurUnitaire);
   }, 0);

@@ -176,7 +176,12 @@ export async function compterEnAttente(
         }).length
       : echeances.filter(d => {
           const e = d.data() as any;
-          return (e.reste ?? 0) > 0 && (e.date ?? '') <= jour;
+          /* Ce qui tombe aujourd'hui, pas le retard. La pastille suit le
+             filtre « Aujourd'hui » de l'ecran : compter le retard ici
+             donnait un « 1 » sur une vue qui n'affichait rien, puisque
+             l'echeance etait d'un jour passe. Le retard se lit en
+             changeant de fenetre, il n'alerte pas sur l'icone. */
+          return (e.reste ?? 0) > 0 && (e.date ?? '') === jour;
         }).length,
     /* Ce qui a été tranché est passé au registre : il ne reste ici que
        ce qui demande encore d'ouvrir le tiroir. */
