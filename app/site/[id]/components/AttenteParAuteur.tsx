@@ -23,7 +23,10 @@ import {
   Loader2, Check, ChevronRight, ArrowDownLeft, ArrowUpRight, X,
 } from 'lucide-react';
 import { LIBELLES_MOTIF_CAISSE } from '@/lib/caisse';
-import { autoriserLot, type MouvementAttente } from '@/lib/attente-caisse';
+import {
+  autoriserLot, annulerSaDepense, peutAnnulerSaDepense,
+  type MouvementAttente,
+} from '@/lib/attente-caisse';
 import FeuilleMouvement from './FeuilleMouvement';
 
 interface Props {
@@ -32,6 +35,8 @@ interface Props {
   sens: 'entree' | 'sortie';
   /** Seul le responsable de la caisse autorise. */
   peutAutoriser: boolean;
+  /** L'admin peut annuler toute dépense de boutique en attente. */
+  estAdmin?: boolean;
   parUid: string;
   parNom?: string | null;
   /** Relire : la caisse et la file ont bougé. */
@@ -80,8 +85,19 @@ function parAuteur(liste: MouvementAttente[]): Lot[] {
 }
 
 export default function AttenteParAuteur({
-  mouvements, sens, peutAutoriser, parUid, parNom, onChange, onOuvrir,
+  mouvements, sens, peutAutoriser, estAdmin = false, parUid, parNom, onChange, onOuvrir,
 }: Props) {
+  const [annulant, setAnnulant] = useState(false);
+  async function annulerDepense(m: MouvementAttente) {
+    if (annulant) return;
+    setAnnulant(true);
+    try {
+      await annulerSaDepense({ mouvement: m, parUid, parNom, estAdmin });
+      setDetail(null);
+      onChange();
+    } catch { /* l'écran reste ouvert */ }
+    finally { setAnnulant(false); }
+  }
   /* Le lot qu'on s'apprête à autoriser. Le modal dit combien de mouvements
      sont concernés avant d'agir : « autoriser » au pluriel ne se devine
      pas depuis un bouton. */
@@ -221,6 +237,9 @@ export default function AttenteParAuteur({
       {detail && (
         <FeuilleMouvement mouvement={detail}
           peutConfirmer={false}
+          peutAnnuler={peutAnnulerSaDepense(detail, parUid, estAdmin)}
+          onAnnuler={() => annulerDepense(detail)}
+          annulEnCours={annulant}
           onFermer={() => setDetail(null)} />
       )}
 

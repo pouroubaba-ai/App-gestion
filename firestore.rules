@@ -628,7 +628,18 @@ service cloud.firestore {
        * chose que ce qui avait été déclaré.
        */
       allow update: if travailleSur(siteDuDoc())
-        && (monRoleSur(siteDuDoc()) == 'caissier' || suisProprietaire())
+        /* Qui tranche : le caissier et le propriétaire autorisent ou
+           refusent. En plus, l'auteur d'une DÉPENSE DE BOUTIQUE peut
+           défaire la sienne tant qu'elle attend — elle n'a rien engagé,
+           rien quitté le tiroir, et ne concerne aucun tiers. Il la passe à
+           `refuse`, jamais à `autorise` : annuler n'est pas s'autoriser. */
+        && (
+          ((monRoleSur(siteDuDoc()) == 'caissier' || suisProprietaire())
+            && request.resource.data.get('etat', '') in ['autorise', 'refuse'])
+          || (resource.data.get('motif', '') == 'boutique'
+            && resource.data.get('userId', '') == monUid()
+            && request.resource.data.get('etat', '') == 'refuse')
+        )
         && resource.data.get('etat', '') == 'en_attente'
         && request.resource.data.get('etat', '') in ['autorise', 'refuse']
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([

@@ -23,12 +23,16 @@ import FeuilleMouvement from './FeuilleMouvement';
 import { LIBELLES_MOTIF_CAISSE } from '@/lib/caisse';
 import {
   autoriser, refuser, totauxEnAttente, type MouvementAttente,
+  annulerSaDepense, peutAnnulerSaDepense,
 } from '@/lib/attente-caisse';
 
 interface Props {
   mouvements: MouvementAttente[];
   /** Qui regarde : seul le caissier voit les boutons. */
   peutAutoriser: boolean;
+  /** L'admin de l'activité : il peut annuler toute dépense de boutique en
+      attente, pas seulement la sienne. */
+  estAdmin?: boolean;
   parUid: string;
   parNom?: string | null;
   /** Relire : la caisse et la file ont bougé. */
@@ -52,9 +56,12 @@ function formatDate(s?: string | null): string {
 }
 
 export default function MouvementsEnAttente({
-  mouvements, peutAutoriser, parUid, parNom, onChange,
+  mouvements, peutAutoriser, estAdmin = false, parUid, parNom, onChange,
   ouvertDabord, onFerme, entete = true,
 }: Props) {
+  /* Le mouvement qu'on est en train d'annuler : sa ligne seule montre
+     qu'elle travaille, le reste ne bouge pas. */
+  const [annulant, setAnnulant] = useState<string | null>(null);
   const [ouvert, setOuvert] = useState<MouvementAttente | null>(null);
   /* Le mouvement dont on lit le détail. Il précède le comptage : on
      regarde ce qu'on autorise avant de dire combien on a compté. */
@@ -121,7 +128,30 @@ export default function MouvementsEnAttente({
     } finally { setEnCours(false); }
   }
 
+  /* Défaire sa propre dépense de boutique avant qu'elle ne soit confirmée.
+     Rien n'a bougé dans le tiroir : la ligne s'efface de la file, c'est
+     tout. Seul l'auteur (ou l'admin) y a droit, et seulement un motif
+     boutique — la garde est aussi dans la fonction. */
+  async function annuler(m: MouvementAttente) {
+    if (annulant) return;
+    setAnnulant(m.id); setErreur('');
+    try {
+      await annulerSaDepense({ mouvement: m, parUid, parNom, estAdmin });
+      onChange();
+    } catch (e: any) {
+      setErreur(e?.message ?? "Échec de l'annulation.");
+    } finally { setAnnulant(null); }
+  }
+
   const ecart = ouvert ? ouvert.montant - montant : 0;
+
+  /* Peut-on annuler cette ligne-ci ? Dépense de boutique, en attente, par
+     son auteur ou l'admin. */
+  const peutAnnuler = (m: MouvementAttente) =>
+    peutAnnulerSaDepense(m, parUid, estAdmin);
+  /* La colonne d'actions s'affiche si le caissier autorise, ou s'il existe
+     au moins une dépense qu'on peut défaire. */
+  const colonneActions = peutAutoriser || enAttente.some(peutAnnuler);
 
   return (
     <>
@@ -177,7 +207,7 @@ export default function MouvementsEnAttente({
                 <th className="px-3 py-2.5 text-center font-medium">Montant</th>
                 <th className="px-3 py-2.5 text-center font-medium">Date</th>
                 <th className="px-3 py-2.5 text-center font-medium">Auteur</th>
-                {peutAutoriser && <th className="sticky right-0 bg-indigo-600 px-3 py-2.5" />}
+                {colonneActions && <th className="sticky right-0 bg-indigo-600 px-3 py-2.5" />}
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50 bg-white dark:divide-gray-800 dark:bg-gray-900">
@@ -212,12 +242,26 @@ export default function MouvementsEnAttente({
                       </span>
                     )}
                   </td>
-                  {peutAutoriser && (
+                  {colonneActions && (
                     <td className="sticky right-0 border-l border-gray-100 bg-white px-3 py-2.5 dark:border-gray-800 dark:bg-gray-900">
-                      <button onClick={e => { e.stopPropagation(); ouvrir(m); }}
-                        className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-2.5 py-1.5 text-xs font-bold text-white transition-colors hover:bg-indigo-700">
-                        <Check size={12} /> Autoriser
-                      </button>
+                      <div className="flex items-center justify-end gap-1.5">
+                        {peutAutoriser && (
+                          <button onClick={e => { e.stopPropagation(); ouvrir(m); }}
+                            className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-2.5 py-1.5 text-xs font-bold text-white transition-colors hover:bg-indigo-700">
+                            <Check size={12} /> Autoriser
+                          </button>
+                        )}
+                        {peutAnnuler(m) && (
+                          <button onClick={e => { e.stopPropagation(); annuler(m); }}
+                            disabled={annulant === m.id}
+                            title="Annuler cette dépense"
+                            className="flex items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs font-bold text-gray-500 transition-colors hover:border-red-300 hover:text-red-600 disabled:opacity-40 dark:border-gray-700">
+                            {annulant === m.id
+                              ? <Loader2 size={12} className="animate-spin" />
+                              : <><X size={12} /> Annuler</>}
+                          </button>
+                        )}
+                      </div>
                     </td>
                   )}
                 </tr>
@@ -233,31 +277,42 @@ export default function MouvementsEnAttente({
             pour une liste qu'on parcourt. */}
         <div className="mt-3 space-y-2 sm:hidden">
           {enAttente.map(m => (
-            <button key={m.id} type="button" onClick={() => setDetail(m)}
-              className="flex w-full items-center justify-between gap-3 rounded-xl bg-white p-3 text-left transition-colors active:bg-gray-50 dark:bg-gray-900 dark:active:bg-gray-800/50">
-              <span className="flex min-w-0 items-center gap-2">
-                {m.sens === 'entree'
-                  ? <ArrowDownLeft size={14} className="shrink-0 text-green-600" />
-                  : <ArrowUpRight size={14} className="shrink-0 text-red-500" />}
-                <span className="min-w-0">
-                  <span className="block truncate text-[13px] font-bold text-gray-900 dark:text-gray-100">
-                    {LIBELLES_MOTIF_CAISSE[m.motif]}
-                  </span>
-                  {/* Qui a déclaré, pour ne pas ouvrir chaque feuille à la
-                      recherche d'un nom. */}
-                  <span className="mt-0.5 block truncate text-[11px] text-gray-400">
-                    {m.utilisateurNom ?? '—'} · {formatDate(m.date)}
+            <div key={m.id}>
+              <button type="button" onClick={() => setDetail(m)}
+                className="flex w-full items-center justify-between gap-3 rounded-xl bg-white p-3 text-left transition-colors active:bg-gray-50 dark:bg-gray-900 dark:active:bg-gray-800/50">
+                <span className="flex min-w-0 items-center gap-2">
+                  {m.sens === 'entree'
+                    ? <ArrowDownLeft size={14} className="shrink-0 text-green-600" />
+                    : <ArrowUpRight size={14} className="shrink-0 text-red-500" />}
+                  <span className="min-w-0">
+                    <span className="block truncate text-[13px] font-bold text-gray-900 dark:text-gray-100">
+                      {LIBELLES_MOTIF_CAISSE[m.motif]}
+                    </span>
+                    {/* Qui a déclaré, pour ne pas ouvrir chaque feuille à la
+                        recherche d'un nom. */}
+                    <span className="mt-0.5 block truncate text-[11px] text-gray-400">
+                      {m.utilisateurNom ?? '—'} · {formatDate(m.date)}
+                    </span>
                   </span>
                 </span>
-              </span>
-              <span className="flex shrink-0 items-center gap-1.5">
-                <span className={`text-[15px] font-bold ${
-                  m.sens === 'entree' ? 'text-green-600' : 'text-red-500'}`}>
-                  {formatMontant(m.montant)}
+                <span className="flex shrink-0 items-center gap-1.5">
+                  <span className={`text-[15px] font-bold ${
+                    m.sens === 'entree' ? 'text-green-600' : 'text-red-500'}`}>
+                    {formatMontant(m.montant)}
+                  </span>
+                  <ChevronRight size={15} className="text-gray-300" />
                 </span>
-                <ChevronRight size={15} className="text-gray-300" />
-              </span>
-            </button>
+              </button>
+              {peutAnnuler(m) && (
+                <button type="button" onClick={() => annuler(m)}
+                  disabled={annulant === m.id}
+                  className="mt-1 flex w-full items-center justify-center gap-1 rounded-lg border border-gray-200 py-2 text-xs font-bold text-gray-500 transition-colors active:border-red-300 active:text-red-600 disabled:opacity-40 dark:border-gray-700">
+                  {annulant === m.id
+                    ? <Loader2 size={12} className="animate-spin" />
+                    : <><X size={12} /> Annuler cette dépense</>}
+                </button>
+              )}
+            </div>
           ))}
         </div>
       </div>

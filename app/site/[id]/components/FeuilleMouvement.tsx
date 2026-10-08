@@ -17,7 +17,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { formatMontant } from '@/lib/format';
-import { ArrowDownLeft, ArrowUpRight, Check } from 'lucide-react';
+import { ArrowDownLeft, ArrowUpRight, Check, X, Loader2 } from 'lucide-react';
 import { LIBELLES_MOTIF_CAISSE } from '@/lib/caisse';
 import type { MouvementAttente } from '@/lib/attente-caisse';
 
@@ -29,6 +29,10 @@ interface Props {
   peutConfirmer?: boolean;
   /** Ouvre la confirmation : compter, puis autoriser. */
   onConfirmer?: () => void;
+  /** L'auteur (ou l'admin) peut défaire sa propre dépense de boutique. */
+  peutAnnuler?: boolean;
+  onAnnuler?: () => void;
+  annulEnCours?: boolean;
   onFermer: () => void;
 }
 
@@ -39,7 +43,8 @@ function formatDate(s?: string | null): string {
 }
 
 export default function FeuilleMouvement({
-  mouvement: m, nomDuSite, peutConfirmer = false, onConfirmer, onFermer,
+  mouvement: m, nomDuSite, peutConfirmer = false, onConfirmer,
+  peutAnnuler = false, onAnnuler, annulEnCours = false, onFermer,
 }: Props) {
   const entree = m.sens === 'entree';
   /* De combien la feuille a été tirée vers le bas. Elle suit le doigt :
@@ -152,6 +157,14 @@ export default function FeuilleMouvement({
             <button onClick={onConfirmer}
               className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 py-3 text-sm font-bold text-white transition-colors hover:bg-indigo-700">
               <Check size={16} /> Confirmer
+            </button>
+          ) : peutAnnuler ? (
+            /* L'auteur défait sa propre dépense : rien n'a quitté le tiroir,
+               il reprend simplement sa déclaration. */
+            <button onClick={onAnnuler} disabled={annulEnCours}
+              className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl border border-red-200 py-3 text-sm font-bold text-red-600 transition-colors hover:bg-red-50 disabled:opacity-40 dark:border-red-800/40 dark:hover:bg-red-900/10">
+              {annulEnCours ? <Loader2 size={16} className="animate-spin" /> : <X size={16} />}
+              Annuler cette dépense
             </button>
           ) : (
             /* Sans le droit d'autoriser, dire pourquoi : un écran qui se

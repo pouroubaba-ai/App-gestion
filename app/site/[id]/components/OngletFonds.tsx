@@ -10,6 +10,7 @@ import FeuilleEcarts from './FeuilleEcarts';
 import ModalEcartCaisse from './ModalEcartCaisse';
 import {
   chargerAttente, totauxEnAttente, type MouvementAttente,
+  annulerSaDepense, peutAnnulerSaDepense,
 } from '@/lib/attente-caisse';
 import { Loader2, ArrowDownLeft, ArrowUpRight, ChevronRight, AlertCircle } from 'lucide-react';
 import FeuilleMouvement from './FeuilleMouvement';
@@ -618,6 +619,7 @@ export default function OngletFonds({ siteId, userId, sites, titre }: Props) {
            depuis une simple ligne dépliée. */
         <MouvementsEnAttente mouvements={[aConfirmer]}
           peutAutoriser={peutAutoriserCaisse(roleSite)}
+          estAdmin={roleSite === null}
           ouvertDabord={aConfirmer}
           parUid={userId} parNom={profil?.nom ?? null}
           onChange={() => { setAConfirmer(null); setVersion(v => v + 1); }}
@@ -714,10 +716,13 @@ export default function OngletFonds({ siteId, userId, sites, titre }: Props) {
             <ListeAttente lignes={attenteVue(sensAttente)}
               nomDuSite={ctx.ensemble ? ctx.nomDe : null}
               peutConfirmer={peutAutoriserCaisse(roleSite)}
-              onConfirmer={peutAutoriserCaisse(roleSite) ? setAConfirmer : undefined} />
+              onConfirmer={peutAutoriserCaisse(roleSite) ? setAConfirmer : undefined}
+              parUid={userId} estAdmin={roleSite === null}
+              onAnnule={() => setVersion(v => v + 1)} />
           ) : (
             <AttenteParAuteur mouvements={attenteVue(sensAttente)} sens={sensAttente}
               peutAutoriser={peutAutoriserCaisse(roleSite)}
+              estAdmin={roleSite === null}
               parUid={userId} parNom={profil?.nom ?? null}
               onChange={() => setVersion(v => v + 1)}
               onOuvrir={peutAutoriserCaisse(roleSite) ? setAConfirmer : undefined} />
@@ -761,17 +766,35 @@ export default function OngletFonds({ siteId, userId, sites, titre }: Props) {
  * du caissier, et lui seul y a les boutons. Le gérant et le propriétaire
  * viennent savoir ce qui pèse sur la caisse, pas le trancher.
  */
-function ListeAttente({ lignes, nomDuSite, peutConfirmer, onConfirmer }: {
+function ListeAttente({ lignes, nomDuSite, peutConfirmer, onConfirmer,
+  parUid, estAdmin, onAnnule }: {
   lignes: MouvementAttente[];
   /** Présent en vue d'ensemble : sans lui, on ne sait plus quelle caisse. */
   nomDuSite: ((id?: string | null) => string) | null;
   /** Seul le responsable de la caisse voit le bouton de la feuille. */
   peutConfirmer?: boolean;
   onConfirmer?: (m: MouvementAttente) => void;
+  /** Qui regarde, pour savoir s'il peut annuler sa propre dépense. */
+  parUid?: string;
+  estAdmin?: boolean;
+  /** Relire la file après une annulation. */
+  onAnnule?: () => void;
 }) {
   /* Le mouvement dont on regarde le détail. La carte n'en montre qu'assez
      pour le reconnaître ; le reste s'ouvre par-dessus. */
   const [ouvert, setOuvert] = useState<MouvementAttente | null>(null);
+  const [annulant, setAnnulant] = useState(false);
+
+  async function annulerDepense(m: MouvementAttente) {
+    if (annulant || !parUid) return;
+    setAnnulant(true);
+    try {
+      await annulerSaDepense({ mouvement: m, parUid, estAdmin });
+      setOuvert(null);
+      onAnnule?.();
+    } catch { /* l'écran reste ouvert, l'auteur réessaie */ }
+    finally { setAnnulant(false); }
+  }
 
   if (lignes.length === 0) {
     return (
@@ -865,12 +888,17 @@ function ListeAttente({ lignes, nomDuSite, peutConfirmer, onConfirmer }: {
         ))}
       </div>
 
-      {/* Le détail au complet, avec le bouton pour ceux qui l'autorisent. */}
+      {/* Le détail au complet, avec le bouton pour ceux qui l'autorisent,
+          ou pour l'auteur qui défait sa propre dépense de boutique. */}
       {ouvert && (
         <FeuilleMouvement mouvement={ouvert}
           nomDuSite={nomDuSite ? nomDuSite(ouvert.siteId) : null}
           peutConfirmer={peutConfirmer}
           onConfirmer={onConfirmer ? () => { onConfirmer(ouvert); setOuvert(null); } : undefined}
+          peutAnnuler={!peutConfirmer && parUid != null
+            && peutAnnulerSaDepense(ouvert, parUid, estAdmin === true)}
+          onAnnuler={() => annulerDepense(ouvert)}
+          annulEnCours={annulant}
           onFermer={() => setOuvert(null)} />
       )}
     </>

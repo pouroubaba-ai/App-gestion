@@ -484,3 +484,62 @@ export async function refuser(params: {
 
   signalerAttente();
 }
+
+/**
+ * Qui peut annuler un mouvement en attente qu'il a lui-même initié.
+ *
+ * Une dépense de boutique — loyer, transport, ration — se déclare avant
+ * d'être confirmée par la caisse. Celui qui l'a saisie peut se tromper :
+ * un retrait pris pour une dépense, un mauvais montant. Tant qu'elle
+ * attend, rien n'a quitté le tiroir, et la défaire ne touche à aucun
+ * solde. On lui laisse donc reprendre sa propre déclaration.
+ *
+ * Deux limites, et elles comptent :
+ *  - **Seul le motif boutique.** Un recouvrement, une vente, une
+ *    rémunération mettent en jeu un tiers ou une contrepartie ; les
+ *    défaire sans trace effacerait une somme qui engage quelqu'un. La
+ *    dépense de boutique n'engage qu'elle-même.
+ *  - **Seulement la sienne** — ou celle de l'admin, qui répond de tout.
+ *    Défaire la déclaration d'un autre reviendrait à refuser, et refuser
+ *    est le geste du caissier, motivé et tracé.
+ */
+export function peutAnnulerSaDepense(
+  mouvement: MouvementAttente,
+  parUid: string,
+  estAdmin: boolean,
+): boolean {
+  return mouvement.etat === 'en_attente'
+    && mouvement.motif === 'boutique'
+    && (mouvement.userId === parUid || estAdmin);
+}
+
+/**
+ * Annule une dépense de boutique en attente, à l'initiative de son auteur.
+ *
+ * Elle n'a jamais bougé la caisse : la défaire ne compense rien, elle
+ * retire simplement une déclaration qui n'aurait pas dû être faite. Le
+ * mouvement reste, marqué annulé, pour que la file en garde la trace.
+ */
+export async function annulerSaDepense(params: {
+  mouvement: MouvementAttente;
+  parUid: string;
+  parNom?: string | null;
+  estAdmin?: boolean;
+}): Promise<void> {
+  const m = params.mouvement;
+  /* La garde tient ici, pas qu'à l'écran : un bouton caché ne ferme pas
+     l'écriture. Motif boutique, en attente, et l'auteur ou l'admin. */
+  if (!peutAnnulerSaDepense(m, params.parUid, params.estAdmin === true)) {
+    throw new Error("Seule une dépense de boutique en attente, et par qui l'a initiée, peut être annulée ici.");
+  }
+
+  await updateDoc(doc(db, 'mouvements_attente', m.id), {
+    etat: 'refuse' as EtatAttente,
+    autorisePar: params.parUid,
+    autoriseParNom: params.parNom ?? null,
+    dateAutorisation: aujourdhui(),
+    constat: 'Annulée par son auteur avant confirmation.',
+  });
+
+  signalerAttente();
+}
