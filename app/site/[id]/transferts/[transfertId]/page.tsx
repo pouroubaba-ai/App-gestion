@@ -20,7 +20,7 @@ import {
 } from 'lucide-react';
 import {
   Transfert, EtatTransfert, LIBELLES_TRANSFERT,
-  ecartValeur, aUnEcart, lignesEnEcart, confirmerTransfert,
+  ecartValeur, aUnEcart, lignesEnEcart, produitsEnEcart, confirmerTransfert,
   peutExpedier, peutRecevoir, peutArbitrerEcart, peutAnnulerTransfert, Role,
   libelleTransfert, valeurEnvoyee,
 } from '@/lib/flux-marchandise';
@@ -98,6 +98,11 @@ export default function FicheTransfertPage() {
      Lever `enCours` (l'état de tout le dossier) grisait l'écran entier et
      le faisait clignoter à chaque quantité ajoutée. */
   const [ligneEnCours, setLigneEnCours] = useState<number | null>(null);
+  /* Le suivi du comptage : filtrer les lignes par leur état face à
+     l'attendu. Réservé à l'admin — pour les autres, voir l'état d'une ligne
+     reviendrait à voir l'attendu qu'on leur masque. */
+  const [filtreEcart, setFiltreEcart] =
+    useState<'tout' | 'conforme' | 'moins' | 'surplus' | 'attente'>('tout');
   const [noteArbitrage, setNoteArbitrage] = useState('');
   const [enCours, setEnCours] = useState(false);
   const [erreur, setErreur] = useState('');
@@ -237,6 +242,13 @@ export default function FicheTransfertPage() {
      c'est lui qui annonce et charge. */
   const cacheAttendu = estDest && !estAdmin && !estSource;
 
+  /* La colonne Écart se montre à qui connaît l'attendu (jamais au receveur
+     masqué), une fois que le comptage existe : figé en « à confirmer » et
+     « confirmé », vivant en traitement pour l'admin qui suit. */
+  const montreEcart = !cacheAttendu && (
+    transfert.etat === 'a_confirmer' || transfert.etat === 'confirme'
+    || (transfert.etat === 'traitement' && estAdmin));
+
   const montreStock = estSource
     && (transfert.etat === 'en_cours' || transfert.etat === 'preparation');
 
@@ -292,6 +304,49 @@ export default function FicheTransfertPage() {
   const etapeCourante: 'expedition' | 'reception' =
     (transfert?.etat === 'en_cours' || transfert?.etat === 'preparation')
       ? 'expedition' : 'reception';
+
+  /**
+   * L'état d'une ligne face à l'attendu, pour le suivi du comptage.
+   *
+   * « À compter » tant que rien n'est déclaré : une ligne vide ne manque
+   * pas, elle attend — les confondre ferait paraître tout le dossier
+   * incomplet dès son ouverture. Ensuite : conforme si le compte tombe
+   * juste, en moins ou en surplus sinon. On lit le compte vivant de
+   * l'étape courante, pas la quantité figée : le suivi sert pendant qu'on
+   * compte, pas une fois les comptes arrêtés.
+   */
+  function etatLigne(i: number): 'conforme' | 'moins' | 'surplus' | 'attente' {
+    const l = transfert!.lignes[i];
+    const attendu = etapeCourante === 'expedition'
+      ? l.quantiteDemandee
+      : (l.quantiteExpediee ?? l.quantiteDemandee);
+    const trouve = (etapeCourante === 'expedition' ? declareExp : declareRec)[i] ?? 0;
+    if (trouve === 0) return 'attente';
+    if (trouve === attendu) return 'conforme';
+    return trouve > attendu ? 'surplus' : 'moins';
+  }
+
+  const parEtatLigne = transfert.lignes.reduce((acc, _l, i) => {
+    acc[etatLigne(i)]++;
+    return acc;
+  }, { conforme: 0, moins: 0, surplus: 0, attente: 0 } as Record<string, number>);
+
+  /* Le suivi n'est ouvert qu'à l'admin : lui seul voit l'attendu, donc lui
+     seul peut lire un écart sans qu'on le lui souffle. Et seulement quand il
+     y a quelque chose à suivre — on ne filtre pas un dossier qu'on n'est pas
+     en train de compter. */
+  const suiviOuvert = estAdmin
+    && (etapeCourante === 'reception'
+      ? (transfert.etat === 'traitement' || transfert.etat === 'a_confirmer')
+      : transfert.etat === 'preparation');
+
+  /* Ce que le filtre laisse passer. L'index d'origine voyage avec la ligne :
+     tout l'écran s'y réfère — réceptions, champs, boutons. Le perdre en
+     filtrant ferait saisir sur la mauvaise ligne. */
+  const lignesFiltrees = transfert.lignes
+    .map((l, i) => ({ l, i }))
+    .filter(({ i }) => !suiviOuvert || filtreEcart === 'tout'
+      || etatLigne(i) === filtreEcart);
 
   /**
    * Compléter une ligne, ou toutes.
@@ -799,8 +854,14 @@ export default function FicheTransfertPage() {
         )}
 
         {/* L'écart se lit sur ce qui vient d'être compté : en traitement, les
-            lignes ne portent pas encore de quantité reçue. */}
-        {(transfert.etat === 'recu' || transfert.etat === 'traitement')
+            lignes ne portent pas encore de quantité reçue.
+         *
+            Ce bandeau nomme l'écart — manque, surplus, sur combien de lignes :
+            c'est un indicateur, et il dirait au receveur ce qu'il aurait dû
+            trouver. On le masque donc à qui compte à l'aveugle (gérant et
+            responsable de commande du site qui reçoit) ; l'admin le garde. */}
+        {!cacheAttendu
+          && (transfert.etat === 'recu' || transfert.etat === 'traitement')
           && aUnEcart(lignesComptees) && (
           <div className={`flex items-start gap-2 px-4 py-3 mb-4 rounded-2xl border ${ecart > 0
             ? 'bg-amber-50 dark:bg-amber-900/10 border-amber-200 dark:border-amber-800/30'
@@ -824,6 +885,33 @@ export default function FicheTransfertPage() {
             </p>
           </div>
         )}
+
+        {/* Le dossier confirmé garde la mémoire de son écart : combien de
+            produits ont manqué, combien ont dépassé. Un transfert clos sur
+            un écart ne doit pas se lire comme s'il était tombé juste —
+            l'admin le voit, le receveur masqué non. */}
+        {transfert.etat === 'confirme' && !cacheAttendu
+          && aUnEcart(transfert.lignes) && (() => {
+          const { manque, surplus } = produitsEnEcart(transfert.lignes);
+          return (
+            <div className="mb-4 flex items-start gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 dark:border-amber-800/30 dark:bg-amber-900/10">
+              <AlertTriangle size={15} className="mt-0.5 shrink-0 text-amber-500" />
+              <div className="text-xs text-amber-700 dark:text-amber-400">
+                <p className="mb-0.5 font-bold">
+                  Confirmé avec un écart
+                  {manque > 0 && <> · {manque} manque{manque > 1 ? 'nt' : ''}</>}
+                  {surplus > 0 && <> · {surplus} en surplus</>}
+                </p>
+                <p>
+                  Le stock a bougé sur ce qui a été compté : ce qui manquait
+                  est resté à {transfert.siteSourceNom}, ce qui dépassait y a
+                  été prélevé en plus. La colonne Écart le détaille, ligne par
+                  ligne.
+                </p>
+              </div>
+            </div>
+          );
+        })()}
 
         {transfert.etat === 'traitement' && !peutArreterIci && (
           <div className="flex items-start gap-2 px-4 py-3 mb-4 bg-gray-50 dark:bg-gray-800/50 rounded-2xl">
@@ -862,6 +950,48 @@ export default function FicheTransfertPage() {
               );
             })()}
           </div>
+
+          {/* Le suivi du comptage, à l'admin seul : filtrer les lignes selon
+              qu'elles concordent, manquent, dépassent, ou restent à compter.
+              Un compteur par état, et la catégorie vide ne se propose pas —
+              un filtre qui ne rendrait rien est un bouton à lire pour rien. */}
+          {suiviOuvert && (
+            <div className="mb-4 flex flex-wrap items-center gap-1">
+              {([
+                { k: 'tout' as const, label: 'Tout', n: transfert.lignes.length,
+                  couleur: 'bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900' },
+                { k: 'conforme' as const, label: 'Conforme', n: parEtatLigne.conforme,
+                  couleur: 'bg-green-600 text-white' },
+                { k: 'moins' as const, label: 'En moins', n: parEtatLigne.moins,
+                  couleur: 'bg-orange-500 text-white' },
+                { k: 'surplus' as const, label: 'En surplus', n: parEtatLigne.surplus,
+                  couleur: 'bg-blue-500 text-white' },
+                { k: 'attente' as const, label: 'À compter', n: parEtatLigne.attente,
+                  couleur: 'bg-gray-500 text-white' },
+              ])
+                .filter(o => o.k === 'tout' || o.n > 0)
+                .map(o => (
+                  <button key={o.k} type="button"
+                    onClick={() => setFiltreEcart(o.k)}
+                    className={`rounded-lg px-2 py-1 text-[11px] font-bold transition-colors ${
+                      filtreEcart === o.k
+                        ? o.couleur
+                        : 'bg-gray-100 text-gray-500 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-400'}`}>
+                    {o.label}
+                    <span className="ml-1 opacity-70">{o.n}</span>
+                  </button>
+                ))}
+            </div>
+          )}
+
+          {/* Le filtre ne rend rien : le dire, plutôt qu'un tableau vide qui
+              se lit comme une panne. */}
+          {suiviOuvert && lignesFiltrees.length === 0 && (
+            <p className="py-8 text-center text-sm text-gray-400">
+              Aucune ligne dans cet état.
+            </p>
+          )}
+
           {/* Sur téléphone, une carte par ligne.
 
               Le tableau pouvait porter huit colonnes : produit, unité,
@@ -869,7 +999,7 @@ export default function FicheTransfertPage() {
               le faire défiler pour charger ou compter, et un défilement
               horizontal cache ce qu'il déplace. */}
           <div className="space-y-2 sm:hidden">
-            {transfert.lignes.map((l, i) => {
+            {lignesFiltrees.map(({ l, i }) => {
               /* La couleur d'ecart revelerait l'attendu au receveur : en
                  moins, en surplus, c'est dire ce qu'il aurait du trouver.
                  Pour lui, pas d'ecart affiche — il voit son chiffre, nu. */
@@ -888,9 +1018,22 @@ export default function FicheTransfertPage() {
                 r => r.ligneIndex === i && !r.annulee
                   && (r.etape ?? 'reception') === etapeCourante).length;
               const dispo = montreStock ? stockDe(l) : 0;
+              /* Le fond suit l'état pendant qu'on compte, pour l'admin qui
+                 suit : vert conforme, bleu surplus, orange manque, neutre tant
+                 que rien n'est compté. Prend le pas sur la couleur figée. */
+              const teinte = suiviOuvert ? etatLigne(i) : null;
               return (
                 <div key={i}
-                  className={`rounded-xl border p-3 ${!diverge
+                  className={`rounded-xl border p-3 ${
+                    teinte === 'conforme'
+                    ? 'border-green-200 bg-green-50/50 dark:border-green-800/30 dark:bg-green-900/10'
+                    : teinte === 'surplus'
+                    ? 'border-blue-200 bg-blue-50/50 dark:border-blue-800/30 dark:bg-blue-900/10'
+                    : teinte === 'moins'
+                    ? 'border-orange-200 bg-orange-50/50 dark:border-orange-800/30 dark:bg-orange-900/10'
+                    : teinte === 'attente'
+                    ? 'border-gray-100 dark:border-gray-800'
+                    : !diverge
                     ? 'border-gray-100 dark:border-gray-800'
                     : surplus
                     ? 'border-blue-200 bg-blue-50/50 dark:border-blue-800/30 dark:bg-blue-900/10'
@@ -967,6 +1110,23 @@ export default function FicheTransfertPage() {
                         )}
                       </span>
                     )}
+                    {/* L'écart de la ligne : ce qui manque ou dépasse. */}
+                    {montreEcart && (() => {
+                      const attenduE = l.quantiteExpediee ?? l.quantiteDemandee;
+                      const recuE = transfert.etat === 'traitement'
+                        ? dejaRec : (l.quantiteRecue ?? 0);
+                      const e = recuE - attenduE;
+                      return (
+                        <span className="flex items-baseline gap-1.5">
+                          <span className="text-gray-400">Écart</span>
+                          <span className={`font-bold ${e === 0
+                            ? 'text-gray-400'
+                            : e > 0 ? 'text-blue-500' : 'text-orange-500'}`}>
+                            {e === 0 ? '—' : `${e > 0 ? '+' : ''}${e.toLocaleString('fr-FR')}`}
+                          </span>
+                        </span>
+                      );
+                    })()}
                   </div>
 
                   {(peutExpedierIci || peutRecevoirIci) && (
@@ -1046,6 +1206,13 @@ export default function FicheTransfertPage() {
                   {aExpedie && (
                     <th className="text-center px-3 py-2.5 font-medium">Reçu</th>
                   )}
+                  {/* L'écart, ligne à ligne : ce qui manque, ce qui dépasse.
+                      Il révèle l'attendu, donc caché au receveur, et ne vaut
+                      qu'une fois le comptage figé — avant, c'est la colonne
+                      Reçu qui vit. */}
+                  {montreEcart && (
+                    <th className="text-center px-3 py-2.5 font-medium">Écart</th>
+                  )}
                   {/* Le coût de l'unité, puis ce que la ligne déplace.
                       La valeur seule ne se laisse pas lire : à zéro, elle
                       ne dit pas si c'est la quantité ou le prix qui
@@ -1067,7 +1234,7 @@ export default function FicheTransfertPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50 dark:divide-gray-800">
-                {transfert.lignes.map((l, i) => {
+                {lignesFiltrees.map(({ l, i }) => {
                   /* Pas de couleur d'ecart pour le receveur : voir `diverge`
                      dans les cartes mobiles. */
                   const diverge = !cacheAttendu && l.quantiteRecue != null &&
@@ -1086,9 +1253,17 @@ export default function FicheTransfertPage() {
                   const nbDecl = receptions.filter(
                     r => r.ligneIndex === i && !r.annulee
                       && (r.etape ?? 'reception') === etapeCourante).length;
+                  /* Le fond suit l'état pendant le comptage, pour l'admin qui
+                     suit : il prend le pas sur la couleur figée. */
+                  const teinte = suiviOuvert ? etatLigne(i) : null;
                   return (
                     <Fragment key={i}>
-                    <tr className={!diverge ? '' : surplus
+                    <tr className={
+                      teinte === 'conforme' ? 'bg-green-50/50 dark:bg-green-900/10'
+                      : teinte === 'surplus' ? 'bg-blue-50/50 dark:bg-blue-900/10'
+                      : teinte === 'moins' ? 'bg-orange-50/50 dark:bg-orange-900/10'
+                      : teinte === 'attente' ? ''
+                      : !diverge ? '' : surplus
                       ? 'bg-blue-50/50 dark:bg-blue-900/10'
                       : 'bg-amber-50/50 dark:bg-amber-900/10'}>
                       <td className="px-3 py-2.5 text-gray-900 dark:text-gray-100 text-center">
@@ -1167,6 +1342,25 @@ export default function FicheTransfertPage() {
                         </span>
                       </td>
                       )}
+                      {/* L'écart : reçu − expédié. Positif, il dépasse (bleu) ;
+                          négatif, il manque (orange) ; nul, un tiret discret.
+                          Le reçu vient des déclarations tant qu'on compte,
+                          de la ligne figée une fois les comptes arrêtés. */}
+                      {montreEcart && (() => {
+                        const attenduE = l.quantiteExpediee ?? l.quantiteDemandee;
+                        const recuE = transfert.etat === 'traitement'
+                          ? dejaRec : (l.quantiteRecue ?? 0);
+                        const e = recuE - attenduE;
+                        return (
+                          <td className="px-3 py-2.5 text-center">
+                            <span className={`font-bold ${e === 0
+                              ? 'text-gray-300 dark:text-gray-600'
+                              : e > 0 ? 'text-blue-500' : 'text-orange-500'}`}>
+                              {e === 0 ? '—' : `${e > 0 ? '+' : ''}${e.toLocaleString('fr-FR')}`}
+                            </span>
+                          </td>
+                        );
+                      })()}
                       {/* La même quantité que celle qui fait foi au total :
                           l'expédié quand il est connu, le demandé tant que
                           rien n'est parti. Deux façons de compter la même
@@ -1246,6 +1440,7 @@ export default function FicheTransfertPage() {
                     {detailLigne === i && nbDecl > 0 && (
                       <tr>
                         <td colSpan={5 + (aExpedie ? 1 : 0) + (montreStock ? 1 : 0)
+                          + (montreEcart ? 1 : 0)
                           + (montreArgent ? 2 : 0)
                           + ((peutExpedierIci || peutRecevoirIci) ? 1 : 0)}
                           className="px-3 pb-2">

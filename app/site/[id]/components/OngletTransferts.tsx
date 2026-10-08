@@ -7,7 +7,7 @@ import { useRouter } from 'next/navigation';
 import { Loader2, Plus, AlertTriangle, SlidersHorizontal } from 'lucide-react';
 import {
   Transfert, EtatTransfert, LIBELLES_TRANSFERT, libelleTransfert, ETAPES_TRANSFERT,
-  aUnEcart, lignesEnEcart, valeurEnvoyee,
+  aUnEcart, lignesEnEcart, produitsEnEcart, valeurEnvoyee,
   chargerTransfertsDuSite, peutInitierTransfert, Role,
 } from '@/lib/flux-marchandise';
 import { ChampRecherche } from '@/components/Champs';
@@ -655,14 +655,22 @@ export default function OngletTransferts({ siteId, userId, sites, role, titre }:
                       || t.etat === 'a_confirmer' || t.etat === 'confirme';
                     /* L'écart se dit en lignes, pas en francs : ce qui manque
                        n'a jamais quitté la source, rien n'est perdu. C'est
-                       combien de produits divergent qui demande un geste. */
-                    const lignesEcart = lignesEnEcart(t.lignes).length;
+                       combien de produits divergent qui demande un geste —
+                       et dans quel sens : un manque et un surplus n'appellent
+                       pas la même suite. */
+                    const { manque, surplus } = produitsEnEcart(t.lignes);
+                    const lignesEcart = manque + surplus;
+                    const libelle = lignesEcart === 0 ? 'Conforme'
+                      : manque > 0 && surplus > 0
+                        ? `${manque} manque · ${surplus} surplus`
+                        : manque > 0
+                          ? `${manque} manque${manque > 1 ? 'nt' : ''}`
+                          : `${surplus} surplus`;
                     return (
                       <span className={`font-bold ${lignesEcart === 0
-                        ? 'text-gray-300 dark:text-gray-600' : 'text-orange-500'}`}>
-                        {!compte ? '—'
-                          : lignesEcart === 0 ? 'Conforme'
-                          : `${lignesEcart} ligne${lignesEcart > 1 ? 's' : ''}`}
+                        ? 'text-gray-300 dark:text-gray-600'
+                        : surplus > 0 && manque === 0 ? 'text-blue-500' : 'text-orange-500'}`}>
+                        {!compte ? '—' : libelle}
                       </span>
                     );
                   },
