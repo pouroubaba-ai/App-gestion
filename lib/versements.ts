@@ -35,8 +35,12 @@ export interface DocumentOuvert {
 }
 
 export interface CouvertureTiers {
-  /** ce que le tiers doit aujourd'hui */
+  /** ce que le tiers doit aujourd'hui, une fois retiré ce qui attend déjà */
   du: number;
+  /** le dû brut, avant de retrancher les versements en file d'attente */
+  duBrut: number;
+  /** ce qu'un versement a déjà promis d'éteindre, sans être encore au tiroir */
+  enAttente: number;
   /** ce que les échéances encore ouvertes promettent d'encaisser */
   planifie: number;
   /** la part du dû qu'aucune échéance ne couvre */
@@ -52,13 +56,22 @@ function aujourdhui() { return new Date().toISOString().split('T')[0]; }
  *
  * Une échéance passée en est exclue : elle n'attend plus l'argent, elle
  * atteste qu'à sa date il n'est pas venu.
+ *
+ * Le dû qu'on rend ici a déjà retiré ce qu'un versement a promis sans
+ * l'avoir encore fait entrer au tiroir. Un règlement de partenaire éteint
+ * sa dette ; tant que le caissier ne l'a pas confirmé, il vit en file
+ * d'attente, et la dette n'est pas encore écrite dessus. Sans cette
+ * déduction, chaque porte — Recouvrements, Partenaires, Occasionnels —
+ * voyait la même dette entière et laissait poser un second versement
+ * dessus : deux lignes en attente pour un seul dû, qui se confirmaient
+ * l'une après l'autre et payaient deux fois.
  */
 export async function couvertureTiers(
   siteId: string, partenaireId: string, role: RoleTiers, du: number,
 ): Promise<CouvertureTiers> {
   const jour = aujourdhui();
 
-  const [jSnap, dSnap] = await Promise.all([
+  const [jSnap, dSnap, aSnap] = await Promise.all([
     getDocs(query(
       collection(db, 'recouvrement_journal'),
       where('siteId', '==', siteId),
@@ -67,7 +80,23 @@ export async function couvertureTiers(
       collection(db, role === 'fournisseur' ? 'achats' : 'ventes'),
       where('siteId', '==', siteId),
       where(role === 'fournisseur' ? 'fournisseurId' : 'clientId', '==', partenaireId))),
+    /* Ce qui est déjà promis et attend le caissier. Un règlement de ce
+       tiers porte son identifiant, le sens de son rôle, et des lignes de
+       versement rattachées — c'est ce qui le distingue d'une vente au
+       comptant ou d'un apport qui n'éteignent aucune dette. */
+    getDocs(query(
+      collection(db, 'mouvements_attente'),
+      where('siteId', '==', siteId),
+      where('partenaireId', '==', partenaireId),
+      where('etat', '==', 'en_attente'))),
   ]);
+
+  const sensDu = role === 'fournisseur' ? 'sortie' : 'entree';
+  const enAttente = aSnap.docs
+    .map(d => d.data() as any)
+    .filter(m => m.sens === sensDu
+      && Array.isArray(m.versementsEnAttente) && m.versementsEnAttente.length > 0)
+    .reduce((s, m) => s + (m.montant ?? 0), 0);
 
   const echeances = jSnap.docs
     .map(d => ({ id: d.id, ...d.data() } as any))
@@ -95,8 +124,17 @@ export async function couvertureTiers(
     .filter(d => d.total - d.verse > 0)
     .sort((a, b) => (a.date ?? '').localeCompare(b.date ?? ''));
 
+  /* Le dû net : ce qui reste à devoir une fois retiré ce qui attend déjà au
+     tiroir. C'est lui que `verserAuTiers` plafonne — on ne peut plus poser
+     un second versement par-dessus un premier non encore confirmé. */
+  const duNet = Math.max(0, du - enAttente);
+
   const planifie = echeances.reduce((s, e) => s + e.reste, 0);
-  return { du, planifie, reste: Math.max(0, du - planifie), echeances, documents };
+  return {
+    du: duNet, duBrut: du, enAttente,
+    planifie, reste: Math.max(0, duNet - planifie),
+    echeances, documents,
+  };
 }
 
 /** Ce qu'un montant donné comblerait, avant de l'écrire. */

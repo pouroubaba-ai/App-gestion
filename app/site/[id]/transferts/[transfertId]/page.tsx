@@ -88,9 +88,16 @@ export default function FicheTransfertPage() {
       .then(r => setRole(r as Role | null))
       .catch(() => setRole('recouvrement'));
   }, [user, siteId, activite?.adminUid]);
-  /* La ligne dont on saisit une quantité partielle, et ce qu'on y écrit. */
+  /* La ligne dont on saisit une quantité partielle, et ce qu'on y écrit.
+     La saisie se fait dans la ligne, pas dans une fenêtre : un transfert
+     porte autant de produits qu'un conteneur, et ouvrir puis fermer un
+     modal à chacun triple les gestes. */
   const [ligneSaisie, setLigneSaisie] = useState<number | null>(null);
   const [qteSaisie, setQteSaisie] = useState(0);
+  /* La ligne en train de s'écrire : elle seule montre qu'elle travaille.
+     Lever `enCours` (l'état de tout le dossier) grisait l'écran entier et
+     le faisait clignoter à chaque quantité ajoutée. */
+  const [ligneEnCours, setLigneEnCours] = useState<number | null>(null);
   const [noteArbitrage, setNoteArbitrage] = useState('');
   const [enCours, setEnCours] = useState(false);
   const [erreur, setErreur] = useState('');
@@ -296,7 +303,7 @@ export default function FicheTransfertPage() {
     /* Une écriture en cours n'a pas encore rafraîchi l'affichage : le bouton
        montre toujours l'ancien reste. Sans cette garde, deux clics rapides
        déclarent deux fois la même chose. */
-    if (!transfert || enCours) return;
+    if (!transfert || enCours || ligneEnCours != null) return;
     const deja = recuParLigne(receptions, etapeCourante);
     const attendu = (l: any, i: number) => etapeCourante === 'expedition'
       ? l.quantiteDemandee
@@ -310,7 +317,13 @@ export default function FicheTransfertPage() {
     });
     if (aEcrire.length === 0) return;
 
-    setEnCours(true); setErreur('');
+    /* « Tout » sur une ligne ne doit pas plus faire clignoter l'écran que
+       la saisie d'une quantité : même geste, même discrétion. Un « tout
+       recevoir » global (ligneIndex null) touche en revanche tout le
+       dossier — là, l'attente visible de tous les boutons est juste. */
+    const global = ligneIndex == null;
+    if (global) setEnCours(true); else setLigneEnCours(ligneIndex!);
+    setErreur('');
     try {
       /* Le site qui déclare n'est pas le même des deux côtés : l'auteur se
          lit là où la personne travaille. */
@@ -318,9 +331,10 @@ export default function FicheTransfertPage() {
         ? transfert.siteSourceId : transfert.siteDestId;
       const auteur = await auteurCourant(siteDeclarant, user!.uid);
       const date = aujourdhui();
-      await Promise.all(aEcrire.map(({ i, quantite }) => {
+      const heure = new Date().toTimeString().slice(0, 5);
+      const ecrites = await Promise.all(aEcrire.map(async ({ i, quantite }) => {
         const l = transfert.lignes[i];
-        return enregistrerReception({
+        const saisie = {
           siteId: siteDeclarant,
           documentId: transfertId,
           ligneIndex: i,
@@ -333,65 +347,110 @@ export default function FicheTransfertPage() {
           utilisateurNom: auteur.utilisateurNom,
           utilisateurFonction: auteur.utilisateurFonction,
           note: null,
-        });
+        };
+        const id = await enregistrerReception(saisie);
+        return { ...saisie, id, annulee: false, heure } as Reception;
       }));
-      await charger();
-    } catch (e: any) { setErreur(e?.message ?? 'Échec.'); }
-    finally { setEnCours(false); }
+      /* On ajoute ce qu'on vient d'écrire au lieu de tout relire : un geste
+         sur une ligne ne doit pas rejouer tout le dossier. */
+      setReceptions(prev => [...ecrites, ...prev]);
+    } catch (e: any) {
+      setErreur(e?.message ?? 'Échec.');
+      setReceptions(await chargerReceptions(transfertId).catch(() => receptions));
+    }
+    finally { if (global) setEnCours(false); else setLigneEnCours(null); }
   }
 
   /* Une quantité partielle : ce qui arrive en deux fois se déclare en deux
-     fois, et chaque déclaration reste un fait daté. */
+     fois, et chaque déclaration reste un fait daté.
+   *
+   * Sans que l'écran tressaille. On ne lève pas `enCours` — l'état de tout
+   * le dossier — et on ne recharge pas le transfert entier avec ses
+   * dizaines de réceptions pour en apprendre une seule, déjà connue. Seule
+   * la ligne qui s'écrit montre qu'elle travaille, et la réception rejoint
+   * la liste telle qu'on vient de l'écrire. */
   async function declarer() {
-    if (ligneSaisie === null || qteSaisie <= 0 || !transfert || enCours) return;
+    if (ligneSaisie === null || qteSaisie <= 0 || !transfert
+      || ligneEnCours != null) return;
     const i = ligneSaisie;
+    const quantite = qteSaisie;
 
     /* On ne charge pas plus que le dossier ne demande : expédier au-delà,
        c'est modifier la commande sans le dire. Recevoir plus, en revanche,
        se constate — c'est un fait, pas une décision. */
     if (etapeCourante === 'expedition') {
       const reste = transfert.lignes[i].quantiteDemandee - (declareExp[i] ?? 0);
-      if (qteSaisie > reste) {
+      if (quantite > reste) {
         setErreur(`Au plus ${reste} à charger sur cette ligne.`);
         return;
       }
     }
 
-    setEnCours(true); setErreur('');
+    /* Le champ se referme tout de suite : on passe au produit suivant
+       pendant que celui-ci s'inscrit. */
+    setLigneSaisie(null); setQteSaisie(0);
+    setLigneEnCours(i); setErreur('');
     try {
       const siteDeclarant = etapeCourante === 'expedition'
         ? transfert.siteSourceId : transfert.siteDestId;
       const auteur = await auteurCourant(siteDeclarant, user!.uid);
       const l = transfert.lignes[i];
-      await enregistrerReception({
+      const saisie = {
         siteId: siteDeclarant,
         documentId: transfertId,
         ligneIndex: i,
         etape: etapeCourante,
         produitId: l.produitId ?? null,
         designation: l.designation,
-        quantite: qteSaisie,
+        quantite,
         date: aujourdhui(),
         utilisateur: user!.uid,
         utilisateurNom: auteur.utilisateurNom,
         utilisateurFonction: auteur.utilisateurFonction,
         note: null,
-      });
-      setLigneSaisie(null);
-      await charger();
-    } catch (e: any) { setErreur(e?.message ?? 'Échec.'); }
-    finally { setEnCours(false); }
+      };
+      const id = await enregistrerReception(saisie);
+      /* Ajoutée à la main plutôt que relue : on sait exactement ce qu'on
+         vient d'écrire. */
+      setReceptions(prev => [{
+        ...saisie, id, annulee: false,
+        heure: new Date().toTimeString().slice(0, 5),
+      } as Reception, ...prev]);
+    } catch (e: any) {
+      setErreur(e?.message ?? 'Échec.');
+      /* L'écriture a échoué : on relit les seules réceptions, pour que
+         l'écran dise la base et non ce qu'on espérait. */
+      setReceptions(await chargerReceptions(transfertId).catch(() => receptions));
+    }
+    finally { setLigneEnCours(null); }
   }
 
   /* Une déclaration fausse s'annule, elle ne se réécrit pas : elle reste
      lisible, barrée, et cesse de compter. */
   async function annulerDeclaration(id: string) {
-    setEnCours(true); setErreur('');
+    /* Annuler ne touche qu'une réception : on la barre sur place et on
+       relit les seules réceptions, sans redessiner tout le dossier. */
+    setErreur('');
     try {
       await annulerReception({ receptionId: id, par: user!.uid });
-      await charger();
-    } catch (e: any) { setErreur(e?.message ?? 'Échec.'); }
-    finally { setEnCours(false); }
+      setReceptions(prev => prev.map(r =>
+        r.id === id ? { ...r, annulee: true } : r));
+    } catch (e: any) {
+      setErreur(e?.message ?? 'Échec.');
+      setReceptions(await chargerReceptions(transfertId).catch(() => receptions));
+    }
+  }
+
+  /* Le plafond s'applique à la frappe, pas après.
+   *
+   * À l'expédition, on ne charge pas plus que le dossier ne demande :
+   * laisser taper un nombre qu'on refuserait ensuite oblige à l'effacer.
+   * À la réception, rien ne plafonne — recevoir plus se constate, c'est
+   * un fait et non une décision. */
+  function capQte(n: number, i: number): number {
+    if (etapeCourante !== 'expedition') return n;
+    const reste = transfert!.lignes[i].quantiteDemandee - (declareExp[i] ?? 0);
+    return Math.min(n, Math.max(0, reste));
   }
 
   async function expedier() {
@@ -778,8 +837,14 @@ export default function FicheTransfertPage() {
         <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800 shadow-sm p-5 mb-4">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <p className="text-sm font-bold text-gray-900 dark:text-gray-100">Marchandise</p>
-            {/* Tout d'un coup : le cas courant est celui où rien ne manque. */}
-            {(peutExpedierIci || peutRecevoirIci) && (() => {
+            {/* Tout d'un coup : le cas courant est celui où rien ne manque.
+             *
+                Mais « tout » suppose de connaître l'attendu. Le gérant et le
+                responsable de commande du site qui reçoit ne le voient pas :
+                leur montrer ce bouton reviendrait à le leur souffler, et le
+                comptage à l'aveugle n'aurait plus de sens. Eux saisissent ce
+                qu'ils trouvent, ligne par ligne. */}
+            {(peutExpedierIci || peutRecevoirIci) && !cacheAttendu && (() => {
               const deja = peutExpedierIci ? declareExp : declareRec;
               const total = transfert.lignes.reduce((n, l, i) => {
                 const attendu = peutExpedierIci
@@ -906,18 +971,44 @@ export default function FicheTransfertPage() {
 
                   {(peutExpedierIci || peutRecevoirIci) && (
                     <div className="mt-2.5 flex items-center gap-1.5">
-                      {reste > 0 && (
-                        <button onClick={() => completer(i)} disabled={enCours}
+                      {/* « Tout » sur la ligne affiche le reste attendu : caché
+                          à celui qui compte sans voir l'attendu. */}
+                      {reste > 0 && ligneSaisie !== i && !cacheAttendu && (
+                        <button onClick={() => completer(i)}
+                          disabled={enCours || ligneEnCours === i}
                           className="flex flex-1 items-center justify-center gap-1 rounded-lg bg-indigo-600 px-2.5 py-2 text-xs font-bold text-white transition-colors disabled:opacity-40">
-                          <CheckCheck size={12} /> {reste}
+                          {ligneEnCours === i
+                            ? <Loader2 size={12} className="animate-spin" />
+                            : <><CheckCheck size={12} /> {reste}</>}
                         </button>
                       )}
-                      <button onClick={() => { setLigneSaisie(i); setQteSaisie(0); }}
-                        title="Saisir une quantité"
-                        className={`flex shrink-0 items-center justify-center rounded-lg border border-gray-200 px-3 py-2 text-gray-400 transition-colors dark:border-gray-700 ${
-                          reste > 0 ? '' : 'flex-1'}`}>
-                        <Plus size={12} />
-                      </button>
+                      {/* La quantité se tape dans la ligne, pas dans une
+                          fenêtre : on valide et le produit suivant est déjà
+                          sous le pouce. */}
+                      {ligneSaisie === i ? (
+                        <div className="flex flex-1 gap-1.5">
+                          <ChampNombre valeur={qteSaisie} onChange={n => setQteSaisie(capQte(n, i))}
+                            className="w-full min-w-0 rounded-lg border border-indigo-300 bg-white px-2 py-2 text-center text-sm font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:border-indigo-700 dark:bg-gray-800" />
+                          <button onClick={declarer}
+                            disabled={ligneEnCours === i || qteSaisie <= 0}
+                            className="flex shrink-0 items-center gap-1 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-bold text-white transition-colors hover:bg-indigo-700 disabled:opacity-40">
+                            {ligneEnCours === i
+                              ? <Loader2 size={12} className="animate-spin" />
+                              : <Check size={12} />}
+                          </button>
+                          <button onClick={() => { setLigneSaisie(null); setQteSaisie(0); }}
+                            className="shrink-0 rounded-lg border border-gray-300 px-2.5 py-2 text-gray-400 dark:border-gray-600">
+                            <X size={12} />
+                          </button>
+                        </div>
+                      ) : (
+                        <button onClick={() => { setLigneSaisie(i); setQteSaisie(0); }}
+                          title="Saisir une quantité"
+                          className={`flex shrink-0 items-center justify-center rounded-lg border border-gray-200 px-3 py-2 text-gray-400 transition-colors dark:border-gray-700 ${
+                            !cacheAttendu && reste > 0 ? '' : 'flex-1'}`}>
+                          <Plus size={12} />
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>
@@ -1110,18 +1201,43 @@ export default function FicheTransfertPage() {
                         <td className="sticky right-0 border-l border-gray-100 bg-white px-3 py-2.5 dark:border-gray-800 dark:bg-gray-900">
                           <div className="flex items-center justify-end gap-1.5">
                             {/* Le nombre est sur le bouton : on sait ce qu'il
-                                écrira sans avoir à l'ouvrir. */}
-                            {reste > 0 && (
-                              <button onClick={() => completer(i)} disabled={enCours}
+                                écrira sans avoir à l'ouvrir. Donc caché à qui
+                                ne doit pas connaître l'attendu. */}
+                            {reste > 0 && ligneSaisie !== i && !cacheAttendu && (
+                              <button onClick={() => completer(i)}
+                                disabled={enCours || ligneEnCours === i}
                                 className="flex items-center gap-1 rounded-lg bg-indigo-600 px-2.5 py-1.5 text-xs font-bold text-white transition-colors hover:bg-indigo-700 disabled:opacity-40">
-                                <CheckCheck size={12} /> {reste}
+                                {ligneEnCours === i
+                                  ? <Loader2 size={12} className="animate-spin" />
+                                  : <><CheckCheck size={12} /> {reste}</>}
                               </button>
                             )}
-                            <button onClick={() => { setLigneSaisie(i); setQteSaisie(0); }}
-                              title="Saisir une quantité"
-                              className="rounded-lg border border-gray-200 p-1.5 text-gray-400 transition-colors hover:border-indigo-400 hover:text-indigo-600 dark:border-gray-700">
-                              <Plus size={12} />
-                            </button>
+                            {/* La quantité se tape dans la cellule même : pas
+                                de fenêtre à ouvrir et refermer à chaque ligne
+                                d'un transfert qui en porte des dizaines. */}
+                            {ligneSaisie === i ? (
+                              <>
+                                <ChampNombre valeur={qteSaisie} onChange={n => setQteSaisie(capQte(n, i))}
+                                  className="w-20 rounded-lg border border-indigo-300 bg-white px-2 py-1.5 text-center text-sm font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:border-indigo-700 dark:bg-gray-800" />
+                                <button onClick={declarer}
+                                  disabled={ligneEnCours === i || qteSaisie <= 0}
+                                  className="flex items-center gap-1 rounded-lg bg-indigo-600 px-2.5 py-1.5 text-xs font-bold text-white transition-colors hover:bg-indigo-700 disabled:opacity-40">
+                                  {ligneEnCours === i
+                                    ? <Loader2 size={12} className="animate-spin" />
+                                    : <Check size={12} />}
+                                </button>
+                                <button onClick={() => { setLigneSaisie(null); setQteSaisie(0); }}
+                                  className="rounded-lg border border-gray-300 p-1.5 text-gray-400 dark:border-gray-600">
+                                  <X size={12} />
+                                </button>
+                              </>
+                            ) : (
+                              <button onClick={() => { setLigneSaisie(i); setQteSaisie(0); }}
+                                title="Saisir une quantité"
+                                className="rounded-lg border border-gray-200 p-1.5 text-gray-400 transition-colors hover:border-indigo-400 hover:text-indigo-600 dark:border-gray-700">
+                                <Plus size={12} />
+                              </button>
+                            )}
                           </div>
                         </td>
                       )}
@@ -1247,81 +1363,6 @@ export default function FicheTransfertPage() {
 
         {erreur && <p className="text-xs text-red-500 mt-3">{erreur}</p>}
       </div>
-      {/* Saisir une quantité partielle : on ne reçoit pas toujours tout d'un
-          coup, et ce qui arrive en deux fois se déclare en deux fois. */}
-      {ligneSaisie !== null && transfert.lignes[ligneSaisie] && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-sm rounded-2xl bg-white p-6 dark:bg-gray-900">
-            <div className="mb-4 flex items-center justify-between">
-              <p className="text-sm font-bold text-gray-900 dark:text-gray-100">
-                {peutExpedierIci ? 'Charger' : 'Recevoir'}
-              </p>
-              <button onClick={() => setLigneSaisie(null)}
-                className="p-1 text-gray-400 hover:text-gray-600"><X size={16} /></button>
-            </div>
-
-            <p className="mb-3 text-sm font-medium text-gray-900 dark:text-gray-100">
-              {transfert.lignes[ligneSaisie].designation}
-              {transfert.lignes[ligneSaisie].varianteLibelle && (
-                <span className="ml-1.5 text-gray-400">
-                  {transfert.lignes[ligneSaisie].varianteLibelle}
-                </span>
-              )}
-            </p>
-
-            {/* Ce que la ligne attend, et ce qui a déjà été déclaré : sans eux,
-                on saisit à l'aveugle. */}
-            {(() => {
-              const l = transfert.lignes[ligneSaisie];
-              const attendu = peutExpedierIci
-                ? l.quantiteDemandee
-                : (l.quantiteExpediee ?? l.quantiteDemandee);
-              const deja = (peutExpedierIci ? declareExp : declareRec)[ligneSaisie] ?? 0;
-            
-              /* Au receveur, ni l'attendu ni le deja-declare : les deux
-                 ensemble lui diraient combien il « devrait » compter, et
-                 le controle n'aurait plus de sens. Il compte, c'est tout. */
-              if (cacheAttendu) return null;
-              return (
-                <div className="mb-3 flex justify-between rounded-xl bg-gray-50 px-3 py-2 text-xs dark:bg-gray-800">
-                  <span className="text-gray-400">
-                    Attendu <span className="font-bold text-gray-700 dark:text-gray-200">{attendu}</span>
-                  </span>
-                  <span className="text-gray-400">
-                    Déjà déclaré <span className="font-bold text-gray-700 dark:text-gray-200">{deja}</span>
-                  </span>
-                </div>
-              );
-            })()}
-
-            <label className="mb-1.5 block text-xs font-bold text-gray-500 dark:text-gray-400">
-              Quantité
-            </label>
-            {/* Le plafond s'applique à la frappe : laisser saisir un nombre
-                qu'on refusera ensuite oblige à effacer. */}
-            <ChampNombre valeur={qteSaisie} min={1}
-              onChange={n => setQteSaisie(etapeCourante === 'expedition'
-                ? Math.min(n, Math.max(0,
-                    transfert.lignes[ligneSaisie].quantiteDemandee
-                    - (declareExp[ligneSaisie] ?? 0)))
-                : n)}
-              className="mb-4 w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-center text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:border-gray-700 dark:bg-gray-800" />
-
-            <div className="flex gap-2">
-              <button onClick={() => setLigneSaisie(null)}
-                className="flex-1 rounded-xl py-2 text-sm font-bold text-gray-500 transition-colors hover:bg-gray-50 dark:hover:bg-gray-800">
-                Annuler
-              </button>
-              <button onClick={declarer} disabled={enCours || qteSaisie <= 0}
-                className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-indigo-600 py-2 text-sm font-bold text-white transition-colors hover:bg-indigo-700 disabled:opacity-40">
-                {enCours ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
-                Enregistrer
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
     </div>
   );
 }

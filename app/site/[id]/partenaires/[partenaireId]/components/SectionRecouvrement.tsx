@@ -492,7 +492,11 @@ export default function SectionRecouvrement({
     setSavingGlobal(true);
     try {
       const couv = await couvertureTiers(siteId, partenaireId, role, du);
-      await verserAuTiers({
+      /* `verserAuTiers` plafonne au dû net — ce qui reste après les
+         versements déjà en file. On reporte ce qu'il a réellement imputé,
+         pas ce qu'on a tenté, sinon le solde affiché divergerait de la
+         caisse quand une partie attendait déjà. */
+      const imputeReel = await verserAuTiers({
         siteId, userId: userId ?? '',
         partenaireId,
         role, montant: total, couverture: couv,
@@ -501,7 +505,7 @@ export default function SectionRecouvrement({
         ...(await auteurCourant(siteId, userId ?? '')),
       });
       await chargerJournal(role);
-      onSolde?.(role, total);
+      onSolde?.(role, imputeReel);
     } finally {
       setSavingGlobal(false);
       setVersementRole(null);

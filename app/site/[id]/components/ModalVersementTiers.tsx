@@ -323,21 +323,30 @@ export default function ModalVersementTiers({
 
               <p className="mb-1 text-xs font-bold uppercase text-gray-400">Montant</p>
                   {/* Dû, planifié, reste : un plafond seul ne dit pas d'où il
-                      vient ni s'il reste des échéances à honorer. */}
-                  <div className={`${hankenGrotesk.className} mb-3 grid grid-cols-3 gap-2`}>
+                      vient ni s'il reste des échéances à honorer. Et quand un
+                      versement attend déjà au tiroir, « En attente » explique
+                      pourquoi le dû a fondu — sans quoi il semblerait avoir
+                      baissé tout seul. */}
+                  <div className={`${hankenGrotesk.className} mb-3 grid gap-2 ${
+                    couverture.enAttente > 0 ? 'grid-cols-4' : 'grid-cols-3'}`}>
                     {([
-                      { label: 'Dû', valeur: couverture.du, fort: false },
-                      { label: 'Planifié', valeur: couverture.planifie, fort: false },
-                      { label: 'Reste', valeur: couverture.reste, fort: true },
+                      { label: 'Dû', valeur: couverture.du, fort: false, alerte: false },
+                      ...(couverture.enAttente > 0
+                        ? [{ label: 'En attente', valeur: couverture.enAttente, fort: false, alerte: true }]
+                        : []),
+                      { label: 'Planifié', valeur: couverture.planifie, fort: false, alerte: false },
+                      { label: 'Reste', valeur: couverture.reste, fort: true, alerte: false },
                     ]).map(i => (
                       <div key={i.label}
                         className="rounded-xl bg-gray-50 dark:bg-gray-800/60 px-2.5 py-2 text-center"
                         title={formatMontant(i.valeur)}>
                         <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">{i.label}</p>
                         <p className={`mt-0.5 text-sm font-bold leading-5 tracking-tight ${
-                          i.fort
-                            ? i.valeur > 0 ? 'text-indigo-600 dark:text-indigo-400' : 'text-gray-400'
-                            : 'text-gray-900 dark:text-gray-100'}`}>
+                          i.alerte
+                            ? 'text-amber-600 dark:text-amber-400'
+                            : i.fort
+                              ? i.valeur > 0 ? 'text-indigo-600 dark:text-indigo-400' : 'text-gray-400'
+                              : 'text-gray-900 dark:text-gray-100'}`}>
                           {abregeMontant(i.valeur)}
                         </p>
                       </div>
