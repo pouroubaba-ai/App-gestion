@@ -874,6 +874,11 @@ async function appliquerLigne(
     prixVente?: number | null;
     reference?: string | null;
     achatId?: string | null; venteId?: string | null;
+    /* Cette écriture sert-elle une vente d'ordre ? Seule celle-là écrit
+       chez un autre site et a besoin du marqueur `venteOuvrante`. Une
+       vente au comptoir écrit chez elle : pas de marqueur, pas de lecture
+       de règle gaspillée. */
+    venteDOrdre?: boolean;
     mouvementOrigineId?: string | null;
     /**
      * Cette entree ne sait pas ce qu'elle a coute.
@@ -905,10 +910,29 @@ async function appliquerLigne(
      ecriture chez le site d'en face etait donc refusee, sauf au
      proprietaire, qui passe par un autre chemin : en pratique un gerant
      ne pouvait pas livrer un ordre. */
+  /* Le marqueur n'existe que pour une écriture chez un AUTRE site.
+   *
+     Un transfert et la livraison d'un ordre écrivent la détention d'un
+     site où l'opérateur ne travaille pas : les règles ne l'autorisent
+     qu'en lisant le dossier qui relie les deux sites, d'où `transfertOuvrant`
+     / `venteOuvrante` posés sur la détention pour qu'elles le trouvent.
+   *
+     Une vente au comptoir, elle, écrit chez SON propre site. Elle n'a
+     besoin d'aucun marqueur — et en poser un était un piège : la règle,
+     voyant `venteOuvrante`, appelait `venteDOrdre(...)` qui lit la vente
+     pour vérifier que c'est un ordre. Ce n'en est pas un, mais la lecture
+     était faite, et combinée aux autres branches elle épuisait le plafond
+     de dix lectures d'une règle AVANT d'atteindre `travailleSurLUnDes`.
+     Firestore répondait alors « permission-denied », le lot de livraison
+     échouait en entier, et la vente restait « livrée » sans stock sorti —
+     une demi-vente que le gérant rejouait, doublant la dette.
+   *
+     On ne pose donc `venteOuvrante` que pour une vente d'ordre, la seule
+     qui écrive réellement chez un autre site. */
   const marque: Record<string, string> =
     params.motif === 'transfert' && params.documentId
       ? { transfertOuvrant: params.documentId }
-      : (params.motif === 'vente' && params.venteId
+      : (params.motif === 'vente' && params.venteId && params.venteDOrdre === true
         ? { venteOuvrante: params.venteId }
         : {});
 
@@ -1324,6 +1348,15 @@ export async function confirmerTransfert(params: {
 
   batch.update(doc(db, 'transferts', transfert.id), {
     etat: 'confirme',
+    /* Les lignes figées, reçu compris, se gravent sur le document.
+     *
+       Le stock bougeait bien — il se lit sur ces mêmes lignes en mémoire —
+       mais la mise à jour n'y réécrivait que l'état : le reçu comptté
+       restait dans l'appelant et n'atteignait jamais la base. La fiche
+       confirmée relisait alors un `quantiteRecue` nul, montrait « — » en
+       reçu et un écart faux. On les inscrit ici : ce qui a fait bouger le
+       stock est aussi ce que le dossier garde. */
+    lignes: transfert.lignes,
     dateConfirmation: date,
     parConfirmation: params.par,
     auteurConfirmation: {

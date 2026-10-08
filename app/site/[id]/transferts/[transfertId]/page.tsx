@@ -147,6 +147,27 @@ export default function FicheTransfertPage() {
   const declareExp = recuParLigne(receptions, 'expedition');
   const declareRec = recuParLigne(receptions, 'reception');
 
+  /* Les lignes réellement comptées à la réception : une déclaration active
+     existe. Une somme à zéro ne distingue pas « rien reçu » de « rien
+     compté » — la présence d'une déclaration, si. */
+  const lignesComptees_ = new Set(
+    receptions
+      .filter(r => !r.annulee && (r.etape ?? 'reception') === 'reception')
+      .map(r => r.ligneIndex));
+
+  /* Le reçu réel d'une ligne, pour l'affichage — jamais une invention.
+   *
+     D'abord le champ figé sur la ligne (les transferts confirmés après la
+     correction le portent). Sinon le comptage qui vit dans `receptions`,
+     déjà chargé à l'écran : la quantité que l'employé a réellement
+     constatée. Jamais comptée → null, affiché « — ». On ne retombe jamais
+     sur l'expédié : ce serait inventer un reçu. */
+  function recuReel(l: Transfert['lignes'][number], i: number): number | null {
+    if (l.quantiteRecue != null) return l.quantiteRecue;
+    if (lignesComptees_.has(i)) return declareRec[i] ?? 0;
+    return null;
+  }
+
   /* Clore fige les quantités sur celles qui ont été déclarées. Sans
      déclaration, on figerait zéro partout : un transfert de vingt cartons
      deviendrait vingt cartons perdus, et l'écart accuserait l'expéditeur
@@ -1134,7 +1155,7 @@ export default function FicheTransfertPage() {
                           : surplus ? 'text-blue-500' : 'text-orange-500'}`}>
                           {peutRecevoirIci
                             ? (dejaRec > 0 ? dejaRec.toLocaleString('fr-FR') : '—')
-                            : (l.quantiteRecue != null ? l.quantiteRecue.toLocaleString('fr-FR') : '—')}
+                            : (recuReel(l, i) != null ? recuReel(l, i)!.toLocaleString('fr-FR') : '—')}
                         </span>
                         {peutRecevoirIci && nbDecl > 0 && (
                           <button onClick={() => setDetailLigne(detailLigne === i ? null : i)}
@@ -1156,7 +1177,7 @@ export default function FicheTransfertPage() {
                     {montreEcart && (() => {
                       const attenduE = l.quantiteExpediee ?? l.quantiteDemandee;
                       const enTraitement = transfert.etat === 'traitement';
-                      const recuE = enTraitement ? dejaRec : l.quantiteRecue;
+                      const recuE = enTraitement ? dejaRec : recuReel(l, i);
                       const connu = enTraitement || recuE != null;
                       const e = (recuE ?? 0) - attenduE;
                       return (
@@ -1371,7 +1392,7 @@ export default function FicheTransfertPage() {
                           <span className={`font-medium ${!diverge ? 'text-gray-600 dark:text-gray-300' : surplus ? 'text-blue-500' : 'text-orange-500'}`}>
                             {peutRecevoirIci
                               ? (dejaRec > 0 ? dejaRec.toLocaleString('fr-FR') : '—')
-                              : (l.quantiteRecue != null ? l.quantiteRecue.toLocaleString('fr-FR') : '—')}
+                              : (recuReel(l, i) != null ? recuReel(l, i)!.toLocaleString('fr-FR') : '—')}
                           </span>
                           {peutRecevoirIci && nbDecl > 0 && (
                             <button onClick={() => setDetailLigne(detailLigne === i ? null : i)}
@@ -1396,7 +1417,7 @@ export default function FicheTransfertPage() {
                       {montreEcart && (() => {
                         const attenduE = l.quantiteExpediee ?? l.quantiteDemandee;
                         const enTraitement = transfert.etat === 'traitement';
-                        const recuE = enTraitement ? dejaRec : l.quantiteRecue;
+                        const recuE = enTraitement ? dejaRec : recuReel(l, i);
                         const connu = enTraitement || recuE != null;
                         const e = (recuE ?? 0) - attenduE;
                         return (
