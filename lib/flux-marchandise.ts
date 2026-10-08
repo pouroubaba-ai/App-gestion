@@ -1178,8 +1178,17 @@ export async function confirmerTransfert(params: {
   utilisateurNom?: string | null;
   utilisateurFonction?: string | null;
   noteArbitrage?: string | null;
+  /* Le role de qui clot. Un dossier « a confirmer » porte un ecart que le
+     receveur a trouve : seul le proprietaire l'arbitre, jamais celui qui
+     l'a declare. La garde est ici, pas qu'a l'ecran — un bouton cache ne
+     protege pas la base. */
+  roleSite?: Role | null;
 }): Promise<void> {
   const { transfert } = params;
+  if (transfert.etat === 'a_confirmer'
+    && params.roleSite !== undefined && !peutArbitrerEcart(params.roleSite)) {
+    throw new Error("Trancher un ecart revient au proprietaire.");
+  }
   /* Un dossier en traitement est un dossier reçu dont les comptes divergent :
      c'est justement celui-là que la confirmation vient clore. */
   /* Un ordre ne passe pas par là.

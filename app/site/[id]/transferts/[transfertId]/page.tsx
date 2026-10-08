@@ -217,6 +217,19 @@ export default function FicheTransfertPage() {
      on rassemble, puis on charge. Une fois le camion parti, ce stock a
      bougé pour d'autres raisons et ne dit plus rien de ce dossier.
      Il s'adresse à la source : le destinataire ne puise pas dedans. */
+  /* Ce que le receveur ne doit pas voir.
+   *
+     Celui qui recoit compte a l'aveugle : s'il voit ce qui etait demande
+     et expedie, il peut declarer ces chiffres au lieu de compter ce qui
+     est reellement arrive. Un ecart ne se verrait plus, et le controle
+     n'aurait plus d'objet.
+   *
+     Cela vise le site destinataire — gerant comme responsable des
+     commandes — et jamais le proprietaire, qui repond des deux bouts et
+     doit voir l'ecart pour l'arbitrer. L'expediteur voit tout aussi :
+     c'est lui qui annonce et charge. */
+  const cacheAttendu = estDest && !estAdmin && !estSource;
+
   const montreStock = estSource
     && (transfert.etat === 'en_cours' || transfert.etat === 'preparation');
 
@@ -242,8 +255,14 @@ export default function FicheTransfertPage() {
     && (!aUnEcart(lignesComptees) || peutArbitrerEcart(ROLE_COURANT));
 
   /* La confirmation applique le stock : elle ferme un dossier dont plus
-     personne ne discute les comptes. */
-  const peutConfirmerIci = transfert.etat === 'a_confirmer';
+     personne ne discute les comptes.
+   *
+     Un dossier arrive en « a confirmer » quand le receveur a trouve un
+     ecart : c'est l'arbitrage d'un tiers qui n'a pas compte. Seul le
+     proprietaire tranche — celui qui a declare l'ecart ne le valide pas
+     lui-meme, sinon le second regard n'existe pas. */
+  const peutConfirmerIci = transfert.etat === 'a_confirmer'
+    && peutArbitrerEcart(ROLE_COURANT);
 
   /* Rien n'est appliqué au stock avant la confirmation : jusque-là, un
      comptage erroné doit pouvoir être repris par celui qui l'a déclaré. */
@@ -475,6 +494,7 @@ export default function FicheTransfertPage() {
       await confirmerTransfert({
         transfert: transfert!, userId: user!.uid, par: user!.uid,
         noteArbitrage: transfert!.noteArbitrage ?? (noteArbitrage.trim() || null),
+        roleSite: ROLE_COURANT,
         ...(await auteurCourant(transfert!.siteSourceId, user!.uid, user!.displayName)),
       });
       await charger();
@@ -785,9 +805,12 @@ export default function FicheTransfertPage() {
               horizontal cache ce qu'il déplace. */}
           <div className="space-y-2 sm:hidden">
             {transfert.lignes.map((l, i) => {
-              const diverge = l.quantiteRecue != null &&
+              /* La couleur d'ecart revelerait l'attendu au receveur : en
+                 moins, en surplus, c'est dire ce qu'il aurait du trouver.
+                 Pour lui, pas d'ecart affiche — il voit son chiffre, nu. */
+              const diverge = !cacheAttendu && l.quantiteRecue != null &&
                 (l.quantiteExpediee ?? l.quantiteDemandee) !== l.quantiteRecue;
-              const surplus = l.quantiteRecue != null &&
+              const surplus = !cacheAttendu && l.quantiteRecue != null &&
                 l.quantiteRecue > (l.quantiteExpediee ?? l.quantiteDemandee);
               const dejaExp = declareExp[i] ?? 0;
               const dejaRec = declareRec[i] ?? 0;
@@ -820,12 +843,14 @@ export default function FicheTransfertPage() {
                   {/* Le trajet de la marchandise, dans l'ordre : ce qu'on a
                       demandé, ce qui est parti, ce qui est arrivé. */}
                   <div className="mt-2.5 flex flex-wrap items-baseline gap-x-4 gap-y-1 border-t border-black/[0.06] pt-2 text-[11px] dark:border-white/10">
+                    {!cacheAttendu && (
                     <span className="flex items-baseline gap-1.5">
                       <span className="text-gray-400">Demandé</span>
                       <span className="font-bold text-gray-900 dark:text-gray-100">
                         {l.quantiteDemandee.toLocaleString('fr-FR')}
                       </span>
                     </span>
+                    )}
                     {/* Un stock qui ne couvre pas la demande appelle une
                         décision : réduire l'envoi, ou attendre. */}
                     {montreStock && (
@@ -837,6 +862,7 @@ export default function FicheTransfertPage() {
                         </span>
                       </span>
                     )}
+                    {!cacheAttendu && (
                     <span className="flex items-baseline gap-1.5">
                       <span className="text-gray-400">Expédié</span>
                       <span className="font-bold text-gray-900 dark:text-gray-100">
@@ -854,6 +880,7 @@ export default function FicheTransfertPage() {
                         </button>
                       )}
                     </span>
+                    )}
                     {aExpedie && (
                       <span className="flex items-baseline gap-1.5">
                         <span className="text-gray-400">Reçu</span>
@@ -910,7 +937,9 @@ export default function FicheTransfertPage() {
                       qui sont le travail même. */}
                   <th className="hidden sm:table-cell text-center px-3 py-2.5 font-medium">Unité</th>
                   <th className="hidden sm:table-cell text-center px-3 py-2.5 font-medium">Emballage</th>
-                  <th className="text-center px-3 py-2.5 font-medium">Demandé</th>
+                  {!cacheAttendu && (
+                    <th className="text-center px-3 py-2.5 font-medium">Demandé</th>
+                  )}
                   {/* Ce dont la source dispose : on ne charge pas à
                       l'aveugle. La colonne ne vaut que tant qu'on rassemble
                       et qu'on charge — une fois parti, le stock a bougé et
@@ -918,7 +947,9 @@ export default function FicheTransfertPage() {
                   {montreStock && (
                     <th className="text-center px-3 py-2.5 font-medium">Stock</th>
                   )}
-                  <th className="text-center px-3 py-2.5 font-medium">Expédié</th>
+                  {!cacheAttendu && (
+                    <th className="text-center px-3 py-2.5 font-medium">Expédié</th>
+                  )}
                   {/* Rien ne peut être reçu avant d'être parti : la colonne
                       n'apparaît qu'une fois l'expédition faite. */}
                   {aExpedie && (
@@ -946,9 +977,11 @@ export default function FicheTransfertPage() {
               </thead>
               <tbody className="divide-y divide-gray-50 dark:divide-gray-800">
                 {transfert.lignes.map((l, i) => {
-                  const diverge = l.quantiteRecue != null &&
+                  /* Pas de couleur d'ecart pour le receveur : voir `diverge`
+                     dans les cartes mobiles. */
+                  const diverge = !cacheAttendu && l.quantiteRecue != null &&
                     (l.quantiteExpediee ?? l.quantiteDemandee) !== l.quantiteRecue;
-                  const surplus = l.quantiteRecue != null &&
+                  const surplus = !cacheAttendu && l.quantiteRecue != null &&
                     l.quantiteRecue > (l.quantiteExpediee ?? l.quantiteDemandee);
                   /* Ce qui a déjà été déclaré à cette étape, et ce qu'il
                      reste à déclarer pour atteindre l'attendu. */
@@ -983,7 +1016,9 @@ export default function FicheTransfertPage() {
                       <td className="hidden sm:table-cell px-3 py-2.5 text-center text-gray-500">
                         {l.emballage ?? l.unite ?? 'unité'}
                       </td>
-                      <td className="px-3 py-2.5 text-center text-gray-500">{l.quantiteDemandee.toLocaleString('fr-FR')}</td>
+                      {!cacheAttendu && (
+                        <td className="px-3 py-2.5 text-center text-gray-500">{l.quantiteDemandee.toLocaleString('fr-FR')}</td>
+                      )}
                       {/* Un stock qui ne couvre pas la demande se signale :
                           c'est le seul cas où ce nombre appelle une
                           décision — réduire l'envoi, ou attendre. */}
@@ -998,7 +1033,10 @@ export default function FicheTransfertPage() {
                         );
                       })()}
                       {/* Avant l'expédition, ce qui est chargé vit dans les
-                          déclarations ; après, il est figé sur la ligne. */}
+                          déclarations ; après, il est figé sur la ligne.
+                          Cache au receveur : c'est l'attendu qu'il ne doit
+                          pas connaitre. */}
+                      {!cacheAttendu && (
                       <td className="px-3 py-2.5 text-center">
                         <span className="inline-flex items-center gap-1.5">
                           <span className="text-gray-600 dark:text-gray-300">
@@ -1017,6 +1055,7 @@ export default function FicheTransfertPage() {
                           )}
                         </span>
                       </td>
+                      )}
                       {aExpedie && (
                       <td className="px-3 py-2.5 text-center">
                         <span className="inline-flex items-center gap-1.5">
@@ -1239,7 +1278,11 @@ export default function FicheTransfertPage() {
                 : (l.quantiteExpediee ?? l.quantiteDemandee);
               const deja = (peutExpedierIci ? declareExp : declareRec)[ligneSaisie] ?? 0;
             
-  return (
+              /* Au receveur, ni l'attendu ni le deja-declare : les deux
+                 ensemble lui diraient combien il « devrait » compter, et
+                 le controle n'aurait plus de sens. Il compte, c'est tout. */
+              if (cacheAttendu) return null;
+              return (
                 <div className="mb-3 flex justify-between rounded-xl bg-gray-50 px-3 py-2 text-xs dark:bg-gray-800">
                   <span className="text-gray-400">
                     Attendu <span className="font-bold text-gray-700 dark:text-gray-200">{attendu}</span>
