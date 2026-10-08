@@ -1652,22 +1652,10 @@ export async function livrerVente(params: {
 
   const batch = writeBatch(db);
 
-  /* TRACE TEMPORAIRE — diagnostic demi-vente comptoir. À retirer. */
-  const _trace = (etape: string, e?: any) => {
-    // eslint-disable-next-line no-console
-    console.error('[LIVRER_VENTE]', etape, vente.reference,
-      e ? `-> ${e?.code ?? ''} ${e?.message ?? e}` : '');
-  };
+  const registre = await precharger(vente.lignes.map(l => ({
+    siteId: vente.siteId, produitId: l.produitId,
+  })));
 
-  let registre;
-  try {
-    registre = await precharger(vente.lignes.map(l => ({
-      siteId: vente.siteId, produitId: l.produitId,
-    })));
-    _trace('precharger OK');
-  } catch (e) { _trace('precharger ECHEC', e); throw e; }
-
-  try {
   for (const l of vente.lignes) {
     const qte = l.quantiteRecue ?? l.quantiteDemandee;
     if (qte <= 0) continue;
@@ -1726,8 +1714,6 @@ export async function livrerVente(params: {
       venteId: vente.id,
     }, registre);
   }
-  _trace('appliquerLigne (toutes lignes) OK');
-  } catch (e) { _trace('appliquerLigne ECHEC', e); throw e; }
 
   /* La vente prend corps chez le client : une ligne par produit dans sa fiche.
      Sans elle, le stock sortirait sans que rien ne relie l'opération à celui
@@ -1769,10 +1755,7 @@ export async function livrerVente(params: {
     createdAt: serverTimestamp(),
   });
 
-  try {
-    await batch.commit();
-    _trace('batch.commit OK');
-  } catch (e) { _trace('batch.commit ECHEC', e); throw e; }
+  await batch.commit();
 
   /* Ce qu'on doit aux voisins qui ont dépanné.
    *
@@ -1787,16 +1770,13 @@ export async function livrerVente(params: {
      abouti, et celui-là ne se voit pas. */
   /* Import tardif : `vente-fournisseur` lit les types d'ici, et
      l'importer en tête formerait un cycle. */
-  try {
-    const { creerAchatsDeVente } = await import('@/lib/vente-fournisseur');
-    await creerAchatsDeVente({
-      vente, date, userId: params.userId,
-      auteur: params.utilisateurNom
-        ? { nom: params.utilisateurNom, fonction: params.utilisateurFonction ?? '' }
-        : null,
-    });
-    _trace('creerAchatsDeVente OK');
-  } catch (e) { _trace('creerAchatsDeVente ECHEC', e); throw e; }
+  const { creerAchatsDeVente } = await import('@/lib/vente-fournisseur');
+  await creerAchatsDeVente({
+    vente, date, userId: params.userId,
+    auteur: params.utilisateurNom
+      ? { nom: params.utilisateurNom, fonction: params.utilisateurFonction ?? '' }
+      : null,
+  });
 
   return { retourCaisse };
 }

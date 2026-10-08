@@ -950,44 +950,42 @@ service cloud.firestore {
            epuise avant d'atteindre la branche du transfert, et Firestore
            repondait « permissions » sans dire que c'etait un plafond.
            Les branches econnomes passent donc devant. */
-        && ((col == 'produits_site'
-            && transfertOuvre(
-              request.resource.data.get('transfertOuvrant', ''),
-              siteDuDoc()))
-          /* Le dossier de l'autre bout d'un ordre, AVANT les `travailleSur`.
-           *
-             Livrer un ordre fait passer la vente du site facturant de
-             « commande » a « pret » depuis l'autre bout : le responsable
-             des commandes de la source ecrit chez la destination. La
-             branche qui l'autorise — `ordreOuvreLeger`, econome — etait
-             placee APRES deux `travailleSurLUnDes` qui, pour prouver qu'il
-             ne travaille pas sur ce site, lisaient profil, activite,
-             proprietaire et membre, deux fois. Le plafond des dix lectures
-             sautait avant la bonne branche, et Firestore repondait
-             « permissions » sur une livraison parfaitement legitime. La
-             branche econome passe donc devant, exactement comme a la
-             lecture. */
-          || (col in ['ventes', 'achats'] && ordreOuvreLeger(resource))
-          /* Les deux bouts d'un transfert dans un seul appel. Enchaines,
-             ils refaisaient chacun le profil, l'activite et son
-             proprietaire avant d'arriver au membre : le plafond des dix
-             lectures sautait avant la seconde branche, et le gerant qui
-             recevait ne pouvait pas annuler son propre dossier. */
-          /* Ce que la livraison d'un ordre ecrit chez le destinataire :
-             les mouvements de sortie, le document, la detention qui
-             baisse. Econome, donc devant les `travailleSur` — meme raison
-             de plafond que la branche des ventes ci-dessus. */
-          || (col in ['mouvements', 'documents', 'lignes_vente']
-            && (venteDOrdre(venteLieeExistante())
-              || venteDOrdre(venteLieeEcrite())))
-          || (col == 'produits_site'
-            && venteDOrdre(request.resource.data.get('venteOuvrante', '')))
-          || travailleSurLUnDes(siteDuDoc(), siteDestDuDoc())
+        /* Travailler sur son propre site passe EN PREMIER.
+         *
+           C'est le cas de l'immense majorite des ecritures : un site met a
+           jour sa detention, sa vente, son document. `travailleSurLUnDes`
+           lit d'abord le membre — trois lectures, et c'est tranche.
+         *
+           Le mettre apres les branches `transfertOuvre` / `venteDOrdre`
+           etait un piege mortel : une detention garde en memoire le dernier
+           transfert et la derniere vente qui l'ont fait bouger
+           (`transfertOuvrant`, `venteOuvrante`), et ces champs ne sont
+           jamais effaces. La regle, les voyant non vides, allait LIRE le
+           transfert puis la vente pour verifier un ordre — alors que
+           l'ecriture en cours n'a rien d'un ordre. Ces lectures gaspillees
+           epuisaient le plafond de dix AVANT d'arriver ici, et Firestore
+           refusait une vente parfaitement legitime : « permission-denied »
+           au comptoir, sur un produit qui avait deja ete transfere et
+           vendu. On tranche donc le cas courant d'abord ; les branches
+           coûteuses ne servent plus qu'aux vraies ecritures cross-site. */
+        && (travailleSurLUnDes(siteDuDoc(), siteDestDuDoc())
           || travailleSurLUnDes(siteLieExistant(), siteLieTransfert())
           || (col == 'produits_site'
             && transfertOuvre(
               request.resource.data.get('transfertOuvrant', ''),
-              siteDuDoc())))
+              siteDuDoc()))
+          /* Le dossier de l'autre bout d'un ordre : le responsable des
+             commandes de la source ecrit chez la destination en livrant un
+             ordre. Econome, mais apres `travailleSurLUnDes` car elle lit le
+             dossier puis le transfert. */
+          || (col in ['ventes', 'achats'] && ordreOuvreLeger(resource))
+          /* Ce que la livraison d'un ordre ecrit chez le destinataire :
+             mouvements de sortie, document, detention qui baisse. */
+          || (col in ['mouvements', 'documents', 'lignes_vente']
+            && (venteDOrdre(venteLieeExistante())
+              || venteDOrdre(venteLieeEcrite())))
+          || (col == 'produits_site'
+            && venteDOrdre(request.resource.data.get('venteOuvrante', ''))))
         /**
          * Ce qui prouve ne s'efface pas.
          *
