@@ -851,21 +851,20 @@ service cloud.firestore {
            qui reçoit. Les deux dans le même appel — enchaînés, ils
            dépassaient les dix lectures qu'une règle peut faire, et le
            gérant qui recevait se voyait refuser son propre dossier. */
-        && (travailleSurLUnDes(siteDuDoc(), siteDestDuDoc())
-          /* Les dossiers de l'autre bout d'un ordre.
-           *
-           * L'écriture croisée était permise plus bas, mais pas la
-           * lecture — et elle la précède toujours : `ordreOuvre(resource)`
-           * lit le document avant de juger, et le code lit la vente du
-           * destinataire avant de la faire avancer. Autoriser d'écrire ce
-           * qu'on ne peut pas lire n'autorise rien : la règle d'écriture
-           * ne pouvait jamais être atteinte. C'est ce qui refusait
-           * « Marquer prêt » au responsable des commandes.
-           *
-           * Le lien ne suffit pas à lui seul : on remonte au transfert,
-           * qui porte les deux sites, et on exige d'en tenir un bout. */
-          || (col in ['ventes', 'achats', 'transferts', 'lignes_vente']
-            && ordreOuvreLeger(resource)));
+        /* L'autre bout d'un ordre AVANT les `travailleSur`.
+         *
+           Lire la vente du site facturant depuis la source — ce que fait
+           la livraison d'un ordre — passe par `ordreOuvreLeger`, econome.
+           Placee apres `travailleSurLUnDes`, qui lisait profil, activite,
+           proprietaire et membre pour prouver qu'on ne travaille pas sur
+           ce site, le plafond des dix lectures sautait avant la bonne
+           branche. Firestore refusait alors la LECTURE de la vente dest,
+           et la livraison echouait des son premier getDoc — sans message
+           utile. Meme correction que l'update : la branche econome
+           devant. */
+        && ((col in ['ventes', 'achats', 'transferts', 'lignes_vente']
+            && ordreOuvreLeger(resource))
+          || travailleSurLUnDes(siteDuDoc(), siteDestDuDoc()));
 
       /* La liste ne sait pas ce qu'elle rapportera : on la borne à la
          maison, le site se vérifie à chaque document lu et à chaque

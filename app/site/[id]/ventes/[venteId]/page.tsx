@@ -595,8 +595,6 @@ export default function FicheVentePage() {
           date: aujourdhui(),
           utilisateurNom: auteur.utilisateurNom,
           utilisateurFonction: auteur.utilisateurFonction,
-          /* Le transfert vient d'être clos par `confirmerTransfert` : le
-             repousser le ferait repasser par un état franchi. */
           transfertDejaClos: true,
         });
 
