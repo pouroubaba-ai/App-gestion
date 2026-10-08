@@ -714,8 +714,14 @@ export function produitsEnEcart(
   lignes: LigneFlux[] | null | undefined,
 ): { manque: number; surplus: number } {
   return (lignes ?? []).reduce((acc, l) => {
+    /* Une ligne sans quantité reçue n'a pas d'écart : rien n'a été compté
+       dessus. La lire « reçu zéro » inventerait un manque total — c'est ce
+       qui faisait passer un transfert conforme (dont le stock a bougé sans
+       que la ligne ait figé le reçu) pour un dossier entièrement manquant.
+       Même règle que `lignesEnEcart` : pas de compte, pas d'écart. */
+    if (l.quantiteRecue == null) return acc;
     const attendu = l.quantiteExpediee ?? l.quantiteDemandee;
-    const recu = l.quantiteRecue ?? 0;
+    const recu = l.quantiteRecue;
     if (recu === attendu) return acc;
     return recu < attendu
       ? { ...acc, manque: acc.manque + 1 }

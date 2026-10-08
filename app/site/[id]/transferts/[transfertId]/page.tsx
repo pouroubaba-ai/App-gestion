@@ -104,6 +104,10 @@ export default function FicheTransfertPage() {
   const [filtreEcart, setFiltreEcart] =
     useState<'tout' | 'conforme' | 'moins' | 'surplus' | 'attente'>('tout');
   const [noteArbitrage, setNoteArbitrage] = useState('');
+  /* Le modal d'arbitrage : quand l'admin arrête des comptes qui divergent,
+     on ne refuse pas en silence — on lui montre l'écart et on lui demande
+     s'il veut clore là-dessus. */
+  const [modalEcart, setModalEcart] = useState(false);
   const [enCours, setEnCours] = useState(false);
   const [erreur, setErreur] = useState('');
 
@@ -557,44 +561,77 @@ export default function FicheTransfertPage() {
     finally { setEnCours(false); }
   }
 
+  /* Les comptes figés sur ce qui a été déclaré pendant le traitement. */
+  function lignesArretees() {
+    const compte = recuParLigne(receptions, 'reception');
+    return transfert!.lignes.map(
+      (l, i) => ({ ...l, quantiteRecue: compte[i] ?? 0 }));
+  }
+
+  /**
+   * Le geste « Confirmer » depuis le traitement : il décide quoi faire.
+   *
+   *  - Tout concorde → on confirme, le stock entre.
+   *  - Un écart, et c'est l'admin qui arrête (il arbitre) → on ouvre le
+   *    modal : on lui montre ce qui manque ou dépasse, et on lui demande
+   *    s'il veut clore là-dessus. Ne pas refuser en silence parce qu'une
+   *    ligne n'a pas été reçue : un manque est un résultat valide.
+   *  - Un écart, et c'est le receveur qui arrête → le dossier part en
+   *    « à confirmer », explication obligatoire, et c'est un tiers qui
+   *    tranchera.
+   */
   async function arreterComptes() {
     if (!transfert || enCours) return;
-    /* Les comptes se figent ici, sur ce qui a été déclaré pendant le
-       traitement. Sans déclaration, on figerait zéro partout et la
-       marchandise passerait pour perdue. */
     if (!aDeclareRec) {
       setErreur("Comptez la marchandise avant d'arrêter les comptes.");
       return;
     }
-    const compte = recuParLigne(receptions, 'reception');
-    const lignes = transfert.lignes.map(
-      (l, i) => ({ ...l, quantiteRecue: compte[i] ?? 0 }));
-
-    /* Un écart n'est pas une erreur de saisie qu'on corrige : c'est un
-       désaccord entre deux sites, et il s'explique avant d'être arrêté. */
+    const lignes = lignesArretees();
     const ecarte = aUnEcart(lignes);
-    if (ecarte && !noteArbitrage.trim()) {
-      setErreur("Un écart doit être expliqué avant d'être arrêté.");
+
+    if (!ecarte) {
+      await appliquerArret(lignes, null);
       return;
     }
 
+    /* L'admin arbitre : on lui demande de confirmer l'écart dans un modal,
+       plutôt que de le renvoyer à un tiers. Les autres n'arbitrent pas —
+       ils expliquent, et le dossier attend le second regard. */
+    if (peutArbitrerEcart(ROLE_COURANT)) {
+      setErreur('');
+      setModalEcart(true);
+      return;
+    }
+
+    if (!noteArbitrage.trim()) {
+      setErreur("Un écart doit être expliqué avant d'être arrêté.");
+      return;
+    }
     setEnCours(true); setErreur('');
     try {
-      /* Les comptes concordent : le dossier est confirmé et le stock entre.
-         Ils divergent : il attend la confirmation d'un tiers. */
-      if (!ecarte) {
-        await confirmerTransfert({
-          transfert: { ...transfert, lignes },
-          userId: user!.uid, par: user!.uid,
-          noteArbitrage: null,
-          ...(await auteurCourant(transfert.siteDestId, user!.uid, user!.displayName)),
-        });
-      } else {
-        await updateDoc(doc(db, 'transferts', transfertId), {
-          etat: 'a_confirmer', lignes,
-          noteArbitrage: noteArbitrage.trim() || null,
-        });
-      }
+      await updateDoc(doc(db, 'transferts', transfertId), {
+        etat: 'a_confirmer', lignes,
+        noteArbitrage: noteArbitrage.trim() || null,
+      });
+      await charger();
+    } catch (e: any) { setErreur(e?.message ?? 'Échec.'); }
+    finally { setEnCours(false); }
+  }
+
+  /* Clore le dossier et faire entrer le stock, écart arbitré ou comptes
+     justes. Appelé directement quand tout concorde, et depuis le modal
+     quand l'admin a confirmé l'écart. */
+  async function appliquerArret(lignes: Transfert['lignes'], note: string | null) {
+    setEnCours(true); setErreur('');
+    try {
+      await confirmerTransfert({
+        transfert: { ...transfert!, lignes },
+        userId: user!.uid, par: user!.uid,
+        roleSite: ROLE_COURANT,
+        noteArbitrage: note,
+        ...(await auteurCourant(transfert!.siteDestId, user!.uid, user!.displayName)),
+      });
+      setModalEcart(false);
       await charger();
     } catch (e: any) { setErreur(e?.message ?? 'Échec.'); }
     finally { setEnCours(false); }
@@ -1110,19 +1147,25 @@ export default function FicheTransfertPage() {
                         )}
                       </span>
                     )}
-                    {/* L'écart de la ligne : ce qui manque ou dépasse. */}
+                    {/* L'écart de la ligne : ce qui manque ou dépasse.
+                        Hors traitement, il se lit sur la quantité reçue figée.
+                        Si elle n'a jamais été inscrite (un dossier confirmé
+                        sans qu'on ait figé la ligne — le stock a pourtant
+                        bougé), il n'y a pas d'écart connu : un tiret, jamais
+                        « reçu zéro » qui peindrait un manque total imaginaire. */}
                     {montreEcart && (() => {
                       const attenduE = l.quantiteExpediee ?? l.quantiteDemandee;
-                      const recuE = transfert.etat === 'traitement'
-                        ? dejaRec : (l.quantiteRecue ?? 0);
-                      const e = recuE - attenduE;
+                      const enTraitement = transfert.etat === 'traitement';
+                      const recuE = enTraitement ? dejaRec : l.quantiteRecue;
+                      const connu = enTraitement || recuE != null;
+                      const e = (recuE ?? 0) - attenduE;
                       return (
                         <span className="flex items-baseline gap-1.5">
                           <span className="text-gray-400">Écart</span>
-                          <span className={`font-bold ${e === 0
+                          <span className={`font-bold ${!connu || e === 0
                             ? 'text-gray-400'
                             : e > 0 ? 'text-blue-500' : 'text-orange-500'}`}>
-                            {e === 0 ? '—' : `${e > 0 ? '+' : ''}${e.toLocaleString('fr-FR')}`}
+                            {!connu || e === 0 ? '—' : `${e > 0 ? '+' : ''}${e.toLocaleString('fr-FR')}`}
                           </span>
                         </span>
                       );
@@ -1344,19 +1387,24 @@ export default function FicheTransfertPage() {
                       )}
                       {/* L'écart : reçu − expédié. Positif, il dépasse (bleu) ;
                           négatif, il manque (orange) ; nul, un tiret discret.
-                          Le reçu vient des déclarations tant qu'on compte,
-                          de la ligne figée une fois les comptes arrêtés. */}
+                          Le reçu vient des déclarations tant qu'on compte, de
+                          la ligne figée une fois les comptes arrêtés. Jamais
+                          figée (dossier confirmé sans que la ligne ait porté
+                          le reçu, alors que le stock a bien bougé) : écart
+                          inconnu, un tiret — pas « reçu zéro » qui inventerait
+                          un manque total. */}
                       {montreEcart && (() => {
                         const attenduE = l.quantiteExpediee ?? l.quantiteDemandee;
-                        const recuE = transfert.etat === 'traitement'
-                          ? dejaRec : (l.quantiteRecue ?? 0);
-                        const e = recuE - attenduE;
+                        const enTraitement = transfert.etat === 'traitement';
+                        const recuE = enTraitement ? dejaRec : l.quantiteRecue;
+                        const connu = enTraitement || recuE != null;
+                        const e = (recuE ?? 0) - attenduE;
                         return (
                           <td className="px-3 py-2.5 text-center">
-                            <span className={`font-bold ${e === 0
+                            <span className={`font-bold ${!connu || e === 0
                               ? 'text-gray-300 dark:text-gray-600'
                               : e > 0 ? 'text-blue-500' : 'text-orange-500'}`}>
-                              {e === 0 ? '—' : `${e > 0 ? '+' : ''}${e.toLocaleString('fr-FR')}`}
+                              {!connu || e === 0 ? '—' : `${e > 0 ? '+' : ''}${e.toLocaleString('fr-FR')}`}
                             </span>
                           </td>
                         );
@@ -1532,7 +1580,12 @@ export default function FicheTransfertPage() {
           </div>
         </div>
 
-        {peutArreterIci && aUnEcart(lignesComptees) && (
+        {/* L'explication obligatoire, ligne par ligne, n'est demandée qu'au
+            receveur qui ne tranche pas : le dossier partira en « à confirmer »
+            et un tiers le lira. L'admin, lui, arbitre dans le modal — l'y
+            demander ici le ferait saisir deux fois. */}
+        {peutArreterIci && aUnEcart(lignesComptees)
+          && !peutArbitrerEcart(ROLE_COURANT) && (
           <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800 shadow-sm p-5 mb-4">
             <label className="text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5 block">
               Explication de l'écart <span className="text-red-500">*</span>
@@ -1558,6 +1611,66 @@ export default function FicheTransfertPage() {
 
         {erreur && <p className="text-xs text-red-500 mt-3">{erreur}</p>}
       </div>
+
+      {/* Arbitrer un écart : l'admin confirme en connaissance de cause.
+       *
+          Le bouton ne refuse pas un dossier parce qu'une ligne n'a pas été
+          reçue — c'est un résultat, pas une erreur. Il ouvre ce modal, dit
+          ce qui manque et ce qui dépasse, et demande de continuer. Une
+          explication reste possible, jamais obligatoire pour l'admin : il
+          est le tiers qui tranche, pas celui qui doit se justifier. */}
+      {modalEcart && (() => {
+        const lignes = lignesArretees();
+        const { manque, surplus } = produitsEnEcart(lignes);
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+            <div className="w-full max-w-md rounded-2xl bg-white p-6 dark:bg-gray-900">
+              <div className="mb-3 flex items-start gap-2">
+                <AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-500" />
+                <div>
+                  <p className="text-sm font-bold text-gray-900 dark:text-gray-100">
+                    Confirmer avec un écart ?
+                  </p>
+                  <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                    {manque > 0 && <>{manque} produit{manque > 1 ? 's' : ''} en moins</>}
+                    {manque > 0 && surplus > 0 && <> · </>}
+                    {surplus > 0 && <>{surplus} produit{surplus > 1 ? 's' : ''} en surplus</>}
+                  </p>
+                </div>
+              </div>
+
+              <p className="mb-4 rounded-xl bg-amber-50 px-3 py-2.5 text-xs leading-snug text-amber-700 dark:bg-amber-900/10 dark:text-amber-400">
+                Le stock bougera sur ce qui a été compté. Ce qui manque reste
+                à {transfert.siteSourceNom} — rien n'est perdu ; ce qui dépasse
+                y sera prélevé en plus. Une fois confirmé, les comptes sont
+                clos.
+              </p>
+
+              <label className="mb-1.5 block text-xs font-bold text-gray-500 dark:text-gray-400">
+                Explication <span className="font-normal text-gray-400">(facultatif)</span>
+              </label>
+              <input type="text" value={noteArbitrage}
+                onChange={e => setNoteArbitrage(e.target.value)}
+                placeholder="Ce qui s'est passé"
+                className="mb-4 w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100" />
+
+              <div className="flex gap-2">
+                <button onClick={() => setModalEcart(false)} disabled={enCours}
+                  className="flex-1 rounded-xl py-2 text-sm font-bold text-gray-500 transition-colors hover:bg-gray-50 disabled:opacity-40 dark:hover:bg-gray-800">
+                  Annuler
+                </button>
+                <button
+                  onClick={() => appliquerArret(lignes, noteArbitrage.trim() || null)}
+                  disabled={enCours}
+                  className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-green-600 py-2 text-sm font-bold text-white transition-colors hover:bg-green-700 disabled:opacity-40">
+                  {enCours ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+                  Confirmer
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
