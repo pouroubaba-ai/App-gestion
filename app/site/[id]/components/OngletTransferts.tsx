@@ -376,14 +376,22 @@ export default function OngletTransferts({ siteId, userId, sites, role, titre }:
                   actif ? 'bg-white/15' : 'bg-neutral-100 dark:bg-neutral-800'}`}>
                   {c.emoji}
                 </span>
-                {montreArgent && (
-                  <span className={`shrink-0 whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                    actif
-                      ? 'bg-white/15 text-white'
-                      : 'bg-neutral-100 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400'}`}>
-                    {liste.length} dossier{liste.length > 1 ? 's' : ''}
-                  </span>
-                )}
+                {montreArgent && (() => {
+                  /* Plus d'un dossier en cours : la pastille vire au rouge
+                     pour accrocher l'œil dès l'ouverture de la page — c'est
+                     une file qui s'allonge, pas un simple compteur. */
+                  const alerte = c.cle === 'encours' && liste.length > 0;
+                  return (
+                    <span className={`shrink-0 whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                      alerte
+                        ? 'bg-red-500 text-white shadow-sm'
+                        : actif
+                          ? 'bg-white/15 text-white'
+                          : 'bg-neutral-100 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400'}`}>
+                      {liste.length}
+                    </span>
+                  );
+                })()}
               </div>
               <p className={`mt-3 text-[11px] font-bold uppercase tracking-wide ${
                 actif ? 'text-indigo-100' : 'text-neutral-400'}`}>

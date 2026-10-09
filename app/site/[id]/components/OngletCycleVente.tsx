@@ -504,6 +504,11 @@ export default function OngletCycleVente({ siteId, userId, role, sites, titre }:
           /* La carte « en cours » est active tant qu'on n'est pas sur le
              livré : elle couvre tous les autres statuts. */
           const actif = c.cle === 'livre' ? vue === 'livre' : vue !== 'livre';
+          /* Ce que les dossiers pesent, ce qui est deja encaisse, ce qui
+             reste a percevoir — comme aux achats et aux importations. */
+          const valeurCarte = liste.reduce((t, v) => t + valeurVente(v.lignes), 0);
+          const verseCarte = liste.reduce((t, v) => t + (v.avanceVersee ?? 0), 0);
+          const resteCarte = Math.max(0, valeurCarte - verseCarte);
           return (
             <button key={c.cle}
               onClick={() => {
@@ -521,31 +526,65 @@ export default function OngletCycleVente({ siteId, userId, role, sites, titre }:
               {/* L'embleme et le nom sur une ligne : empiles, ils
                   poussaient le chiffre hors de la premiere vue pour ne rien
                   dire de plus. */}
-              <span className="flex items-center gap-2">
-                <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-[9px] text-[15px] ${
+              {/* L'embleme seul a gauche, le compte des dossiers a droite —
+                  la meme en-tete qu'aux importations. Le nom passe dessous. */}
+              <span className="flex items-start justify-between gap-2">
+                <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] text-lg ${
                   actif ? 'bg-white/15' : 'bg-neutral-100 dark:bg-neutral-800'}`}>
                   {c.emoji}
                 </span>
-                <span className={`min-w-0 flex-1 truncate text-[11px] font-bold uppercase tracking-wide ${
-                  actif ? 'text-indigo-100' : 'text-neutral-400'}`}>
-                  {c.label}
-                </span>
+                {montreArgent && (() => {
+                  /* Plus d'un dossier en cours : la pastille vire au rouge
+                     pour accrocher l'œil des l'ouverture de la page. */
+                  const alerte = c.cle === 'encours' && liste.length > 0;
+                  return (
+                    <span className={`shrink-0 rounded-lg px-2 py-1 text-xs font-bold ${
+                      alerte
+                        ? 'bg-red-500 text-white shadow-sm'
+                        : actif
+                          ? 'bg-white/15 text-indigo-100'
+                          : 'bg-neutral-100 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400'}`}>
+                      {liste.length}
+                    </span>
+                  );
+                })()}
               </span>
-              {/* Le compte, et lui seul : « 1 dossier » sous un « 1 » ne
-                  faisait que le redire. */}
-              <span className={`${hankenGrotesk.className} mt-1.5 block text-[19px] font-bold leading-7 tracking-tight sm:text-[26px] sm:leading-8 ${
+              <span className={`mt-3 block text-[11px] font-bold uppercase tracking-wide ${
+                actif ? 'text-indigo-100' : 'text-neutral-400'}`}>
+                {c.label}
+              </span>
+              <span className={`${hankenGrotesk.className} mt-0.5 block text-[19px] font-bold leading-7 tracking-tight sm:text-[26px] sm:leading-8 ${
                 actif ? 'text-white' : 'text-neutral-900 dark:text-white'}`}>
-                {montreArgent
-                  ? formatMontant(liste.reduce((t, v) => t + valeurVente(v.lignes), 0))
-                  : liste.length}
+                {montreArgent ? formatMontant(valeurCarte) : liste.length}
               </span>
               {/* Sans les montants, le grand chiffre compte deja les
                   dossiers : la mention n'a de sens que s'il compte des
                   francs. */}
+              {!montreArgent && (
+                <span className={`mt-0.5 block text-[11px] font-medium ${
+                  actif ? 'text-indigo-100' : 'text-neutral-400'}`}>
+                  dossier{liste.length > 1 ? 's' : ''}
+                </span>
+              )}
+              {/* Versé d'un côté, dû de l'autre : le même pied qu'aux achats
+                  et aux importations. */}
               {montreArgent && (
-                <span className={`mt-0.5 block text-[11px] ${
-                  actif ? 'text-indigo-100/80' : 'text-neutral-400'}`}>
-                  {liste.length} dossier{liste.length > 1 ? 's' : ''}
+                <span className={`mt-2.5 flex justify-between gap-2 border-t pt-2 text-xs ${
+                  actif ? 'border-white/15' : 'border-black/[0.06] dark:border-white/10'}`}>
+                  <span className="flex items-baseline gap-1.5">
+                    <span className={actif ? 'text-indigo-100' : 'text-neutral-400'}>Versé</span>
+                    <span className={`font-bold ${actif ? 'text-white' : 'text-neutral-900 dark:text-white'}`}>
+                      {formatMontant(verseCarte)}
+                    </span>
+                  </span>
+                  <span className="flex items-baseline gap-1.5">
+                    <span className={actif ? 'text-indigo-100' : 'text-neutral-400'}>Reste</span>
+                    <span className={`font-bold ${resteCarte > 0
+                      ? (actif ? 'text-amber-200' : 'text-orange-500')
+                      : (actif ? 'text-white' : 'text-neutral-900 dark:text-white')}`}>
+                      {formatMontant(resteCarte)}
+                    </span>
+                  </span>
                 </span>
               )}
             </button>

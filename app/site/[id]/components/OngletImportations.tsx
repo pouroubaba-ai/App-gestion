@@ -467,13 +467,20 @@ export default function OngletImportations({
                     actif ? 'bg-white/15' : 'bg-neutral-100 dark:bg-neutral-800'}`}>
                     {c.emoji}
                   </span>
-                  {montreArgent && (
-                    <span className={`shrink-0 rounded-lg px-2 py-1 text-xs font-bold ${actif
-                      ? 'bg-white/15 text-indigo-100'
-                      : 'bg-neutral-100 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400'}`}>
-                      {c.liste.length}
-                    </span>
-                  )}
+                  {montreArgent && (() => {
+                    /* Plus d'un dossier en cours : la pastille vire au rouge
+                       pour accrocher l'œil dès l'ouverture de la page. */
+                    const alerte = c.cle === 'encours' && c.liste.length > 0;
+                    return (
+                      <span className={`shrink-0 rounded-lg px-2 py-1 text-xs font-bold ${alerte
+                        ? 'bg-red-500 text-white shadow-sm'
+                        : actif
+                          ? 'bg-white/15 text-indigo-100'
+                          : 'bg-neutral-100 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400'}`}>
+                        {c.liste.length}
+                      </span>
+                    );
+                  })()}
                 </div>
                 <p className={`mt-3 text-[11px] font-bold uppercase tracking-wide ${
                   actif ? 'text-indigo-100' : 'text-neutral-400'}`}>

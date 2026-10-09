@@ -719,11 +719,16 @@ export default function FicheAchatPage() {
               className="hidden px-4 py-2 text-sm font-bold text-gray-500 hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl transition-colors sm:block">
               Fermer
             </button>
-            {/* « Annuler la commande », jamais « Annuler » : ici l'action détruit le dossier. */}
-            {achat.etat === 'en_attente' && peutAnnulerDossier(role as Role | null) && (
+            {/* « Annuler la commande », jamais « Annuler » : ici l'action détruit le dossier.
+                Possible tant que rien n'est entré en stock : le stock n'entre qu'à la
+                confirmation, donc « en attente », « reçu » et « en traitement » s'annulent
+                sans laisser de stock fantôme. Une fois confirmé, la marchandise est en rayon
+                — on ne défait plus par un simple changement d'état. */}
+            {achat.etat !== 'confirme' && achat.etat !== 'annule'
+              && peutAnnulerDossier(role as Role | null) && (
               <button onClick={annuler} disabled={enCours}
                 className="px-4 py-2 text-sm font-bold text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-50 rounded-xl transition-colors">
-                Annuler la commande
+                Annuler
               </button>
             )}
             {peutReceptionner && (

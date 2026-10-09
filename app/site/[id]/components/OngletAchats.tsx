@@ -396,19 +396,35 @@ export default function OngletAchats({ siteId, userId, role, sites, titre }: Pro
               style={actif
                 ? { background: 'linear-gradient(135deg, #4f46e5 0%, #3730a3 100%)' }
                 : undefined}>
-              {/* L'emblème et le nom sur une ligne : empilés, ils poussaient
-                  le chiffre hors de la première vue. */}
-              <span className="flex items-center gap-2">
-                <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-[9px] text-[15px] ${
+              {/* L'emblème seul à gauche, le compte des dossiers à droite —
+                  la même en-tête qu'aux importations. Le nom passe dessous,
+                  sur sa propre ligne. */}
+              <span className="flex items-start justify-between gap-2">
+                <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] text-lg ${
                   actif ? 'bg-white/15' : 'bg-neutral-100 dark:bg-neutral-800'}`}>
                   {c.emoji}
                 </span>
-                <span className={`min-w-0 flex-1 truncate text-[11px] font-bold uppercase tracking-wide ${
-                  actif ? 'text-indigo-100' : 'text-neutral-400'}`}>
-                  {c.label}
-                </span>
+                {montreArgent && (() => {
+                  /* Plus d'un dossier en cours : la pastille vire au rouge
+                     pour accrocher l'œil dès l'ouverture de la page. */
+                  const alerte = c.cle === 'encours' && liste.length > 0;
+                  return (
+                    <span className={`shrink-0 rounded-lg px-2 py-1 text-xs font-bold ${
+                      alerte
+                        ? 'bg-red-500 text-white shadow-sm'
+                        : actif
+                          ? 'bg-white/15 text-indigo-100'
+                          : 'bg-neutral-100 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400'}`}>
+                      {liste.length}
+                    </span>
+                  );
+                })()}
               </span>
-              <span className={`${hankenGrotesk.className} mt-1.5 block text-[19px] font-bold leading-7 tracking-tight sm:text-[26px] sm:leading-8 ${
+              <span className={`mt-3 block text-[11px] font-bold uppercase tracking-wide ${
+                actif ? 'text-indigo-100' : 'text-neutral-400'}`}>
+                {c.label}
+              </span>
+              <span className={`${hankenGrotesk.className} mt-0.5 block text-[19px] font-bold leading-7 tracking-tight sm:text-[26px] sm:leading-8 ${
                 actif ? 'text-white' : 'text-neutral-900 dark:text-white'}`}>
                 {montreArgent ? formatMontant(valeur) : liste.length}
               </span>
