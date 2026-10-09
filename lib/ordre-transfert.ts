@@ -37,7 +37,7 @@ import {
 import { db } from './firebase';
 import {
   referenceFlux, type LigneFlux, type AuteurEtape,
-  livrerVente,
+  livrerVente, valeurVente,
 } from './flux-marchandise';
 import {
   ligneDepuisVente, synchroniserLignes, supprimerLignesDeVente,
@@ -87,6 +87,11 @@ export async function creerOrdreTransfert(params: {
   emballagesParProduit: Record<string, { nom: string; quantite: number }[]>;
   date: string;
   note?: string | null;
+  /* Ce qui se mettra en recouvrement pour le client à la confirmation.
+     La dette naît quand la source remet la marchandise, mais c'est la
+     destination qui en répond : on fixe donc ici, à l'avance, le montant
+     et l'échéance. `null` : pas de recouvrement automatique. */
+  recouvrementPrevu?: { valeur: number; date: string } | null;
   userId: string;
   auteur?: AuteurEtape | null;
 }): Promise<LienOrdre> {
@@ -224,6 +229,11 @@ export async function creerOrdreTransfert(params: {
        servi la marchandise, et aller le chercher à chaque ouverture
        coûterait une lecture pour un mot qui ne change pas. */
     ordreSiteSourceNom: params.siteSourceNom,
+    /* Le recouvrement prévu vit sur la commande du client : c'est ici
+       qu'il le paiera, c'est ici que le gérant de la destination peut le
+       modifier avant la confirmation, et c'est d'ici que l'app le lira
+       pour le poser à la confirmation. */
+    recouvrementPrevu: params.recouvrementPrevu ?? null,
     userId: params.userId,
     createdAt: serverTimestamp(),
   });
@@ -481,12 +491,45 @@ export async function propagerEtapeOrdre(params: {
           })),
         });
         const frais = await getDoc(doc(db, 'ventes', lien.venteDestId));
+        const fraisData = frais.data() as any;
         await livrerVente({
-          vente: { id: frais.id, ...frais.data() } as any,
+          vente: { id: frais.id, ...fraisData } as any,
           userId: params.userId, par: params.userId,
           utilisateurNom: params.utilisateurNom ?? null,
           utilisateurFonction: params.utilisateurFonction ?? null,
         });
+
+        /* Le recouvrement prévu prend corps, maintenant que la dette
+           existe vraiment.
+         *
+           On ne met en recouvrement que ce qui RESTE dû : les avances déjà
+           versées sont de l'argent encaissé, pas une créance. Le montant
+           annoncé se plafonne donc au reste — et si tout est déjà réglé,
+           il n'y a rien à recouvrer, on ne crée rien.
+
+           C'est une échéance ponctuelle à date fixe (`source: 'manuel'`) :
+           elle ne gouverne aucun rythme, elle dit juste « ce client doit
+           tant, pour tel jour ». */
+        const prevu = fraisData.recouvrementPrevu;
+        if (prevu && prevu.valeur > 0 && fraisData.clientId) {
+          const du = valeurVente(fraisData.lignes ?? []);
+          const reste = Math.max(0, du - (fraisData.avanceVersee ?? 0));
+          const aRecouvrer = Math.min(prevu.valeur, reste);
+          if (aRecouvrer > 0) {
+            await addDoc(collection(db, 'recouvrement_journal'), {
+              siteId: fraisData.siteId,
+              userId: params.userId,
+              partenaireId: fraisData.clientId,
+              role: 'client',
+              date: prevu.date ?? date,
+              valeur: aRecouvrer,
+              verse: 0,
+              reste: aRecouvrer,
+              source: 'manuel',
+              createdAt: serverTimestamp(),
+            });
+          }
+        }
       }
     }
   } else {

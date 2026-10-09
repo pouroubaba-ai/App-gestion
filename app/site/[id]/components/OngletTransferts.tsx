@@ -10,6 +10,7 @@ import {
   aUnEcart, lignesEnEcart, produitsEnEcart, valeurEnvoyee,
   chargerTransfertsDuSite, peutInitierTransfert, Role,
 } from '@/lib/flux-marchandise';
+import { chargerReceptions, recuParLigne } from '@/lib/receptions';
 import { ChampRecherche } from '@/components/Champs';
 import FeuilleFiltreStatut from './FeuilleFiltreStatut';
 import { formatMontant } from '@/lib/format';
@@ -119,11 +120,41 @@ export default function OngletTransferts({ siteId, userId, sites, role, titre }:
   const [recherche, setRecherche] = useState('');
   const [voirEtapes, setVoirEtapes] = useState(false);
 
+  /* L'écart vivant d'un dossier en traitement : son comptage n'est pas
+     encore figé dans `quantiteRecue`, il vit dans la collection `receptions`.
+     On le lit une fois au chargement, par dossier concerné, pour que la
+     colonne Écart dise la même chose que la fiche. */
+  const [ecartVivant, setEcartVivant] = useState<Record<string, { manque: number; surplus: number }>>({});
+
   useEffect(() => { charger(); }, [ctx.portee]);
 
   async function charger() {
     setLoading(true);
-    setTransferts(await chargerTransfertsDuSite(ctx.portee));
+    const liste = await chargerTransfertsDuSite(ctx.portee);
+    setTransferts(liste);
+    /* On ne va chercher le comptage vivant que pour les dossiers où il
+       n'est pas encore figé : en traitement et à confirmer. Un dossier
+       confirmé porte déjà ses quantités reçues sur ses lignes. */
+    const aLire = liste.filter(t => t.etat === 'traitement' || t.etat === 'a_confirmer');
+    const map: Record<string, { manque: number; surplus: number }> = {};
+    await Promise.all(aLire.map(async t => {
+      try {
+        const recs = await chargerReceptions(t.id);
+        const recu = recuParLigne(recs, 'reception');
+        let manque = 0, surplus = 0;
+        /* On ne saute aucune ligne : une ligne reçue à 0 alors qu'on a
+           expédié plus EST un manque. On compare chaque ligne reçu vs
+           expédié, point. */
+        t.lignes.forEach((l, i) => {
+          const trouve = recu[i] ?? 0;
+          const attendu = l.quantiteExpediee ?? l.quantiteDemandee;
+          if (trouve < attendu) manque++;
+          else if (trouve > attendu) surplus++;
+        });
+        map[t.id] = { manque, surplus };
+      } catch { /* une lecture refusée laisse le dossier sans écart vivant */ }
+    }));
+    setEcartVivant(map);
     setLoading(false);
   }
 
@@ -221,10 +252,6 @@ export default function OngletTransferts({ siteId, userId, sites, role, titre }:
   const listeVue = modeVue === 'encours' && etat !== 'confirme'
     ? duSens.filter(t => enCoursVues.includes(t.etat))
     : parEtat(etat);
-  /* La colonne Écart ne vaut que là où la marchandise a été comptée. */
-  const compteVue = etat === 'recu' || etat === 'traitement'
-    || etat === 'a_confirmer' || etat === 'confirme';
-
   const filtreActif = modeVue === 'encours' && etat !== 'confirme'
     && filtreStatuts.length > 0;
   const affiches = listeVue.filter(t => {
@@ -261,16 +288,19 @@ export default function OngletTransferts({ siteId, userId, sites, role, titre }:
           dans la maison. */}
       <div className={`gap-2 mb-4 ${ctx.ensemble ? 'hidden' : 'flex'}`}>
         {([
-          /* Le compte dit ce qui attend derrière le bouton. Pour qui fait
-             avancer la marchandise, ce sont les seules étapes où son geste
-             est attendu : compter les dossiers clos gonflerait un chiffre
-             qui ne descendrait jamais, et que plus personne ne lirait. */
+          /* Le compte ne dit que ce qui est EN COURS, jamais les dossiers
+             confirmés. Les inclure faisait doublon avec la carte
+             « Confirmé » — le lecteur additionne lui-même s'il veut le
+             total — et noyait ce qui réclame un geste immédiat sous un
+             chiffre qui ne descend jamais. */
           { cle: 'transfert' as const, label: 'Transferts',
             n: transferts.filter(t => dedans.includes(t.siteSourceId)
-              && (montreArgent || ETAPES_ENVOI.includes(t.etat))).length },
+              && t.etat !== 'confirme'
+              && ETAPES_ENVOI.includes(t.etat)).length },
           { cle: 'reception' as const, label: 'Réceptions',
             n: transferts.filter(t => dedans.includes(t.siteDestId)
-              && (montreArgent || ETAPES_RECEPTION.includes(t.etat))).length },
+              && t.etat !== 'confirme'
+              && ETAPES_RECEPTION.includes(t.etat)).length },
         ]).map(o => (
           <button key={o.cle}
             /* Pas de remise à « En attente » : cette étape n'existe pas du
@@ -497,7 +527,12 @@ export default function OngletTransferts({ siteId, userId, sites, role, titre }:
       </>
       )}
 
-      {enTraitement.length > 0 && (
+      {/* L'écart est un indicateur : le signaler au responsable des
+          commandes du site qui reçoit reviendrait à lui dire qu'il y a un
+          décalage à combler, alors qu'il compte à l'aveugle. Le bandeau ne
+          s'affiche donc pas pour lui, comme l'écart lui est caché partout
+          ailleurs. */}
+      {enTraitement.length > 0 && role !== 'commandes' && (
         <div className="mt-4 flex items-start gap-2 px-4 py-3 bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-800/30 rounded-2xl">
           <AlertTriangle size={15} className="text-amber-500 shrink-0 mt-0.5" />
           <p className="text-xs text-amber-700 dark:text-amber-400">
@@ -654,31 +689,48 @@ export default function OngletTransferts({ siteId, userId, sites, role, titre }:
                     </span>
                   ),
                 }] : []),
-                ...(compteVue ? [{
-                  cle: 'ecart', label: 'Écart', rang: 'corps' as const,
+                /* L'état du comptage : manque et surplus en pastilles, chacun
+                   son nombre. Il ne révèle la quantité attendue qu'à qui en
+                   répond — donc réservé à l'admin (`montreArgent`). Et il ne
+                   se lit que là où la marchandise a été comptée : un dossier
+                   en traitement ou confirmé. Avant, rien n'a été compté, donc
+                   rien à montrer. */
+                ...(montreArgent ? [{
+                  cle: 'etat_ecart', label: 'Écart', rang: 'corps' as const,
                   rendu: (t: Transfert) => {
-                    /* Tant que rien n'est compté, il n'y a pas d'écart : on ne
-                       peut pas différer d'un compte qui n'existe pas. */
-                    const compte = t.etat === 'recu' || t.etat === 'traitement'
+                    /* L'écart se montre pour un dossier en traitement, à
+                       confirmer ou confirmé. Avant, rien n'a été compté. */
+                    const compte = t.etat === 'traitement'
                       || t.etat === 'a_confirmer' || t.etat === 'confirme';
-                    /* L'écart se dit en lignes, pas en francs : ce qui manque
-                       n'a jamais quitté la source, rien n'est perdu. C'est
-                       combien de produits divergent qui demande un geste —
-                       et dans quel sens : un manque et un surplus n'appellent
-                       pas la même suite. */
-                    const { manque, surplus } = produitsEnEcart(t.lignes);
-                    const lignesEcart = manque + surplus;
-                    const libelle = lignesEcart === 0 ? 'Conforme'
-                      : manque > 0 && surplus > 0
-                        ? `${manque} manque · ${surplus} surplus`
-                        : manque > 0
-                          ? `${manque} manque${manque > 1 ? 'nt' : ''}`
-                          : `${surplus} surplus`;
+                    if (!compte) {
+                      return <span className="text-gray-300 dark:text-gray-600">—</span>;
+                    }
+                    /* Confirmé : le compte est figé sur les lignes. En
+                       traitement / à confirmer : il vit dans `receptions`, lu
+                       au chargement — c'est lui qui dit le vrai écart, comme
+                       sur la fiche. */
+                    const { manque, surplus } = t.etat === 'confirme'
+                      ? produitsEnEcart(t.lignes)
+                      : (ecartVivant[t.id] ?? { manque: 0, surplus: 0 });
+                    if (manque === 0 && surplus === 0) {
+                      return (
+                        <span className="inline-flex items-center rounded-full bg-green-100 px-2 py-0.5 text-[11px] font-bold text-green-700 dark:bg-green-900/30 dark:text-green-400">
+                          Conforme
+                        </span>
+                      );
+                    }
                     return (
-                      <span className={`font-bold ${lignesEcart === 0
-                        ? 'text-gray-300 dark:text-gray-600'
-                        : surplus > 0 && manque === 0 ? 'text-blue-500' : 'text-orange-500'}`}>
-                        {!compte ? '—' : libelle}
+                      <span className="inline-flex flex-wrap items-center gap-1">
+                        {manque > 0 && (
+                          <span className="inline-flex items-center rounded-full bg-orange-100 px-2 py-0.5 text-[11px] font-bold text-orange-700 dark:bg-orange-900/30 dark:text-orange-400">
+                            {manque} manque{manque > 1 ? 'nts' : ''}
+                          </span>
+                        )}
+                        {surplus > 0 && (
+                          <span className="inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-bold text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">
+                            {surplus} surplus
+                          </span>
+                        )}
                       </span>
                     );
                   },

@@ -14,7 +14,7 @@ import { Loader2, Check, ArrowLeftRight, AlertTriangle } from 'lucide-react';
 import SelecteurProduits, { ProduitChoisissable } from '../../components/SelecteurProduits';
 import { LigneFlux, referenceFlux, peutInitierTransfert, type Role } from '@/lib/flux-marchandise';
 import { roleSurSite, type RoleSite } from '@/lib/roles';
-import { SelectCherchable } from '@/components/Champs';
+import { SelectCherchable, ChampNombre } from '@/components/Champs';
 import {
   estEnsemble, marqueOrigine, racineRetour, retourOnglet, fermerEcran,
 } from '@/lib/retour';
@@ -24,6 +24,28 @@ import { auteurEtape } from '@/lib/auteur';
 interface SiteBref { id: string; nom: string }
 
 function aujourdhui() { return new Date().toISOString().split('T')[0]; }
+
+/* Convertir entre une date et un nombre de jours à partir d'une base, pour
+   que l'échéance se saisisse des deux façons sans qu'elles divergent.
+   On travaille à midi local, pas à minuit UTC : `toISOString` recule d'un
+   jour dans les fuseaux en avance sur UTC (Brazzaville = UTC+1), et « 0
+   jour » affichait alors la veille. À midi, le décalage de fuseau ne fait
+   plus franchir de frontière de jour. */
+function ymdLocal(d: Date): string {
+  const mois = String(d.getMonth() + 1).padStart(2, '0');
+  const jour = String(d.getDate()).padStart(2, '0');
+  return `${d.getFullYear()}-${mois}-${jour}`;
+}
+function dateApresJours(base: string, jours: number): string {
+  const d = new Date(base + 'T12:00:00');
+  d.setDate(d.getDate() + jours);
+  return ymdLocal(d);
+}
+function joursEntre(base: string, cible: string): number {
+  const a = new Date(base + 'T12:00:00').getTime();
+  const b = new Date(cible + 'T12:00:00').getTime();
+  return Math.max(0, Math.round((b - a) / 86400000));
+}
 
 export default function NouveauTransfertPage() {
   const { user, activite } = useAuth();
@@ -84,6 +106,22 @@ export default function NouveauTransfertPage() {
      rayon et ne concerne personne. */
   const [clientDestId, setClientDestId] = useState('');
   const [clientsDest, setClientsDest] = useState<{ id: string; nom: string }[]>([]);
+  /* Le recouvrement prévu à la confirmation, quand ce transfert sert une
+     commande à crédit. La source confirme, mais la dette naît chez la
+     destination : on dit ici, à l'avance, ce qui se mettra en recouvrement
+     pour le client une fois la marchandise remise. Par défaut tout le
+     montant, échéance le jour même — le cas courant ne demande aucun geste. */
+  const [recouvrePrevu, setRecouvrePrevu] = useState(true);
+  const [recouvreMontant, setRecouvreMontant] = useState(0);
+  const [recouvreDate, setRecouvreDate] = useState(aujourdhui());
+  /* L'échéance se dit des deux façons, au choix : une date, ou un nombre
+     de jours à partir de la date du transfert. L'une alimente l'autre —
+     changer les jours déplace la date, changer la date recalcule les
+     jours. On garde les jours à part pour que le champ reste stable. */
+  const [recouvreJours, setRecouvreJours] = useState(0);
+  /* L'utilisateur a-t-il touché au montant ? Tant que non, il suit la
+     valeur de l'ordre ; dès qu'il le fixe, on ne l'écrase plus. */
+  const [montantTouche, setMontantTouche] = useState(false);
   const [note, setNote] = useState('');
   const [enCours, setEnCours] = useState(false);
   const [erreur, setErreur] = useState('');
@@ -170,6 +208,17 @@ export default function NouveauTransfertPage() {
   const nomSource = sites.find(s => s.id === siteId)?.nom ?? '—';
   const total = lignes.reduce((s, l) => s + l.quantiteDemandee * l.valeurUnitaire, 0);
 
+  /* Ce que le client devra : au prix de vente, pas au coût. C'est ce
+     montant qui sert de recouvrement par défaut. */
+  const valeurOrdre = lignes.reduce(
+    (s, l) => s + l.quantiteDemandee * (l.prixVente ?? 0), 0);
+
+  /* Tant qu'on n'a pas fixé le montant à la main, il suit la valeur de
+     l'ordre : l'admin qui veut « tout en recouvrement » n'a rien à saisir. */
+  useEffect(() => {
+    if (!montantTouche) setRecouvreMontant(valeurOrdre);
+  }, [valeurOrdre, montantTouche]);
+
   /* Une ligne à zéro n'est pas ignorée mais bloquante : la laisser passer
      silencieusement ferait disparaître un produit que l'utilisateur croit avoir envoyé. */
   const lignesCompletes = lignes.length > 0 && lignes.every(l => l.produitId && l.quantiteDemandee > 0);
@@ -221,6 +270,11 @@ export default function NouveauTransfertPage() {
             produits.map(p => [p.id, p.emballages ?? []])),
           date,
           note,
+          /* Le recouvrement prévu voyage avec l'ordre : il attend la
+             confirmation pour naître, et seulement sur ce qui reste dû. */
+          recouvrementPrevu: recouvrePrevu && recouvreMontant > 0
+            ? { valeur: recouvreMontant, date: recouvreDate }
+            : null,
           userId: user!.uid,
           auteur: await auteurEtape(siteId, user!.uid, user!.displayName),
         });
@@ -392,6 +446,67 @@ export default function NouveauTransfertPage() {
                   </span>
                   . La facture et le règlement restent chez lui.
                 </p>
+              )}
+
+              {/* Le recouvrement prévu à la confirmation.
+                  La source confirme, mais la dette naît chez la destination,
+                  et le responsable qui confirme ne répond pas de ce client.
+                  On dit donc ici, à l'avance, ce qui se mettra en recouvrement
+                  — tout le montant, échéance aujourd'hui, par défaut. À la
+                  confirmation, l'app le posera sur ce qui reste dû après les
+                  avances ; rien si tout est déjà réglé. Le gérant de la
+                  destination pourra le modifier depuis sa commande. */}
+              {clientDestId && (
+                <div className="mt-3 border-t border-gray-100 pt-3 dark:border-gray-800">
+                  <label className="flex cursor-pointer items-center gap-2">
+                    <input type="checkbox" checked={recouvrePrevu}
+                      onChange={e => setRecouvrePrevu(e.target.checked)}
+                      className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" />
+                    <span className="text-xs font-bold text-gray-500 dark:text-gray-400">
+                      Mettre en recouvrement à la confirmation
+                    </span>
+                  </label>
+                  {recouvrePrevu && (
+                    <div className="mt-2.5 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <div>
+                        <label className="mb-1 block text-[11px] font-medium text-gray-400">
+                          Montant
+                        </label>
+                        <ChampNombre
+                          valeur={recouvreMontant}
+                          max={valeurOrdre > 0 ? valeurOrdre : undefined}
+                          onChange={n => { setMontantTouche(true); setRecouvreMontant(n); }}
+                          className="w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100" />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-[11px] font-medium text-gray-400">
+                          Échéance
+                        </label>
+                        <div className="flex items-center gap-2">
+                          {/* En jours à partir de la date du transfert. Le
+                              saisir déplace la date ; saisir la date le
+                              recalcule. */}
+                          <div className="flex items-center gap-1.5">
+                            <ChampNombre
+                              valeur={recouvreJours}
+                              onChange={n => {
+                                setRecouvreJours(n);
+                                setRecouvreDate(dateApresJours(date, n));
+                              }}
+                              className="w-16 rounded-xl border border-gray-200 bg-gray-50 px-2 py-2 text-center text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100" />
+                            <span className="text-[11px] font-medium text-gray-400">jour{recouvreJours > 1 ? 's' : ''}</span>
+                          </div>
+                          <input type="date" value={recouvreDate}
+                            onChange={e => {
+                              setRecouvreDate(e.target.value);
+                              setRecouvreJours(joursEntre(date, e.target.value));
+                            }}
+                            className="min-w-0 flex-1 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100" />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           )}

@@ -132,6 +132,12 @@ export default function FicheVentePage() {
   /* Ce qui reste dû par le client une fois livré. Tant qu'il est posé, on
      demande comment cette créance sera recouvrée. */
   const [aPlanifier, setAPlanifier] = useState<number | null>(null);
+  /* L'édition du recouvrement prévu d'un ordre, côté destination : le
+     gérant ou l'admin le règle avant que la source confirme. */
+  const [editRecouvre, setEditRecouvre] = useState(false);
+  const [recActif, setRecActif] = useState(false);
+  const [recMontant, setRecMontant] = useState(0);
+  const [recDate, setRecDate] = useState('');
   const [erreur, setErreur] = useState('');
   /* Les versements ont leur collection : le tableau imbriqué ne sert plus. */
   const [versements, setVersements] = useState<Versement[]>([]);
@@ -552,13 +558,7 @@ export default function FicheVentePage() {
            la clôture du bon suit la confirmation. */
         await updateDoc(doc(db, 'transferts', lienOrdre.transfertId), {
           /* Ce qui part est ce qui a ete prepare, pas ce qui a ete
-             demande.
-           *
-             « Marquer pret » pose dans `quantiteRecue` le decompte des
-             prelevements reellement faits au rayon. Repartir du demande
-             sortait 5 cartons quand 3 avaient ete rassembles — le stock
-             de la source perdait 2 cartons fantomes, et le client etait
-             facture de 5. */
+             demande. */
           lignes: vente.lignes.map(l => {
             const remis = l.quantiteRecue ?? l.quantiteDemandee;
             return { ...l, quantiteExpediee: remis, quantiteRecue: remis };
@@ -891,6 +891,40 @@ export default function FicheVentePage() {
   /* Un versement reste possible tant qu'il reste dû, y compris après livraison. */
   const peutVerser = vente.etat !== 'annule' && vente.etat !== 'devis' && reste > 0;
 
+  /* Le recouvrement prévu de cet ordre, tel qu'il est posé sur la commande. */
+  const recouvrePrevu = (vente as any).recouvrementPrevu as
+    { valeur: number; date: string } | null | undefined;
+  /* Qui peut le régler : le gérant ou l'admin du site qui facture, tant
+     que rien n'est confirmé (la source n'a pas encore remis). Le
+     responsable des commandes, lui, ne répond pas de ce client. */
+  const peutReglerRecouvre = ordreSuit
+    && (role === null || role === 'gerant')
+    && vente.etat !== 'livre' && vente.etat !== 'annule';
+
+  function ouvrirEditRecouvre() {
+    setRecActif(recouvrePrevu != null);
+    setRecMontant(recouvrePrevu?.valeur ?? valeurVente(vente!.lignes));
+    setRecDate(recouvrePrevu?.date ?? aujourdhui());
+    setEditRecouvre(true);
+  }
+
+  async function enregistrerRecouvre() {
+    setErreur('');
+    setEnCours(true);
+    try {
+      const prevu = recActif && recMontant > 0
+        ? { valeur: recMontant, date: recDate || aujourdhui() }
+        : null;
+      await updateDoc(doc(db, 'ventes', venteId), { recouvrementPrevu: prevu });
+      setEditRecouvre(false);
+      await charger();
+    } catch (e: any) {
+      setErreur(e?.message ?? 'Enregistrement impossible.');
+    } finally {
+      setEnCours(false);
+    }
+  }
+
   const LIBELLE_ACTION: Record<string, string> = {
     commande: 'Transformer en commande',
     preparation: 'Lancer la préparation',
@@ -1073,6 +1107,88 @@ export default function FicheVentePage() {
             )}
           </div>
         </BlocIdentite>
+
+        {/* Le recouvrement prévu à la confirmation de l'ordre.
+            La source remettra la marchandise et confirmera ; c'est à ce
+            moment que la dette du client naît ici. Le gérant ou l'admin de
+            ce site dit, à l'avance, ce qui se mettra alors en recouvrement
+            — et peut le changer tant que rien n'est confirmé. */}
+        {ordreSuit && montreArgent && (
+          <div className="mb-4 rounded-2xl border border-gray-100 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-sm font-bold text-gray-900 dark:text-gray-100">
+                Recouvrement à la confirmation
+              </p>
+              {peutReglerRecouvre && !editRecouvre && (
+                <button onClick={ouvrirEditRecouvre}
+                  className="rounded-xl px-3 py-1.5 text-xs font-bold text-indigo-600 transition-colors hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-900/20">
+                  Modifier
+                </button>
+              )}
+            </div>
+
+            {!editRecouvre && (
+              <p className="mt-2 text-sm text-gray-600 dark:text-gray-300">
+                {recouvrePrevu && recouvrePrevu.valeur > 0 ? (
+                  <>
+                    <span className="font-bold text-gray-900 dark:text-gray-100">
+                      {formatMontant(recouvrePrevu.valeur)}
+                    </span>{' '}
+                    en recouvrement, échéance le{' '}
+                    <span className="font-bold text-gray-900 dark:text-gray-100">
+                      {formatDate(recouvrePrevu.date)}
+                    </span>
+                    . Posé sur ce qui restera dû après les avances.
+                  </>
+                ) : (
+                  <span className="text-gray-400">
+                    Aucun recouvrement automatique prévu.
+                  </span>
+                )}
+              </p>
+            )}
+
+            {editRecouvre && (
+              <div className="mt-3 space-y-3">
+                <label className="flex cursor-pointer items-center gap-2">
+                  <input type="checkbox" checked={recActif}
+                    onChange={e => setRecActif(e.target.checked)}
+                    className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" />
+                  <span className="text-xs font-bold text-gray-500 dark:text-gray-400">
+                    Mettre en recouvrement à la confirmation
+                  </span>
+                </label>
+                {recActif && (
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div>
+                      <label className="mb-1 block text-[11px] font-medium text-gray-400">Montant</label>
+                      <ChampNombre valeur={recMontant}
+                        max={valeurVente(vente.lignes) > 0 ? valeurVente(vente.lignes) : undefined}
+                        onChange={setRecMontant}
+                        className="w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100" />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-[11px] font-medium text-gray-400">Échéance</label>
+                      <input type="date" value={recDate}
+                        onChange={e => setRecDate(e.target.value)}
+                        className="w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100" />
+                    </div>
+                  </div>
+                )}
+                <div className="flex gap-2">
+                  <button onClick={enregistrerRecouvre} disabled={enCours}
+                    className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-indigo-700 disabled:opacity-50">
+                    {enCours ? 'Enregistrement…' : 'Enregistrer'}
+                  </button>
+                  <button onClick={() => setEditRecouvre(false)} disabled={enCours}
+                    className="rounded-xl px-4 py-2 text-sm font-bold text-gray-500 transition-colors hover:bg-gray-50 dark:hover:bg-gray-800">
+                    Annuler
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800 shadow-sm p-5 mb-4">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
