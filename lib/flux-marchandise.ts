@@ -1656,6 +1656,17 @@ export async function livrerVente(params: {
     siteId: vente.siteId, produitId: l.produitId,
   })));
 
+  /* La commande d'un ordre, livrée depuis l'autre bout.
+   *
+   * Quand c'est la source qui remet, elle écrit la sortie chez le site
+   * destinataire — où elle ne travaille pas. La règle n'autorise cette
+   * détention étrangère que si le mouvement y pose le marqueur
+   * `venteOuvrante`, qui la laisse remonter au transfert et prouver le
+   * lien. Sans lui, la détention du destinataire se refusait, et la
+   * remise échouait sur « permission-denied ». Une vente ordinaire n'a
+   * pas d'`ordreLien` : le marqueur reste absent, comme avant. */
+  const estVenteDOrdre = (vente as any).ordreLien != null;
+
   for (const l of vente.lignes) {
     const qte = l.quantiteRecue ?? l.quantiteDemandee;
     if (qte <= 0) continue;
@@ -1712,6 +1723,9 @@ export async function livrerVente(params: {
       prixVente: l.prixVente ?? 0,
       reference: vente.reference,
       venteId: vente.id,
+      /* Pose `venteOuvrante` sur la détention du destinataire : c'est ce
+         que la règle lit pour autoriser la source à écrire là. */
+      venteDOrdre: estVenteDOrdre,
     }, registre);
   }
 
