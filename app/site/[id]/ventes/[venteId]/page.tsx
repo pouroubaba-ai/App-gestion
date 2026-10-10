@@ -957,7 +957,9 @@ export default function FicheVentePage() {
         return {
           cellules: [
             l.designation + (l.varianteLibelle ? ` · ${l.varianteLibelle}` : ''),
-            `${qte} ${l.unite ?? ''}`.trim(),
+            /* L'emballage prélevé (carton, sac…), comme sur la fiche ;
+               l'unité n'est que le repli quand il n'y en a pas. */
+            `${qte} ${l.emballage ?? l.unite ?? 'unité'}`.trim(),
             formatMontant(pu),
             formatMontant(qte * pu),
           ],

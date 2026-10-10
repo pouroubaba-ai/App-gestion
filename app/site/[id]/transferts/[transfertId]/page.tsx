@@ -243,7 +243,8 @@ export default function FicheTransfertPage() {
       lignes: t.lignes.map(l => ({
         cellules: [
           l.designation + (l.varianteLibelle ? ` · ${l.varianteLibelle}` : ''),
-          `${l.quantiteDemandee} ${l.unite ?? ''}`.trim(),
+          /* L'emballage (carton, sac…), comme sur la fiche. */
+          `${l.quantiteDemandee} ${l.emballage ?? l.unite ?? 'unité'}`.trim(),
           l.quantiteExpediee != null ? String(l.quantiteExpediee) : '—',
           l.quantiteRecue != null ? String(l.quantiteRecue) : '—',
         ],

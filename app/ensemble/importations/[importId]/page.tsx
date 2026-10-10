@@ -385,7 +385,8 @@ export default function FicheImportationPage() {
         return {
           cellules: [
             l.designation + (l.varianteLibelle ? ` · ${l.varianteLibelle}` : ''),
-            `${qte} ${l.unite ?? ''}`.trim(),
+            /* L'emballage (carton, sac…), comme sur la fiche. */
+            `${qte} ${l.emballage ?? l.unite ?? 'unité'}`.trim(),
             formatMontant(pu),
             formatMontant(qte * pu),
           ],
