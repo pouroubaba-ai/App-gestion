@@ -5,9 +5,11 @@ import { db } from '@/lib/firebase';
 import { useAuth } from '@/lib/auth-context';
 import { useParams, useRouter } from 'next/navigation';
 import { ArrowLeft, Loader2, Check, Ship, ArrowRight, X, CheckCheck, Plus, Undo2, Info,
-  Wallet, BarChart3, ArrowUpDown, Trash2 } from 'lucide-react';
+  Wallet, BarChart3, ArrowUpDown, Trash2, Download } from 'lucide-react';
 import { formatMontant, formatDate } from '@/lib/format';
 import { retourOnglet, fermerEcran } from '@/lib/retour';
+import { exporterPdf } from '@/lib/export-pdf';
+import { useEnteteSite } from '@/lib/use-entete-site';
 import { auteurCourant, auteurEtape } from '@/lib/auteur';
 import { roleSurSite, type RoleSite } from '@/lib/roles';
 import PanneauFrais from '@/app/site/[id]/components/PanneauFrais';
@@ -71,6 +73,7 @@ export default function FicheImportationPage() {
   const importId = params.importId as string;
 
   const [dossier, setDossier] = useState<Importation | null>(null);
+  const entetePdf = useEnteteSite(dossier?.siteId ?? '', activite?.nom);
   const [role, setRole] = useState<RoleSite | null>(null);
   const [loading, setLoading] = useState(true);
   const [enCours, setEnCours] = useState(false);
@@ -361,6 +364,45 @@ export default function FicheImportationPage() {
   const total = marchandise + fraisTotal;
   const verse = dossier.avanceVersee ?? 0;
   const reste = Math.max(0, total - verse);
+
+  /* L'export PDF du dossier d'importation. Titre = libellé d'état de l'app. */
+  function telechargerPdf() {
+    const d = dossier!;
+    exporterPdf({
+      titre: LIBELLES_IMPORTATION[d.etat],
+      reference: d.reference,
+      entete: entetePdf,
+      infos: [
+        { libelle: 'Fournisseur', valeur: d.fournisseurNom ?? '—' },
+        ...(d.origine ? [{ libelle: 'Origine', valeur: d.origine }] : []),
+        { libelle: 'Destination', valeur: d.siteNom ?? '—' },
+      ],
+      colonnes: ['Produit', 'Quantité', 'Coût unitaire', 'Total'],
+      alignements: ['left', 'center', 'right', 'right'],
+      lignes: d.lignes.map(l => {
+        const qte = l.quantiteRecue ?? l.quantiteDemandee;
+        const pu = l.valeurUnitaire ?? 0;
+        return {
+          cellules: [
+            l.designation + (l.varianteLibelle ? ` · ${l.varianteLibelle}` : ''),
+            `${qte} ${l.unite ?? ''}`.trim(),
+            formatMontant(pu),
+            formatMontant(qte * pu),
+          ],
+        };
+      }),
+      totaux: [
+        { libelle: 'Marchandise', valeur: formatMontant(marchandise) },
+        ...(fraisTotal > 0
+          ? [{ libelle: 'Frais d\'approche', valeur: formatMontant(fraisTotal) }] : []),
+        ...(verse > 0 ? [{ libelle: 'Versé', valeur: formatMontant(verse) }] : []),
+        ...(reste > 0
+          ? [{ libelle: 'Reste à payer', valeur: formatMontant(reste), fort: true }]
+          : [{ libelle: 'Total', valeur: formatMontant(total), fort: true }]),
+      ],
+      note: d.note ?? null,
+    });
+  }
 
   /* Les frais se modifient jusqu'à la confirmation. Après, le coût moyen
      en porte la trace : les changer réécrirait des marges déjà figées. */
@@ -995,6 +1037,12 @@ export default function FicheImportationPage() {
                 className="hidden rounded-xl px-4 py-2 text-sm font-bold text-gray-500 transition-colors hover:bg-gray-50 dark:hover:bg-gray-800 sm:block">
                 Fermer
               </button>
+              {montreArgent && dossier.etat !== 'annule' && (
+                <button onClick={telechargerPdf}
+                  className="flex items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-bold text-gray-600 transition-colors hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-gray-800">
+                  <Download size={14} /> PDF
+                </button>
+              )}
               {peut && suivant && (
                 <button onClick={avancer} disabled={enCours || !controle.juste}
                   title={controle.juste ? undefined : controle.motif}

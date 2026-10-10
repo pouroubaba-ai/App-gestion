@@ -16,8 +16,10 @@ import BlocIdentite from '../../components/BlocIdentite';
 import {
   ArrowLeft,
   Loader2, Check, ArrowDownLeft, Truck, AlertTriangle, ShieldCheck, Package,
-  CheckCheck, Info, Plus, X,
+  CheckCheck, Info, Plus, X, Download,
 } from 'lucide-react';
+import { exporterPdf } from '@/lib/export-pdf';
+import { useEnteteSite } from '@/lib/use-entete-site';
 import {
   Transfert, EtatTransfert, LIBELLES_TRANSFERT,
   ecartValeur, aUnEcart, lignesEnEcart, produitsEnEcart, confirmerTransfert,
@@ -58,6 +60,7 @@ export default function FicheTransfertPage() {
   const searchParams = useSearchParams();
   const siteId = params.id as string;
   const transfertId = params.transfertId as string;
+  const entetePdf = useEnteteSite(siteId, activite?.nom);
 
   const [transfert, setTransfert] = useState<Transfert | null>(null);
   const [loading, setLoading] = useState(true);
@@ -220,6 +223,37 @@ export default function FicheTransfertPage() {
   const estDest = estAdmin || transfert.siteDestId === siteId;
   const ecart = ecartValeur(transfert.lignes);
   const enEcart = lignesEnEcart(transfert.lignes);
+
+  /* L'export PDF du transfert. Titre = libellé d'état de l'app, selon le
+     point de vue (envoi ou réception). */
+  function telechargerPdf() {
+    const t = transfert!;
+    const sensVu: 'envoi' | 'reception' =
+      t.siteDestId === siteId && !estSource ? 'reception' : 'envoi';
+    exporterPdf({
+      titre: libelleTransfert(t.etat, sensVu),
+      reference: t.reference,
+      entete: entetePdf,
+      infos: [
+        { libelle: 'Trajet', valeur: `${t.siteSourceNom ?? '—'} → ${t.siteDestNom ?? '—'}` },
+        { libelle: 'Initié le', valeur: formatDate(t.dateInitiation) },
+      ],
+      colonnes: ['Produit', 'Demandé', 'Expédié', 'Reçu'],
+      alignements: ['left', 'center', 'center', 'center'],
+      lignes: t.lignes.map(l => ({
+        cellules: [
+          l.designation + (l.varianteLibelle ? ` · ${l.varianteLibelle}` : ''),
+          `${l.quantiteDemandee} ${l.unite ?? ''}`.trim(),
+          l.quantiteExpediee != null ? String(l.quantiteExpediee) : '—',
+          l.quantiteRecue != null ? String(l.quantiteRecue) : '—',
+        ],
+      })),
+      totaux: montreArgent
+        ? [{ libelle: 'Valeur transférée', valeur: formatMontant(valeurEnvoyee(t.lignes)), fort: true }]
+        : [],
+      note: t.note ?? null,
+    });
+  }
 
   /* Un transfert d'ordre ne se pilote pas d'ici.
    *
@@ -764,6 +798,12 @@ export default function FicheTransfertPage() {
               className="hidden px-4 py-2 text-sm font-bold text-gray-500 hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl transition-colors sm:block">
               Fermer
             </button>
+            {transfert.etat !== 'annule' && (
+              <button onClick={telechargerPdf}
+                className="flex items-center gap-1.5 px-4 py-2 text-sm font-bold text-gray-600 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-gray-800 rounded-xl transition-colors">
+                <Download size={14} /> PDF
+              </button>
+            )}
             {/* « Annuler le transfert », jamais « Annuler » : ici l'action détruit le dossier. */}
             {(transfert.etat === 'en_cours' || transfert.etat === 'preparation'
               || transfert.etat === 'expedie') && peutAnnulerTransfert(ROLE_COURANT) && (

@@ -28,8 +28,10 @@ import {
 } from '@/lib/lignes-vente';
 import {
   ArrowLeft,
-  Loader2, Check, CheckCheck, ArrowRight, Truck, X, Plus, Info,
+  Loader2, Check, CheckCheck, ArrowRight, Truck, X, Plus, Info, Download,
 } from 'lucide-react';
+import { exporterPdf } from '@/lib/export-pdf';
+import { useEnteteSite } from '@/lib/use-entete-site';
 import {
   Vente, EtatVente, LIBELLES_VENTE, SUITE_VENTE, valeurVente, beneficeAttendu,
   devisExpire, livrerVente, referenceFlux, VersementAchat, joursRestants,
@@ -103,6 +105,7 @@ export default function FicheVentePage() {
   const searchParams = useSearchParams();
   const siteId = params.id as string;
   const venteId = params.venteId as string;
+  const entetePdf = useEnteteSite(siteId, activite?.nom);
 
   const [vente, setVente] = useState<Vente | null>(null);
   /* Le site qui a servi la marchandise, quand ce n'est pas celui-ci.
@@ -925,6 +928,54 @@ export default function FicheVentePage() {
     }
   }
 
+  /* L'export PDF du dossier. Le titre suit l'état, via le libellé déjà
+     défini dans l'app — aucun nom inventé ici. */
+  function telechargerPdf() {
+    const v = vente!;
+    const estDevis = v.etat === 'devis';
+    /* Une vente livrée, c'est le moment où l'on remet une facture : le
+       papier s'appelle « Facture », là où l'app suit l'étape du dossier
+       (« Livré »). Les autres états gardent leur libellé. */
+    const titrePdf = v.etat === 'livre' ? 'Facture' : LIBELLES_VENTE[v.etat];
+    exporterPdf({
+      titre: titrePdf,
+      reference: v.reference,
+      entete: entetePdf,
+      infos: [
+        { libelle: 'Client', valeur: v.clientNom ?? '—' },
+        { libelle: estDevis ? 'Devis' : 'Commande',
+          valeur: formatDate(v.dateDevis ?? v.dateCommande) },
+        ...(v.dateLivraison
+          ? [{ libelle: 'Livré le', valeur: formatDate(v.dateLivraison) }] : []),
+        ...(siteServeur ? [{ libelle: 'Servie par', valeur: siteServeur }] : []),
+      ],
+      colonnes: ['Produit', 'Qté', 'Prix unitaire', 'Total'],
+      alignements: ['left', 'center', 'right', 'right'],
+      lignes: v.lignes.map(l => {
+        const qte = l.quantiteRecue ?? l.quantiteDemandee;
+        const pu = l.prixVente ?? 0;
+        return {
+          cellules: [
+            l.designation + (l.varianteLibelle ? ` · ${l.varianteLibelle}` : ''),
+            `${qte} ${l.unite ?? ''}`.trim(),
+            formatMontant(pu),
+            formatMontant(qte * pu),
+          ],
+        };
+      }),
+      totaux: [
+        { libelle: 'Total', valeur: formatMontant(total) },
+        ...((v.avanceVersee ?? 0) > 0
+          ? [{ libelle: v.etat === 'livre' ? 'Versé' : 'Avance',
+               valeur: formatMontant(v.avanceVersee) }] : []),
+        ...(reste > 0
+          ? [{ libelle: 'Reste à payer', valeur: formatMontant(reste), fort: true }]
+          : [{ libelle: 'Soldé', valeur: formatMontant(total), fort: true }]),
+      ],
+      note: v.note ?? null,
+    });
+  }
+
   const LIBELLE_ACTION: Record<string, string> = {
     commande: 'Transformer en commande',
     preparation: 'Lancer la préparation',
@@ -989,6 +1040,12 @@ export default function FicheVentePage() {
               className="hidden px-4 py-2 text-sm font-bold text-gray-500 hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl transition-colors sm:block">
               Fermer
             </button>
+            {montreArgent && vente.etat !== 'annule' && (
+              <button onClick={telechargerPdf}
+                className="flex items-center gap-1.5 px-4 py-2 text-sm font-bold text-gray-600 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-gray-800 rounded-xl transition-colors">
+                <Download size={14} /> PDF
+              </button>
+            )}
             {peutAnnuler && (
               <button onClick={annuler} disabled={enCours}
                 className="px-4 py-2 text-sm font-bold text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-50 rounded-xl transition-colors">

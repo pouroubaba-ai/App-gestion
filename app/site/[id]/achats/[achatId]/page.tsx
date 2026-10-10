@@ -33,7 +33,9 @@ import {
   peutDisposerDuCapital, peutPlanifierReglement, roleSurSite, type RoleSite,
 } from '@/lib/roles';
 import {
-  ArrowLeft, Loader2, CheckCheck, Check, ArrowDownLeft, Clock, Wallet, X, Info, Plus } from 'lucide-react';
+  ArrowLeft, Loader2, CheckCheck, Check, ArrowDownLeft, Clock, Wallet, X, Info, Plus, Download } from 'lucide-react';
+import { exporterPdf } from '@/lib/export-pdf';
+import { useEnteteSite } from '@/lib/use-entete-site';
 import {
   Achat, EtatAchat, LIBELLES_ACHAT,
   valeurEnvoyee, valeurRecue, ecartValeur, aUnEcart, lignesEnEcart, confirmerAchat, totalAchat,
@@ -114,6 +116,7 @@ export default function FicheAchatPage() {
     ? `/ensemble${retourAchats}`
     : `/site/${siteId}${retourAchats}`;
   const achatId = params.achatId as string;
+  const entetePdf = useEnteteSite(siteId, activite?.nom);
 
   const [achat, setAchat] = useState<Achat | null>(null);
   const [loading, setLoading] = useState(true);
@@ -407,6 +410,49 @@ export default function FicheAchatPage() {
      livrée est due. */
   const basePaiement = achat.etat === 'en_attente' ? commande : recu;
   const resteAPayer = Math.max(0, basePaiement - (achat.avanceVersee ?? 0));
+
+  /* L'export PDF du dossier d'achat. Titre = libellé d'état de l'app. */
+  function telechargerPdf() {
+    const a = achat!;
+    const avantReception = a.etat === 'en_attente';
+    exporterPdf({
+      titre: LIBELLES_ACHAT[a.etat],
+      reference: a.reference,
+      entete: entetePdf,
+      infos: [
+        { libelle: 'Fournisseur', valeur: a.fournisseurNom ?? '—' },
+        { libelle: 'Commandé', valeur: formatDate(a.dateCommande) },
+        ...(a.dateReception
+          ? [{ libelle: 'Reçu le', valeur: formatDate(a.dateReception) }] : []),
+      ],
+      colonnes: ['Produit', avantReception ? 'Commandé' : 'Reçu', 'Coût unitaire', 'Total'],
+      alignements: ['left', 'center', 'right', 'right'],
+      lignes: a.lignes.map(l => {
+        const qte = avantReception
+          ? l.quantiteDemandee
+          : (l.quantiteRecue ?? l.quantiteDemandee);
+        const pu = l.valeurUnitaire ?? 0;
+        return {
+          cellules: [
+            l.designation + (l.varianteLibelle ? ` · ${l.varianteLibelle}` : ''),
+            `${qte} ${l.unite ?? ''}`.trim(),
+            formatMontant(pu),
+            formatMontant(qte * pu),
+          ],
+        };
+      }),
+      totaux: [
+        { libelle: avantReception ? 'Total commandé' : 'Total reçu',
+          valeur: formatMontant(avantReception ? commande : recu) },
+        ...((a.avanceVersee ?? 0) > 0
+          ? [{ libelle: 'Versé', valeur: formatMontant(a.avanceVersee) }] : []),
+        ...(resteAPayer > 0
+          ? [{ libelle: 'Reste à payer', valeur: formatMontant(resteAPayer), fort: true }]
+          : [{ libelle: 'Soldé', valeur: formatMontant(avantReception ? commande : recu), fort: true }]),
+      ],
+      note: a.note ?? null,
+    });
+  }
 
   /* Le cycle suit la marchandise : elle arrive, on la traite, on l'accepte.
      Trois gestes distincts, parce qu'entre chacun il reste quelque chose à
@@ -719,6 +765,12 @@ export default function FicheAchatPage() {
               className="hidden px-4 py-2 text-sm font-bold text-gray-500 hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl transition-colors sm:block">
               Fermer
             </button>
+            {montreArgent && achat.etat !== 'annule' && (
+              <button onClick={telechargerPdf}
+                className="flex items-center gap-1.5 px-4 py-2 text-sm font-bold text-gray-600 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-gray-800 rounded-xl transition-colors">
+                <Download size={14} /> PDF
+              </button>
+            )}
             {/* « Annuler la commande », jamais « Annuler » : ici l'action détruit le dossier.
                 Possible tant que rien n'est entré en stock : le stock n'entre qu'à la
                 confirmation, donc « en attente », « reçu » et « en traitement » s'annulent
