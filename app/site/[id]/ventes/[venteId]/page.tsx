@@ -284,7 +284,25 @@ export default function FicheVentePage() {
           })
           .catch(() => {});
       }
-      chargerPreparations(venteId).then(setPreparations).catch(() => setPreparations([]));
+      chargerPreparations(venteId).then(preps => {
+        setPreparations(preps);
+        /* Le figé et le journal doivent concorder. S'ils divergent — un
+           prélèvement annulé après que le dossier soit passé « prêt » —
+           on recale la ligne figée sur la somme vivante, sans quoi la
+           colonne et la livraison garderaient l'ancienne quantité. */
+        if (d.etat === 'pret' && (d.lignes?.length ?? 0) > 0 && preps.length > 0) {
+          const prep = prepareParLigne(preps);
+          const lignes = (d.lignes as any[]).map((l, i) => ({
+            ...l, quantiteRecue: prep[i] ?? 0,
+          }));
+          const diverge = lignes.some((l, i) =>
+            (l.quantiteRecue ?? 0) !== ((d.lignes[i].quantiteRecue) ?? 0));
+          if (diverge) {
+            updateDoc(doc(db, 'ventes', venteId), { lignes }).catch(() => {});
+            setVente(v => (v ? ({ ...v, lignes } as Vente) : v));
+          }
+        }
+      }).catch(() => setPreparations([]));
       setVersements(vers);
     }
 
@@ -381,10 +399,39 @@ export default function FicheVentePage() {
     });
 
     if (aEcrire.length === 0) return;
-    setEnCours(true); setErreur('');
+    const date = aujourdhui();
+
+    /* Silence et vitesse : on inscrit les préparations à l'écran tout de
+       suite, l'écriture serveur part derrière. Plus de `enCours` global —
+       les boutons ne grisent plus, l'écran ne se fige plus. Si une écriture
+       échoue, la ligne optimiste disparaît et l'erreur s'affiche. */
+    const optimistes = aEcrire.map(({ i, quantite }) => {
+      const l = vente.lignes[i];
+      return {
+        id: `tmp-${Date.now()}-${i}`,
+        siteId: vente.siteId,
+        documentId: venteId,
+        ligneIndex: i,
+        produitId: l.produitId ?? null,
+        varianteCle: l.varianteCle ?? null,
+        designation: l.designation,
+        quantite,
+        ...emballageDe(l, quantite),
+        date,
+        heure: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
+        utilisateur: user!.uid,
+        utilisateurNom: '…',
+        utilisateurFonction: '',
+        annulee: false,
+        note: null,
+      } as Preparation;
+    });
+    const tmpIds = new Set(optimistes.map(o => o.id));
+    setPreparations(p => [...optimistes, ...p]);
+    setErreur('');
+
     try {
       const auteur = await auteurCourant(vente.siteId, user!.uid);
-      const date = aujourdhui();
       await Promise.all(aEcrire.map(({ i, quantite }) => {
         const l = vente.lignes[i];
         return enregistrerPreparation({
@@ -403,9 +450,27 @@ export default function FicheVentePage() {
           note: null,
         });
       }));
-      setPreparations(await chargerPreparations(venteId));
-    } catch (e: any) { setErreur(e?.message ?? 'Enregistrement impossible.'); }
-    finally { setEnCours(false); }
+      /* On remplace les lignes provisoires par les vraies, en silence. */
+      const apres = await chargerPreparations(venteId);
+      setPreparations(apres);
+      await figerSiPret(apres);
+    } catch (e: any) {
+      setPreparations(p => p.filter(x => !tmpIds.has(x.id)));
+      setErreur(e?.message ?? 'Enregistrement impossible.');
+    }
+  }
+
+  /* Un dossier prêt porte le préparé figé sur ses lignes (`quantiteRecue`),
+     et c'est lui que lit la livraison. Quand on corrige le préparé après
+     coup — fournir ou annuler en « prêt » — il faut refiger, sinon la
+     livraison garderait l'ancienne quantité. En préparation, rien à figer :
+     le préparé se déduit à la volée. */
+  async function figerSiPret(preps: Preparation[]) {
+    if (!vente || vente.etat !== 'pret') return;
+    const prep = prepareParLigne(preps);
+    const lignes = vente.lignes.map((l, i) => ({ ...l, quantiteRecue: prep[i] ?? 0 }));
+    await updateDoc(doc(db, 'ventes', venteId), { lignes });
+    setVente(v => (v ? ({ ...v, lignes } as Vente) : v));
   }
 
   /**
@@ -428,44 +493,85 @@ export default function FicheVentePage() {
   /** Une préparation s'ajoute ; elle ne remplace jamais la précédente. */
   async function ajouterPreparation() {
     if (!vente || lignePreparee == null || qtePreparee <= 0) return;
-    setEnCours(true); setErreur('');
+    const l = vente.lignes[lignePreparee];
+    const i = lignePreparee;
+    const quantite = qtePreparee;
+    const note = notePreparee.trim() || null;
+    const date = aujourdhui();
+
+    /* On ferme la saisie et on inscrit la préparation tout de suite ;
+       l'écriture serveur suit en silence, sans geler l'écran. */
+    const tmpId = `tmp-${Date.now()}-${i}`;
+    const optimiste = {
+      id: tmpId,
+      siteId: vente.siteId,
+      documentId: venteId,
+      ligneIndex: i,
+      produitId: l.produitId ?? null,
+      varianteCle: l.varianteCle ?? null,
+      designation: l.designation,
+      quantite,
+      ...emballageDe(l, quantite),
+      date,
+      heure: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
+      utilisateur: user!.uid,
+      utilisateurNom: '…',
+      utilisateurFonction: '',
+      annulee: false,
+      note,
+    } as Preparation;
+    setPreparations(p => [optimiste, ...p]);
+    setLignePreparee(null); setQtePreparee(0); setNotePreparee('');
+    setErreur('');
+
     try {
-      const l = vente.lignes[lignePreparee];
       const auteur = await auteurCourant(vente.siteId, user!.uid);
       await enregistrerPreparation({
         siteId: vente.siteId,
         documentId: venteId,
-        ligneIndex: lignePreparee,
+        ligneIndex: i,
         produitId: l.produitId ?? null,
         varianteCle: l.varianteCle ?? null,
         designation: l.designation,
-        quantite: qtePreparee,
-        ...emballageDe(l, qtePreparee),
-        date: aujourdhui(),
+        quantite,
+        ...emballageDe(l, quantite),
+        date,
         utilisateur: user!.uid,
         utilisateurNom: auteur.utilisateurNom,
         utilisateurFonction: auteur.utilisateurFonction,
-        note: notePreparee.trim() || null,
+        note,
       });
-      setPreparations(await chargerPreparations(venteId));
-      setLignePreparee(null); setQtePreparee(0); setNotePreparee('');
-    } catch (e: any) { setErreur(e?.message ?? 'Enregistrement impossible.'); }
-    finally { setEnCours(false); }
+      const apres = await chargerPreparations(venteId);
+      setPreparations(apres);
+      await figerSiPret(apres);
+    } catch (e: any) {
+      setPreparations(p => p.filter(x => x.id !== tmpId));
+      setErreur(e?.message ?? 'Enregistrement impossible.');
+    }
   }
 
   /* On n'ajuste pas une préparation : on l'annule et on en saisit une autre.
      Le registre montre alors qu'une erreur a été faite et corrigée. */
   async function annulerUnePreparation(id: string) {
     if (!vente) return;
-    setEnCours(true); setErreur('');
+    /* On barre la préparation tout de suite ; l'écriture serveur suit.
+       Une ligne provisoire pas encore enregistrée se retire simplement. */
+    const avant = preparations;
+    if (id.startsWith('tmp-')) { setPreparations(p => p.filter(x => x.id !== id)); return; }
+    setPreparations(p => p.map(x => x.id === id ? { ...x, annulee: true } : x));
+    setErreur('');
     try {
       const auteur = await auteurCourant(vente.siteId, user!.uid);
       await annulerPreparation({
         preparationId: id, par: user!.uid, parNom: auteur.utilisateurNom,
       });
-      setPreparations(await chargerPreparations(venteId));
-    } catch (e: any) { setErreur(e?.message ?? 'Annulation impossible.'); }
-    finally { setEnCours(false); }
+      const apres = await chargerPreparations(venteId);
+      setPreparations(apres);
+      await figerSiPret(apres);
+    } catch (e: any) {
+      setPreparations(avant);
+      setErreur(e?.message ?? 'Annulation impossible.');
+    }
   }
 
   /**
@@ -861,11 +967,20 @@ export default function FicheVentePage() {
      prochaine etape est la livraison. */
   const detaillePreparation = enPreparation || vente.etat === 'pret';
   const restants = joursRestants(vente);
-  /* Le préparé est la somme des prélèvements non annulés. Une fois le
-     dossier prêt, il est figé sur la ligne : on lit alors celle-ci. */
+  /* Le préparé est la somme des prélèvements non annulés.
+   *
+   * Une fois le dossier prêt, cette somme est aussi figée sur la ligne
+   * (`quantiteRecue`) pour la livraison. Les deux doivent dire la même
+   * chose — mais si l'on a annulé un prélèvement après avoir figé, le
+   * figé reste en arrière. Dès qu'il existe un journal de préparations,
+   * on fait donc foi de sa somme vivante : elle est toujours à jour.
+   * Le figé ne sert que de repli, pour un vieux dossier sans journal. */
   const prepareParIdx = prepareParLigne(preparations);
+  const aUnJournal = preparations.length > 0;
   function prepareDe(l: { quantiteRecue?: number | null; quantiteDemandee: number }, i: number): number {
-    return enPreparation ? (prepareParIdx[i] ?? 0) : (l.quantiteRecue ?? l.quantiteDemandee);
+    if (enPreparation) return prepareParIdx[i] ?? 0;
+    if (aUnJournal) return prepareParIdx[i] ?? 0;
+    return l.quantiteRecue ?? l.quantiteDemandee;
   }
   /* Annuler revient sur un engagement pris envers le client : cela relève
      de qui répond du site, pas de qui fait avancer les dossiers. */
@@ -1264,7 +1379,7 @@ export default function FicheVentePage() {
               }, 0);
               if (total <= 0) return null;
               return (
-                <button onClick={() => completer(null)} disabled={enCours}
+                <button onClick={() => completer(null)}
                   className="flex items-center gap-1.5 rounded-xl border border-indigo-200 px-3 py-1.5 text-xs font-bold text-indigo-600 transition-colors hover:bg-indigo-50 disabled:opacity-40 dark:border-indigo-800/40 dark:hover:bg-indigo-900/20">
                   {enCours ? <Loader2 size={12} className="animate-spin" /> : <CheckCheck size={12} />}
                   Tout préparer
@@ -1287,7 +1402,6 @@ export default function FicheVentePage() {
               const qte = l.quantiteRecue ?? l.quantiteDemandee;
               const dispo = stockDe(l);
               const lignesPrep = preparations.filter(x => x.ligneIndex === i);
-              const nbPrep = lignesPrep.filter(x => !x.annulee).length;
               const prepareLigne = prepareDe(l, i);
               const manque = Math.max(0, l.quantiteDemandee - prepareLigne);
               const encorePossible = completementPossible(l, i);
@@ -1334,7 +1448,11 @@ export default function FicheVentePage() {
                             manque > 0 ? 'text-orange-500' : 'text-gray-900 dark:text-gray-100'}`}>
                             {prepareLigne > 0 ? prepareLigne.toLocaleString('fr-FR') : '—'}
                           </span>
-                          {nbPrep > 0 && (
+                          {/* Le ⓘ reste tant qu'il existe une préparation,
+                              annulée comprise : c'est lui qui plie le journal,
+                              et une ligne tout annulée a encore un journal à
+                              replier. */}
+                          {lignesPrep.length > 0 && (
                             <button onClick={() => setDetailLigne(detailLigne === i ? null : i)}
                               title="Voir les préparations"
                               className={`shrink-0 rounded p-0.5 transition-colors ${
@@ -1368,7 +1486,7 @@ export default function FicheVentePage() {
                   {/* Le détail des prélèvements, sous la carte qu'il
                       concerne : ailleurs, on ne saurait plus de quelle
                       ligne il parle. */}
-                  {detailLigne === i && nbPrep > 0 && (
+                  {detailLigne === i && lignesPrep.length > 0 && (
                     <div className="mt-2 rounded-lg bg-gray-50 p-2 dark:bg-gray-800/50">
                       {lignesPrep.map(x => (
                         <div key={x.id}
@@ -1385,8 +1503,8 @@ export default function FicheVentePage() {
                           </span>
                           {x.annulee ? (
                             <span className="shrink-0 text-gray-400">Annulée</span>
-                          ) : enPreparation ? (
-                            <button onClick={() => annulerUnePreparation(x.id)} disabled={enCours}
+                          ) : detaillePreparation ? (
+                            <button onClick={() => annulerUnePreparation(x.id)}
                               className="shrink-0 text-red-500">Annuler</button>
                           ) : null}
                         </div>
@@ -1397,9 +1515,9 @@ export default function FicheVentePage() {
                   {/* Les boutons à la fin, et en pleine largeur : c'est par
                       eux que le dossier avance, et le pouce les trouve sans
                       viser. */}
-                  {enPreparation && encorePossible > 0 && (
+                  {detaillePreparation && encorePossible > 0 && (
                     <div className="mt-2.5 flex items-center gap-1.5">
-                      <button onClick={() => completer(i)} disabled={enCours}
+                      <button onClick={() => completer(i)}
                         className="flex flex-1 items-center justify-center gap-1 rounded-lg bg-indigo-600 px-2.5 py-2 text-xs font-bold text-white transition-colors disabled:opacity-40">
                         <CheckCheck size={12} /> {encorePossible}
                       </button>
@@ -1458,7 +1576,7 @@ export default function FicheVentePage() {
                       tableau défile sur un téléphone — sans cela, les deux
                       boutons restaient hors de l'écran et le dossier ne
                       pouvait plus avancer. */}
-                  {enPreparation && (
+                  {detaillePreparation && (
                     <th className="sticky right-0 bg-indigo-600 px-3 py-2.5" />
                   )}
                 </tr>
@@ -1469,7 +1587,6 @@ export default function FicheVentePage() {
                   const dispo = stockDe(l);
                   /* Les prélèvements de cette ligne : le préparé leur somme. */
                   const lignesPrep = preparations.filter(x => x.ligneIndex === i);
-                  const nbPrep = lignesPrep.filter(x => !x.annulee).length;
                   const prepareLigne = prepareDe(l, i);
                   const manque = Math.max(0, l.quantiteDemandee - prepareLigne);
                   /* Ce qu'on peut encore prélever : ni au-delà du commandé,
@@ -1512,8 +1629,10 @@ export default function FicheVentePage() {
                                 manque > 0 ? 'text-orange-500' : 'text-gray-900 dark:text-gray-100'}`}>
                                 {prepareLigne > 0 ? prepareLigne.toLocaleString('fr-FR') : '—'}
                               </span>
-                              {/* Le détail des prélèvements : quand, combien, par qui. */}
-                              {nbPrep > 0 && (
+                              {/* Le détail des prélèvements : quand, combien, par qui.
+                                  Présent tant qu'il existe une préparation,
+                                  annulée comprise — c'est lui qui plie le journal. */}
+                              {lignesPrep.length > 0 && (
                                 <button onClick={() => setDetailLigne(detailLigne === i ? null : i)}
                                   title="Voir les préparations"
                                   className={`shrink-0 rounded p-0.5 transition-colors ${
@@ -1540,9 +1659,11 @@ export default function FicheVentePage() {
                           {formatMontant(qte * (l.prixVente ?? 0))}
                         </td>
                       </>}
-                      {/* Une préparation s'ajoute, elle ne s'écrase pas. Une fois
-                          le dossier prêt, le compte est arrêté : plus d'action. */}
-                      {enPreparation && (
+                      {/* Une préparation s'ajoute, elle ne s'écrase pas. On peut
+                          la corriger tant que le dossier n'est pas livré — y
+                          compris une fois « prêt » : sinon, tout annuler y
+                          laisserait sans aucun moyen de re-fournir. */}
+                      {detaillePreparation && (
                         /* Fond opaque : la cellule reste lisible quand les
                            colonnes défilent dessous. */
                         <td className="sticky right-0 border-l border-gray-100 bg-white px-3 py-2.5 dark:border-gray-800 dark:bg-gray-900">
@@ -1550,7 +1671,7 @@ export default function FicheVentePage() {
                             <div className="flex items-center justify-end gap-1.5">
                               {/* Le nombre est sur le bouton : on sait ce qu'il
                                   écrira sans avoir à l'ouvrir. */}
-                              <button onClick={() => completer(i)} disabled={enCours}
+                              <button onClick={() => completer(i)}
                                 className="flex items-center gap-1 rounded-lg bg-indigo-600 px-2.5 py-1.5 text-xs font-bold text-white transition-colors hover:bg-indigo-700 disabled:opacity-40">
                                 <CheckCheck size={12} /> {encorePossible}
                               </button>
@@ -1568,7 +1689,7 @@ export default function FicheVentePage() {
                     </tr>
                     {detailLigne === i && (
                       <tr>
-                        <td colSpan={enPreparation ? 11 : 10} className="px-3 pb-3">
+                        <td colSpan={detaillePreparation ? 11 : 10} className="px-3 pb-3">
                           <div className="rounded-xl bg-gray-50 p-3 dark:bg-gray-800/50">
                             <p className="mb-2 text-xs font-bold uppercase text-gray-400">Préparations</p>
                             <div className="flex flex-col gap-1.5">
@@ -1592,8 +1713,8 @@ export default function FicheVentePage() {
                                   </span>
                                   {x.annulee ? (
                                     <span className="shrink-0 text-gray-400">Annulée</span>
-                                  ) : enPreparation ? (
-                                    <button onClick={() => annulerUnePreparation(x.id)} disabled={enCours}
+                                  ) : detaillePreparation ? (
+                                    <button onClick={() => annulerUnePreparation(x.id)}
                                       className="shrink-0 text-red-500 transition-colors hover:text-red-600">
                                       Annuler
                                     </button>
@@ -1847,7 +1968,7 @@ export default function FicheVentePage() {
 
               <p className="mb-4 text-xs text-gray-400">Maximum {maximum.toLocaleString('fr-FR')}</p>
 
-              <button onClick={ajouterPreparation} disabled={enCours || qtePreparee <= 0}
+              <button onClick={ajouterPreparation} disabled={qtePreparee <= 0}
                 className="w-full rounded-xl bg-indigo-600 py-2 text-sm font-bold text-white transition-colors hover:bg-indigo-700 disabled:opacity-40">
                 {enCours ? 'Enregistrement…' : 'Enregistrer'}
               </button>

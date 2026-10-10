@@ -591,10 +591,36 @@ export default function FicheAchatPage() {
     });
 
     if (aEcrire.length === 0) return;
-    setEnCours(true); setErreur('');
+    const date = aujourdhui();
+
+    /* Silence et vitesse : on inscrit les réceptions à l'écran tout de
+       suite, l'écriture serveur part derrière. Plus de gel ni de boutons
+       gris. Si une écriture échoue, la ligne optimiste disparaît. */
+    const optimistes = aEcrire.map(({ i, quantite }) => {
+      const l = achat.lignes[i];
+      return {
+        id: `tmp-${Date.now()}-${i}`,
+        siteId: achat.siteId,
+        documentId: achatId,
+        ligneIndex: i,
+        produitId: l.produitId ?? null,
+        designation: l.designation,
+        quantite,
+        date,
+        heure: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
+        utilisateur: user!.uid,
+        utilisateurNom: '…',
+        utilisateurFonction: '',
+        annulee: false,
+        note: null,
+      } as Reception;
+    });
+    const tmpIds = new Set(optimistes.map(o => o.id));
+    setReceptions(r => [...optimistes, ...r]);
+    setErreur('');
+
     try {
       const auteur = await auteurCourant(achat.siteId, user!.uid);
-      const date = aujourdhui();
       await Promise.all(aEcrire.map(({ i, quantite }) => {
         const l = achat.lignes[i];
         return enregistrerReception({
@@ -612,46 +638,82 @@ export default function FicheAchatPage() {
         });
       }));
       setReceptions(await chargerReceptions(achatId));
-    } catch (e: any) { setErreur(e?.message ?? 'Échec.'); }
-    finally { setEnCours(false); }
+    } catch (e: any) {
+      setReceptions(r => r.filter(x => !tmpIds.has(x.id)));
+      setErreur(e?.message ?? 'Échec.');
+    }
   }
 
   /** Une réception s'ajoute ; elle ne remplace jamais la précédente. */
   async function ajouterReception() {
-    if (ligneRecue == null || qteRecue <= 0) return;
-    setEnCours(true); setErreur('');
+    if (!achat || ligneRecue == null || qteRecue <= 0) return;
+    const l = achat.lignes[ligneRecue];
+    const i = ligneRecue;
+    const quantite = qteRecue;
+    const note = noteRecue.trim() || null;
+    const date = aujourdhui();
+
+    /* On ferme la saisie et on inscrit la réception tout de suite ;
+       l'écriture serveur suit en silence, sans geler l'écran. */
+    const tmpId = `tmp-${Date.now()}-${i}`;
+    const optimiste = {
+      id: tmpId,
+      siteId: achat.siteId,
+      documentId: achatId,
+      ligneIndex: i,
+      produitId: l.produitId ?? null,
+      designation: l.designation,
+      quantite,
+      date,
+      heure: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
+      utilisateur: user!.uid,
+      utilisateurNom: '…',
+      utilisateurFonction: '',
+      annulee: false,
+      note,
+    } as Reception;
+    setReceptions(r => [optimiste, ...r]);
+    setLigneRecue(null); setQteRecue(0); setNoteRecue('');
+    setErreur('');
+
     try {
-      const l = achat!.lignes[ligneRecue];
-      const auteur = await auteurCourant(achat!.siteId, user!.uid);
+      const auteur = await auteurCourant(achat.siteId, user!.uid);
       await enregistrerReception({
-        siteId: achat!.siteId,
+        siteId: achat.siteId,
         documentId: achatId,
-        ligneIndex: ligneRecue,
+        ligneIndex: i,
         produitId: l.produitId ?? null,
         designation: l.designation,
-        quantite: qteRecue,
-        date: aujourdhui(),
+        quantite,
+        date,
         utilisateur: user!.uid,
         utilisateurNom: auteur.utilisateurNom,
         utilisateurFonction: auteur.utilisateurFonction,
-        note: noteRecue.trim() || null,
+        note,
       });
       setReceptions(await chargerReceptions(achatId));
-      setLigneRecue(null); setQteRecue(0); setNoteRecue('');
-    } catch (e: any) { setErreur(e?.message ?? 'Échec.'); }
-    finally { setEnCours(false); }
+    } catch (e: any) {
+      setReceptions(r => r.filter(x => x.id !== tmpId));
+      setErreur(e?.message ?? 'Échec.');
+    }
   }
 
   /* On n'ajuste pas une réception : on l'annule et on en saisit une autre.
      Le registre montre alors qu'une erreur a été faite et corrigée. */
   async function annulerUneReception(id: string) {
-    setEnCours(true); setErreur('');
+    if (!achat) return;
+    const avant = receptions;
+    if (id.startsWith('tmp-')) { setReceptions(r => r.filter(x => x.id !== id)); return; }
+    setReceptions(r => r.map(x => x.id === id ? { ...x, annulee: true } : x));
+    setErreur('');
     try {
-      const auteur = await auteurCourant(achat!.siteId, user!.uid);
+      const auteur = await auteurCourant(achat.siteId, user!.uid);
       await annulerReception({ receptionId: id, par: user!.uid, parNom: auteur.utilisateurNom });
       setReceptions(await chargerReceptions(achatId));
-    } catch (e: any) { setErreur(e?.message ?? 'Échec.'); }
-    finally { setEnCours(false); }
+    } catch (e: any) {
+      setReceptions(avant);
+      setErreur(e?.message ?? 'Échec.');
+    }
   }
 
   async function ajouterVersement() {
@@ -881,7 +943,7 @@ export default function FicheAchatPage() {
                 (n, l, i) => n + Math.max(0, l.quantiteDemandee - (recu[i] ?? 0)), 0);
               if (total <= 0) return null;
               return (
-                <button onClick={() => completer(null)} disabled={enCours}
+                <button onClick={() => completer(null)}
                   className="flex items-center gap-1.5 rounded-xl border border-indigo-200 px-3 py-1.5 text-xs font-bold text-indigo-600 transition-colors hover:bg-indigo-50 disabled:opacity-40 dark:border-indigo-800/40 dark:hover:bg-indigo-900/20">
                   {enCours ? <Loader2 size={12} className="animate-spin" /> : <CheckCheck size={12} />}
                   Tout recevoir
@@ -900,7 +962,6 @@ export default function FicheAchatPage() {
               const diverge = reference != null && l.quantiteDemandee !== reference;
               const surplus = reference != null && reference > l.quantiteDemandee;
               const lignesRecep = receptions.filter(r => r.ligneIndex === i);
-              const nbRecep = lignesRecep.filter(r => !r.annulee).length;
               const recuLigne = lignesRecep.length > 0
                 ? lignesRecep.filter(r => !r.annulee).reduce((n, r) => n + r.quantite, 0)
                 : (l.quantiteRecue ?? 0);
@@ -940,7 +1001,9 @@ export default function FicheAchatPage() {
                         {recuLigne > 0 || l.quantiteRecue != null
                           ? recuLigne.toLocaleString('fr-FR') : '—'}
                       </span>
-                      {nbRecep > 0 && (
+                      {/* Le ⓘ reste tant qu'il existe une réception, annulée
+                          comprise — c'est lui qui plie le journal. */}
+                      {lignesRecep.length > 0 && (
                         <button onClick={() => setDetailLigne(detailLigne === i ? null : i)}
                           title="Voir les réceptions"
                           className={`shrink-0 rounded p-0.5 transition-colors ${
@@ -962,7 +1025,7 @@ export default function FicheAchatPage() {
                   </div>
 
                   {/* Le détail des livraisons, sous la ligne qu'il concerne. */}
-                  {detailLigne === i && nbRecep > 0 && (
+                  {detailLigne === i && lignesRecep.length > 0 && (
                     <div className="mt-2 rounded-lg bg-gray-50 p-2 dark:bg-gray-800/50">
                       {lignesRecep.map(r => (
                         <div key={r.id}
@@ -980,7 +1043,7 @@ export default function FicheAchatPage() {
                           {r.annulee ? (
                             <span className="shrink-0 text-gray-400">Annulée</span>
                           ) : quantitesEditables ? (
-                            <button onClick={() => annulerUneReception(r.id)} disabled={enCours}
+                            <button onClick={() => annulerUneReception(r.id)}
                               className="shrink-0 text-red-500">Annuler</button>
                           ) : null}
                         </div>
@@ -991,7 +1054,7 @@ export default function FicheAchatPage() {
                   {quantitesEditables && (
                     <div className="mt-2.5 flex items-center gap-1.5">
                       {reste > 0 && (
-                        <button onClick={() => completer(i)} disabled={enCours}
+                        <button onClick={() => completer(i)}
                           className="flex flex-1 items-center justify-center gap-1 rounded-lg bg-indigo-600 px-2.5 py-2 text-xs font-bold text-white transition-colors disabled:opacity-40">
                           <CheckCheck size={12} /> {reste}
                         </button>
@@ -1053,7 +1116,6 @@ export default function FicheAchatPage() {
                   const surplus = reference != null && reference > l.quantiteDemandee;
                   /* Le reçu est la somme des réceptions non annulées. */
                   const lignesRecep = receptions.filter(r => r.ligneIndex === i);
-                  const nbRecep = lignesRecep.filter(r => !r.annulee).length;
                   /* Les dossiers antérieurs aux réceptions n'en ont aucune :
                      leur quantité enregistrée reste la seule trace. */
                   const recuLigne = lignesRecep.length > 0
@@ -1089,8 +1151,10 @@ export default function FicheAchatPage() {
                             {recuLigne > 0 || l.quantiteRecue != null
                               ? recuLigne.toLocaleString('fr-FR') : '—'}
                           </span>
-                          {/* Le détail des livraisons : quand, combien, par qui. */}
-                          {nbRecep > 0 && (
+                          {/* Le détail des livraisons : quand, combien, par qui.
+                              Présent tant qu'il existe une réception, annulée
+                              comprise — c'est lui qui plie le journal. */}
+                          {lignesRecep.length > 0 && (
                             <button onClick={() => setDetailLigne(detailLigne === i ? null : i)}
                               title="Voir les réceptions"
                               className={`shrink-0 rounded p-0.5 transition-colors ${
@@ -1136,7 +1200,7 @@ export default function FicheAchatPage() {
                             {/* Le nombre est sur le bouton : on sait ce qu'il
                                 écrira sans avoir à l'ouvrir. */}
                             {l.quantiteDemandee - recuLigne > 0 && (
-                              <button onClick={() => completer(i)} disabled={enCours}
+                              <button onClick={() => completer(i)}
                                 className="flex items-center gap-1 rounded-lg bg-indigo-600 px-2.5 py-1.5 text-xs font-bold text-white transition-colors hover:bg-indigo-700 disabled:opacity-40">
                                 <CheckCheck size={12} /> {l.quantiteDemandee - recuLigne}
                               </button>
@@ -1179,7 +1243,7 @@ export default function FicheAchatPage() {
                                   {r.annulee ? (
                                     <span className="shrink-0 text-gray-400">Annulée</span>
                                   ) : quantitesEditables ? (
-                                    <button onClick={() => annulerUneReception(r.id)} disabled={enCours}
+                                    <button onClick={() => annulerUneReception(r.id)}
                                       className="shrink-0 text-red-500 transition-colors hover:text-red-600">
                                       Annuler
                                     </button>
@@ -1550,7 +1614,7 @@ export default function FicheAchatPage() {
                 className="flex-1 px-4 py-2 text-sm font-bold text-gray-500 hover:bg-gray-50 dark:hover:bg-gray-800 rounded-xl transition-colors">
                 Annuler
               </button>
-              <button onClick={ajouterReception} disabled={enCours || qteRecue <= 0}
+              <button onClick={ajouterReception} disabled={qteRecue <= 0}
                 className="flex-1 flex items-center justify-center gap-1.5 px-4 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-40 text-white text-sm font-bold rounded-xl transition-colors">
                 {enCours ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Recevoir
               </button>

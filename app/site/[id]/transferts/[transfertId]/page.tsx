@@ -1113,8 +1113,10 @@ export default function FicheTransfertPage() {
                 : (l.quantiteExpediee ?? l.quantiteDemandee);
               const deja = peutExpedierIci ? dejaExp : dejaRec;
               const reste = Math.max(0, attendu - deja);
+              /* Annulées comprises : c'est le ⓘ qui plie le journal, et une
+                 ligne dont tout a été annulé a encore un journal à replier. */
               const nbDecl = receptions.filter(
-                r => r.ligneIndex === i && !r.annulee
+                r => r.ligneIndex === i
                   && (r.etape ?? 'reception') === etapeCourante).length;
               const dispo = montreStock ? stockDe(l) : 0;
               /* Le fond suit l'état pendant qu'on compte, pour l'admin qui
@@ -1355,8 +1357,10 @@ export default function FicheTransfertPage() {
                     : (l.quantiteExpediee ?? l.quantiteDemandee);
                   const deja = peutExpedierIci ? dejaExp : dejaRec;
                   const reste = Math.max(0, attendu - deja);
+                  /* Annulées comprises : le ⓘ plie le journal même quand tout
+                     a été annulé. */
                   const nbDecl = receptions.filter(
-                    r => r.ligneIndex === i && !r.annulee
+                    r => r.ligneIndex === i
                       && (r.etape ?? 'reception') === etapeCourante).length;
                   /* Le fond suit l'état pendant le comptage, pour l'admin qui
                      suit : il prend le pas sur la couleur figée. */
