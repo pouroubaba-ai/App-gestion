@@ -456,7 +456,8 @@ export default function SiteFichePage() {
           {ongletCourant === 'configuration' && (
             <OngletConfiguration siteId={siteId} activiteId={site.activiteId ?? activite?.id}
               role={role} nomSite={site.nom} etatSite={site.etat}
-              onEtatChange={e => setSite(s => (s ? { ...s, etat: e } : s))} />
+              onEtatChange={e => setSite(s => (s ? { ...s, etat: e } : s))}
+              onNomChange={n => setSite(s => (s ? { ...s, nom: n } : s))} />
           )}
           {!ONGLETS_PRETS.includes(ongletCourant) && (
             <div className="min-h-64 flex items-center justify-center">
