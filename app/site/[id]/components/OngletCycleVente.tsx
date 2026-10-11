@@ -1,18 +1,18 @@
 'use client';
-import { useVueUrl } from '@/lib/vue-url';
+import { useVueUrl, useParamUrl, useListeUrl } from '@/lib/vue-url';
 import { marqueOrigine, lienCreation, ouvrable } from '@/lib/retour';
 import { useEffect, useState } from 'react';
 import { formatMontant } from '@/lib/format';
 import { hankenGrotesk } from './finance/font';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { type RoleSite } from '@/lib/roles';
-import { FileText, Loader2, Plus, ArrowUpDown, AlertTriangle, BarChart3, ShoppingCart, SlidersHorizontal } from 'lucide-react';
+import { FileText, Loader2, Plus, ArrowUpDown, AlertTriangle, BarChart3, ShoppingCart, SlidersHorizontal, X } from 'lucide-react';
 import {
   Vente, EtatVente, LIBELLES_VENTE, valeurVente, devisExpire,
   chargerVentesDuSite, peutCommander, Role, joursRestants, venteActive,
 } from '@/lib/flux-marchandise';
 import { ChampRecherche } from '@/components/Champs';
-import FeuilleFiltreStatut from './FeuilleFiltreStatut';
+import FeuilleFiltre from './FeuilleFiltre';
 import {
   chargerPreparationsDuSite, prepareParLigne, type Preparation,
 } from '@/lib/preparations';
@@ -136,7 +136,26 @@ export default function OngletCycleVente({ siteId, userId, role, sites, titre }:
   /* Les statuts retenus dans la liste. Vide = tous, l'etat au repos.
      Il ne sert qu'en vue « en cours » : ailleurs, la carte active a deja
      choisi l'etape. */
-  const [filtreStatuts, setFiltreStatuts] = useState<EtatVente[]>([]);
+  /* Les filtres se retiennent dans l'adresse : revenir d'une fiche, actualiser
+     ou partager le lien les ramène tels quels, au lieu de tout remettre à
+     zéro. Les valeurs permises écartent une adresse bricolée à la main. */
+  const [filtreStatuts, setFiltreStatuts] = useListeUrl<EtatVente>(
+    'fEtat', ['devis', 'commande', 'preparation', 'pret', 'livre']);
+
+  /* L'origine du dossier : vient-il d'un ordre de commande, ou non ? Un
+     dossier d'ordre porte `ordreLien`. Vide = les deux, l'état au repos. */
+  const [filtreOrigine, setFiltreOrigine] = useListeUrl<'ordre' | 'directe'>(
+    'fOrigine', ['ordre', 'directe']);
+
+  /* Le statut du paiement retenu : payé / acompte / impayé. Vide = tous. */
+  const [filtreStatut, setFiltreStatut] = useListeUrl<'paye' | 'acompte' | 'impaye'>(
+    'fStatut', ['paye', 'acompte', 'impaye']);
+
+  /* La plage de dates de commande retenue. Bornes vides = toutes. */
+  const [dateDu, setDateDu] = useParamUrl('fDu');
+  const [dateAu, setDateAu] = useParamUrl('fAu');
+
+  /* Une seule feuille de filtre, à deux niveaux : les types, puis les choix. */
   const [feuilleFiltre, setFeuilleFiltre] = useState(false);
 
   /* Le responsable des commandes fait avancer des dossiers, il ne répond pas
@@ -208,6 +227,16 @@ export default function OngletCycleVente({ siteId, userId, role, sites, titre }:
      a deja ete verse. */
   function resteDe(v: Vente): number {
     return Math.max(0, valeurVente(v.lignes) - (v.avanceVersee ?? 0));
+  }
+
+  /* Le statut du paiement : le versé face au total. Rien = impayé, une
+     partie = acompte, tout = payé. C'est la créance, pas l'étape du dossier. */
+  function statutPaiement(v: Vente): 'paye' | 'acompte' | 'impaye' {
+    const total = valeurVente(v.lignes);
+    const verse = v.avanceVersee ?? 0;
+    if (total > 0 && verse >= total) return 'paye';
+    if (verse > 0) return 'acompte';
+    return 'impaye';
   }
 
   /* Le bon de commande qu'un ordre pose chez le site qui expédie.
@@ -288,9 +317,38 @@ export default function OngletCycleVente({ siteId, userId, role, sites, titre }:
      annulés ne sont plus ici — ils sont archivés. */
   const filtreActif = modeVue === 'encours' && vue !== 'livre'
     && filtreStatuts.length > 0;
+  /* L'origine se filtre partout, pas seulement en « en cours » : on veut
+     pouvoir isoler les dossiers d'ordre aussi bien dans les livrés. */
+  const origineActive = filtreOrigine.length > 0 && filtreOrigine.length < 2;
+  const estDOrdre = (v: any) => !!v.ordreLien;
+  /* La date qui fait foi pour le filtre : celle de la commande (ou du devis). */
+  const dateDe = (v: Vente) => (v as any).dateCommande ?? (v as any).dateDevis ?? null;
+  const dateActive = !!(dateDu || dateAu);
+  /* Le statut ne se filtre que là où l'argent est visible, et jamais sur les
+     devis (qui n'encaissent rien) : ailleurs, la colonne elle-même est absente. */
+  const statutPertinentPaiement = montreArgent && vue !== 'devis';
+  const statutPaiementActif = statutPertinentPaiement && filtreStatut.length > 0;
   const filtrees = listeVue.filter(v =>
     (!q || v.reference.toLowerCase().includes(q) || v.clientNom.toLowerCase().includes(q))
-    && (!filtreActif || filtreStatuts.includes(v.etat)));
+    && (!filtreActif || filtreStatuts.includes(v.etat))
+    && (!origineActive || (filtreOrigine.includes('ordre') ? estDOrdre(v) : !estDOrdre(v)))
+    && (!statutPaiementActif || filtreStatut.includes(statutPaiement(v)))
+    && (!dateActive || (() => {
+      const d = dateDe(v);
+      if (!d) return false;
+      if (dateDu && d < dateDu) return false;
+      if (dateAu && d > dateAu) return false;
+      return true;
+    })()));
+
+  /* Le filtre par état n'a de sens qu'en « en cours » hors livré ; origine et
+     date partout. Le type « État » ne paraît donc dans la feuille que là. */
+  const statutPertinent = modeVue === 'encours' && vue !== 'livre';
+  const nFiltresActifs =
+    (statutPertinent ? filtreStatuts.length : 0)
+    + (origineActive ? 1 : 0)
+    + (statutPaiementActif ? filtreStatut.length : 0)
+    + (dateActive ? 1 : 0);
 
   const affiches = tri
     ? [...filtrees].sort((a, b) => {
@@ -748,22 +806,58 @@ export default function OngletCycleVente({ siteId, userId, role, sites, titre }:
             <ChampRecherche className="flex-1 min-w-[200px]"
               placeholder="Rechercher une référence, un client…"
               valeur={recherche} onChange={setRecherche} />
-            {/* Le filtre ne parait qu'ou il sert : en vue « statut », la
-                carte active a deja choisi l'etape, et en « livre » il n'y
-                a qu'un seul statut. */}
-            {modeVue === 'encours' && vue !== 'livre' && (
-              <button type="button" onClick={() => setFeuilleFiltre(true)}
-                className={`flex shrink-0 items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-bold transition-colors ${
-                  filtreActif
-                    ? 'border-indigo-200 bg-indigo-50 text-indigo-600 dark:border-indigo-800/40 dark:bg-indigo-900/20 dark:text-indigo-400'
-                    : 'border-gray-200 text-gray-600 hover:border-indigo-400 hover:text-indigo-600 dark:border-gray-700 dark:text-gray-300'}`}>
-                <SlidersHorizontal size={13} />
-                Statut
-                {filtreActif && (
-                  <span className="rounded-md bg-indigo-600 px-1.5 text-[10px] text-white">
-                    {filtreStatuts.length}
-                  </span>
-                )}
+            {/* Un seul bouton : il ouvre la feuille qui montre d'abord les
+                types de filtre, puis leurs choix. La pastille dit combien
+                de filtres sont posés, tous types confondus. */}
+            <button type="button" onClick={() => setFeuilleFiltre(true)}
+              className={`flex shrink-0 items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-bold transition-colors ${
+                nFiltresActifs > 0
+                  ? 'border-indigo-200 bg-indigo-50 text-indigo-600 dark:border-indigo-800/40 dark:bg-indigo-900/20 dark:text-indigo-400'
+                  : 'border-gray-200 text-gray-600 hover:border-indigo-400 hover:text-indigo-600 dark:border-gray-700 dark:text-gray-300'}`}>
+              <SlidersHorizontal size={13} />
+              Filtrer
+              {nFiltresActifs > 0 && (
+                <span className="rounded-md bg-indigo-600 px-1.5 text-[10px] text-white">
+                  {nFiltresActifs}
+                </span>
+              )}
+            </button>
+
+            {/* Les filtres actifs, retirables ici même sans rouvrir la feuille :
+                chaque puce porte sa croix, et « Tout effacer » les lève d'un coup. */}
+            {statutPertinent && filtreStatuts.map(e => (
+              <button key={e} type="button"
+                onClick={() => setFiltreStatuts(filtreStatuts.filter(x => x !== e))}
+                className="flex shrink-0 items-center gap-1 rounded-xl bg-indigo-50 px-2.5 py-2 text-xs font-bold text-indigo-600 transition-colors hover:bg-indigo-100 dark:bg-indigo-900/20 dark:text-indigo-400">
+                {LIBELLES_VENTE[e]} <X size={12} />
+              </button>
+            ))}
+            {origineActive && (
+              <button type="button" onClick={() => setFiltreOrigine([])}
+                className="flex shrink-0 items-center gap-1 rounded-xl bg-indigo-50 px-2.5 py-2 text-xs font-bold text-indigo-600 transition-colors hover:bg-indigo-100 dark:bg-indigo-900/20 dark:text-indigo-400">
+                {filtreOrigine.includes('ordre') ? 'Venant d’un ordre' : 'Ne venant pas d’un ordre'} <X size={12} />
+              </button>
+            )}
+            {statutPaiementActif && filtreStatut.map(s => (
+              <button key={s} type="button"
+                onClick={() => setFiltreStatut(filtreStatut.filter(x => x !== s))}
+                className="flex shrink-0 items-center gap-1 rounded-xl bg-indigo-50 px-2.5 py-2 text-xs font-bold text-indigo-600 transition-colors hover:bg-indigo-100 dark:bg-indigo-900/20 dark:text-indigo-400">
+                {s === 'paye' ? 'Payé' : s === 'acompte' ? 'Acompte' : 'Impayé'} <X size={12} />
+              </button>
+            ))}
+            {dateActive && (
+              <button type="button" onClick={() => { setDateDu(''); setDateAu(''); }}
+                className="flex shrink-0 items-center gap-1 rounded-xl bg-indigo-50 px-2.5 py-2 text-xs font-bold text-indigo-600 transition-colors hover:bg-indigo-100 dark:bg-indigo-900/20 dark:text-indigo-400">
+                {dateDu && dateAu ? `${formatDate(dateDu)} → ${formatDate(dateAu)}`
+                  : dateDu ? `Depuis ${formatDate(dateDu)}`
+                  : `Jusqu’au ${formatDate(dateAu)}`} <X size={12} />
+              </button>
+            )}
+            {nFiltresActifs > 1 && (
+              <button type="button"
+                onClick={() => { setFiltreStatuts([]); setFiltreOrigine([]); setFiltreStatut([]); setDateDu(''); setDateAu(''); }}
+                className="flex shrink-0 items-center gap-1 text-xs font-bold text-gray-400 transition-colors hover:text-red-500">
+                Tout effacer
               </button>
             )}
           </div>
@@ -932,6 +1026,23 @@ export default function OngletCycleVente({ siteId, userId, role, sites, titre }:
                       </span>
                     );
                   } },
+                /* Le statut du paiement, lu sur le versé face au total :
+                   rien versé = impayé, une partie = acompte, tout = payé.
+                   C'est l'état de la créance, distinct de l'état du dossier. */
+                { cle: 'statutPaiement', label: 'Statut', rang: 'corps' as const,
+                  rendu: (v: Vente) => {
+                    const s = statutPaiement(v);
+                    const style = s === 'paye'
+                      ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                      : s === 'acompte'
+                      ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
+                      : 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400';
+                    return (
+                      <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${style}`}>
+                        {s === 'paye' ? 'Payé' : s === 'acompte' ? 'Acompte' : 'Impayé'}
+                      </span>
+                    );
+                  } },
               ] : []),
               /* Le meme chiffre, deux sens : en preparation un travail
                  inacheve, une fois pret un non-livre assume. */
@@ -949,15 +1060,15 @@ export default function OngletCycleVente({ siteId, userId, role, sites, titre }:
                   );
                 },
               }] : []),
-              /* Chaque étape court vers sa propre échéance : un devis vers
-                 son expiration, une commande vers sa livraison.
-                 Négatif = l'échéance est passée. Le seuil n'est plus une
-                 convention arbitraire : c'est zéro. */
-              { cle: 'anciennete', label: vue === 'devis' ? 'Expire dans' : 'Livraison dans',
-                rang: 'pied',
-                enTete: <BoutonTri cle="anciennete"
-                  label={vue === 'devis' ? 'Expire dans' : 'Livraison dans'} />,
-                rendu: v => {
+              /* Seul le devis court vers une échéance qu'on surveille : son
+                 expiration. « Livraison dans » a été retirée — elle
+                 n'apporte rien d'utile dans la liste.
+                 Négatif = l'échéance est passée. Le seuil, c'est zéro. */
+              ...(vue === 'devis' ? [{
+                cle: 'anciennete', label: 'Expire dans',
+                rang: 'pied' as const,
+                enTete: <BoutonTri cle="anciennete" label="Expire dans" />,
+                rendu: (v: Vente) => {
                   const restants = joursRestants(v);
                   return (
                     <span className={
@@ -968,7 +1079,7 @@ export default function OngletCycleVente({ siteId, userId, role, sites, titre }:
                       {restants == null ? '—' : `${restants} j`}
                     </span>
                   );
-                } },
+                } }] : []),
             ] as Colonne<Vente>[]}
           />
         )}
@@ -976,17 +1087,64 @@ export default function OngletCycleVente({ siteId, userId, role, sites, titre }:
       </>
       )}
 
-      {/* Le filtre par statut : il reprend le choix que les tuiles
-          offraient, sans quitter la vue d'ensemble. */}
-      {feuilleFiltre && (
-        <FeuilleFiltreStatut
-          options={etapes.filter(e => e !== 'livre').map(e => ({
-            cle: e, label: LIBELLES_VENTE[e], n: parEtat(e).length,
-          }))}
-          choisis={filtreStatuts}
-          onChange={c => setFiltreStatuts(c as EtatVente[])}
-          onFermer={() => setFeuilleFiltre(false)} />
-      )}
+      {/* Une seule feuille de filtre, à deux niveaux : d'abord les types
+          (Statut, Origine), puis les choix du type ouvert. Le compte de
+          l'origine se lit sur la vue courante, hors filtre d'origine, pour
+          qu'une catégorie vide se voie avant le clic. */}
+      {feuilleFiltre && (() => {
+        const baseOrigine = listeVue.filter(v =>
+          (!q || v.reference.toLowerCase().includes(q) || v.clientNom.toLowerCase().includes(q))
+          && (!filtreActif || filtreStatuts.includes(v.etat)));
+        const nOrdre = baseOrigine.filter(v => estDOrdre(v)).length;
+        const nDirecte = baseOrigine.length - nOrdre;
+        const nPaye = baseOrigine.filter(v => statutPaiement(v) === 'paye').length;
+        const nAcompte = baseOrigine.filter(v => statutPaiement(v) === 'acompte').length;
+        const nImpaye = baseOrigine.filter(v => statutPaiement(v) === 'impaye').length;
+        const groupes = [
+          ...(statutPertinent ? [{
+            cle: 'etat',
+            label: 'État',
+            options: etapes.filter(e => e !== 'livre').map(e => ({
+              cle: e, label: LIBELLES_VENTE[e], n: parEtat(e).length,
+            })),
+            choisis: filtreStatuts as string[],
+            onChange: (c: string[]) => setFiltreStatuts(c as EtatVente[]),
+          }] : []),
+          {
+            cle: 'origine',
+            label: 'Origine',
+            options: [
+              { cle: 'ordre', label: 'Venant d’un ordre', n: nOrdre },
+              { cle: 'directe', label: 'Ne venant pas d’un ordre', n: nDirecte },
+            ],
+            choisis: filtreOrigine as string[],
+            onChange: (c: string[]) => setFiltreOrigine(c as ('ordre' | 'directe')[]),
+          },
+          ...(statutPertinentPaiement ? [{
+            cle: 'statut',
+            label: 'Statut',
+            options: [
+              { cle: 'paye', label: 'Payé', n: nPaye },
+              { cle: 'acompte', label: 'Acompte', n: nAcompte },
+              { cle: 'impaye', label: 'Impayé', n: nImpaye },
+            ],
+            choisis: filtreStatut as string[],
+            onChange: (c: string[]) => setFiltreStatut(c as ('paye' | 'acompte' | 'impaye')[]),
+          }] : []),
+          {
+            cle: 'date',
+            label: 'Date',
+            date: {
+              du: dateDu, au: dateAu,
+              onChange: (du: string, au: string) => { setDateDu(du); setDateAu(au); },
+            },
+          },
+        ];
+        return (
+          <FeuilleFiltre groupes={groupes}
+            onFermer={() => setFeuilleFiltre(false)} />
+        );
+      })()}
 
       {/* Le rapport lit toutes les ventes, pas seulement les vivantes : il
           regarde une période écoulée, là où l'onglet montre le travail en cours. */}

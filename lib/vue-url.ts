@@ -61,3 +61,60 @@ export function useVueUrl<T extends string>(
 
   return [vue, setVue];
 }
+
+/* L'adresse courante, modifiée sans navigation ni entrée d'historique.
+   Partagé par les hooks ci-dessous : chacun relit `window.location` plutôt
+   que les `searchParams` du rendu, pour que deux écritures de suite ne
+   s'écrasent pas. */
+function ecrireParam(cle: string, valeur: string | null) {
+  const q = new URLSearchParams(window.location.search);
+  if (valeur === null || valeur === '') q.delete(cle);
+  else q.set(cle, valeur);
+  const suite = q.toString();
+  window.history.replaceState(null, '',
+    suite ? `${window.location.pathname}?${suite}` : window.location.pathname);
+}
+
+/**
+ * Une valeur libre (texte, date…) retenue dans l'adresse.
+ *
+ * Comme `useVueUrl`, mais sans liste de valeurs permises : une date ou une
+ * recherche n'en a pas. Vide = absente de l'URL.
+ */
+export function useParamUrl(
+  cle: string, defaut = '',
+): [string, (v: string) => void] {
+  const params = useSearchParams();
+  const [val, setValEtat] = useState<string>(params.get(cle) ?? defaut);
+
+  const setVal = useCallback((v: string) => {
+    setValEtat(v);
+    ecrireParam(cle, v || null);
+  }, [cle]);
+
+  return [val, setVal];
+}
+
+/**
+ * Une sélection multiple retenue dans l'adresse, en valeurs séparées par
+ * des virgules. Vide = absente de l'URL. Les valeurs hors de `permises`
+ * sont écartées à la lecture, pour qu'une adresse modifiée à la main ne
+ * laisse pas passer n'importe quoi.
+ */
+export function useListeUrl<T extends string>(
+  cle: string, permises: readonly T[],
+): [T[], (v: T[]) => void] {
+  const params = useSearchParams();
+  const [liste, setListeEtat] = useState<T[]>(() => {
+    const brut = params.get(cle);
+    if (!brut) return [];
+    return brut.split(',').filter(x => (permises as readonly string[]).includes(x)) as T[];
+  });
+
+  const setListe = useCallback((v: T[]) => {
+    setListeEtat(v);
+    ecrireParam(cle, v.length ? v.join(',') : null);
+  }, [cle]);
+
+  return [liste, setListe];
+}

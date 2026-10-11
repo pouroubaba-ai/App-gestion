@@ -30,10 +30,12 @@ interface Props {
   choisis: string[];
   onChange: (choisis: string[]) => void;
   onFermer: () => void;
+  /** Le titre de la feuille ; par défaut, le filtre par statut. */
+  titre?: string;
 }
 
 export default function FeuilleFiltreStatut({
-  options, choisis, onChange, onFermer,
+  options, choisis, onChange, onFermer, titre = 'Filtrer par statut',
 }: Props) {
   /* De combien la feuille a été tirée vers le bas : elle suit le doigt. */
   const [tire, setTire] = useState(0);
@@ -93,7 +95,7 @@ export default function FeuilleFiltreStatut({
         <div className="px-5 pb-5 pt-3 sm:pt-5">
           <div className="flex items-center justify-between gap-3">
             <p className="text-sm font-bold text-gray-900 dark:text-gray-100">
-              Filtrer par statut
+              {titre}
             </p>
             {/* Tout effacer d'un geste : décocher un à un pour revenir au
                 départ est un travail que la feuille doit s'épargner. */}
