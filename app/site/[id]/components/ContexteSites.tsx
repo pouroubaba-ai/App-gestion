@@ -72,8 +72,24 @@ export function useSites(siteId: Portee, sites?: SiteConnu[]) {
     return m;
   }, [sites]);
 
-  /* Le filtre du propriétaire : aucun site choisi veut dire tous. */
-  const [filtre, setFiltre] = useState<string>('');
+  /* Le filtre du propriétaire : aucun site choisi veut dire tous.
+   *
+   * Dans l'adresse, comme la bascule « vue » juste en dessous : sinon,
+   * fermer une fiche ou actualiser le reperdait, et l'on retombait sur
+   * « tous les sites » alors qu'on en regardait un seul. */
+  const [filtre, setFiltreEtat] = useState<string>(() => {
+    try { return new URLSearchParams(window.location.search).get('fSite') ?? ''; }
+    catch { return ''; }
+  });
+
+  const setFiltre = useCallback((v: string) => {
+    setFiltreEtat(v);
+    const q = new URLSearchParams(window.location.search);
+    if (v) q.set('fSite', v); else q.delete('fSite');
+    const suite = q.toString();
+    window.history.replaceState(null, '',
+      suite ? `${window.location.pathname}?${suite}` : window.location.pathname);
+  }, []);
 
   /* Ce qu'on regarde : tout mêlé, ou site par site. La vue par site
    * répartit ce qui est déjà chargé — elle ne relit rien.

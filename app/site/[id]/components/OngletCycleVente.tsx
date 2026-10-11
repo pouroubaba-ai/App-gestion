@@ -1,12 +1,12 @@
 'use client';
 import { useVueUrl, useParamUrl, useListeUrl } from '@/lib/vue-url';
 import { marqueOrigine, lienCreation, ouvrable } from '@/lib/retour';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, Fragment } from 'react';
 import { formatMontant } from '@/lib/format';
 import { hankenGrotesk } from './finance/font';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { type RoleSite } from '@/lib/roles';
-import { FileText, Loader2, Plus, ArrowUpDown, AlertTriangle, BarChart3, ShoppingCart, SlidersHorizontal, X } from 'lucide-react';
+import { FileText, Loader2, Plus, ArrowUpDown, AlertTriangle, BarChart3, ShoppingCart, SlidersHorizontal, X, ChevronRight } from 'lucide-react';
 import {
   Vente, EtatVente, LIBELLES_VENTE, valeurVente, devisExpire,
   chargerVentesDuSite, peutCommander, Role, joursRestants, venteActive,
@@ -110,6 +110,11 @@ export default function OngletCycleVente({ siteId, userId, role, sites, titre }:
   const [modeVue, setModeVue] = useVueUrl<'encours' | 'statut'>(
     'mode', 'encours', ['encours', 'statut']);
 
+  /* Deux lectures de la même liste : dossier par dossier (le défaut), ou
+     regroupée par client avec ses cumuls. Retenue dans l'adresse. */
+  const [vueParQui, setVueParQui] = useVueUrl<'document' | 'client'>(
+    'par', 'document', ['document', 'client']);
+
   /**
    * Changer de carte sans effacer le reste de l'adresse.
    *
@@ -157,6 +162,9 @@ export default function OngletCycleVente({ siteId, userId, role, sites, titre }:
 
   /* Une seule feuille de filtre, à deux niveaux : les types, puis les choix. */
   const [feuilleFiltre, setFeuilleFiltre] = useState(false);
+
+  /* Le client déplié, dans la vue par personne : on voit alors ses dossiers. */
+  const [clientOuvert, setClientOuvert] = useState<string | null>(null);
 
   /* Le responsable des commandes fait avancer des dossiers, il ne répond pas
      des recettes du site : les montants ne lui apprendraient rien et exposent
@@ -267,15 +275,55 @@ export default function OngletCycleVente({ siteId, userId, role, sites, titre }:
 
   /* L'onglet ne montre que ce qui est vivant : un dossier clos, annulé ou
      expiré s'archive et se consulte par le rapport. Sans ça, la carte Livré
-     accumulerait des années de dossiers et noierait le travail du jour. */
+     accumulerait des années de dossiers et noierait le travail du jour.
+
+     Exception : dès qu'on pose un filtre de date, on cherche justement dans
+     le passé. On lève alors la limite « livré = aujourd'hui » et on laisse
+     le filtre de date décider — sinon il ne ramènerait jamais rien d'hier. */
+  /* Les filtres transverses, définis ici pour que `parEtat` (donc les cartes)
+     et la liste s'appuient tous dessus. */
+  const q = recherche.trim().toLowerCase();
+  /* L'origine se filtre partout, pas seulement en « en cours » : on veut
+     pouvoir isoler les dossiers d'ordre aussi bien dans les livrés. */
+  const origineActive = filtreOrigine.length > 0 && filtreOrigine.length < 2;
+  const estDOrdre = (v: any) => !!v.ordreLien;
+  /* La date qui fait foi pour le filtre : celle de la commande (ou du devis). */
+  const dateDe = (v: Vente) => (v as any).dateCommande ?? (v as any).dateDevis ?? null;
+  const dateActive = !!(dateDu || dateAu);
+  /* Le statut ne se filtre que là où l'argent est visible, et jamais sur les
+     devis (qui n'encaissent rien). */
+  const statutPertinentPaiement = montreArgent && vue !== 'devis';
+  const statutPaiementActif = statutPertinentPaiement && filtreStatut.length > 0;
+  /* Les filtres qui valent pour toutes les cartes à la fois : recherche,
+     origine, statut de paiement, date. (L'état, lui, EST la carte — on ne
+     l'applique pas ici, sinon une carte hors sélection compterait zéro.) */
+  function passeTransverse(v: Vente): boolean {
+    if (q && !v.reference.toLowerCase().includes(q) && !v.clientNom.toLowerCase().includes(q)) return false;
+    if (origineActive && (filtreOrigine.includes('ordre') ? !estDOrdre(v) : estDOrdre(v))) return false;
+    if (statutPaiementActif && !filtreStatut.includes(statutPaiement(v))) return false;
+    if (dateActive) {
+      const d = dateDe(v);
+      if (!d) return false;
+      if (dateDu && d < dateDu) return false;
+      if (dateAu && d > dateAu) return false;
+    }
+    return true;
+  }
+
+  const dateFiltreVal = !!(dateDu || dateAu);
   const actives = ventes
-    .filter(venteActive)
+    .filter(v => dateFiltreVal && v.etat === 'livre'
+      ? v.etat === 'livre'              // tout livré non annulé : le filtre de date tranche
+      : venteActive(v))
     /* En vue d'ensemble, le bon de la source s'efface devant la
        commande qu'il sert : les deux disent la même marchandise, et
        seule celle du site qui facture porte le client. Chez son propre
        site, il reste entier. */
     .filter(v => !ctx.ensemble || !estBonDOrdre(v));
-  const parEtat = (e: EtatVente) => actives.filter(v => v.etat === e);
+  /* Les dossiers d'un état, filtres transverses appliqués : ainsi le compte
+     des cartes suit la recherche, l'origine, le statut de paiement et la date,
+     comme la liste. (`passeTransverse` est déclaré plus bas — hoisté.) */
+  const parEtat = (e: EtatVente) => actives.filter(v => v.etat === e && passeTransverse(v));
   /* En vue « en cours », la carte couvre tous les statuts sauf le livre :
      filtrer sur le seul « commande » aurait cache les dossiers en
      preparation, que la carte comptait pourtant. */
@@ -312,34 +360,14 @@ export default function OngletCycleVente({ siteId, userId, role, sites, titre }:
     else { setTri(col); setOrdre('desc'); }
   }
 
-  const q = recherche.trim().toLowerCase();
   /* Plus de filtre d'état : chaque carte ne contient qu'un état, et les
      annulés ne sont plus ici — ils sont archivés. */
   const filtreActif = modeVue === 'encours' && vue !== 'livre'
     && filtreStatuts.length > 0;
-  /* L'origine se filtre partout, pas seulement en « en cours » : on veut
-     pouvoir isoler les dossiers d'ordre aussi bien dans les livrés. */
-  const origineActive = filtreOrigine.length > 0 && filtreOrigine.length < 2;
-  const estDOrdre = (v: any) => !!v.ordreLien;
-  /* La date qui fait foi pour le filtre : celle de la commande (ou du devis). */
-  const dateDe = (v: Vente) => (v as any).dateCommande ?? (v as any).dateDevis ?? null;
-  const dateActive = !!(dateDu || dateAu);
-  /* Le statut ne se filtre que là où l'argent est visible, et jamais sur les
-     devis (qui n'encaissent rien) : ailleurs, la colonne elle-même est absente. */
-  const statutPertinentPaiement = montreArgent && vue !== 'devis';
-  const statutPaiementActif = statutPertinentPaiement && filtreStatut.length > 0;
+
   const filtrees = listeVue.filter(v =>
-    (!q || v.reference.toLowerCase().includes(q) || v.clientNom.toLowerCase().includes(q))
-    && (!filtreActif || filtreStatuts.includes(v.etat))
-    && (!origineActive || (filtreOrigine.includes('ordre') ? estDOrdre(v) : !estDOrdre(v)))
-    && (!statutPaiementActif || filtreStatut.includes(statutPaiement(v)))
-    && (!dateActive || (() => {
-      const d = dateDe(v);
-      if (!d) return false;
-      if (dateDu && d < dateDu) return false;
-      if (dateAu && d > dateAu) return false;
-      return true;
-    })()));
+    passeTransverse(v)
+    && (!filtreActif || filtreStatuts.includes(v.etat)));
 
   /* Le filtre par état n'a de sens qu'en « en cours » hors livré ; origine et
      date partout. Le type « État » ne paraît donc dans la feuille que là. */
@@ -375,6 +403,29 @@ export default function OngletCycleVente({ siteId, userId, role, sites, titre }:
         }
         return (ra ?? 9999) - (rb ?? 9999);
       });
+
+  /* La liste regroupée par client : un client, ses dossiers, et ses cumuls.
+     Chaque groupe garde la liste de ses ventes pour l'affichage déplié. */
+  const parClient = (() => {
+    const m = new Map<string, {
+      cle: string; nom: string; dossiers: Vente[];
+      total: number; verse: number; reste: number;
+    }>();
+    for (const v of affiches) {
+      const cle = (v as any).clientId || v.clientNom || '—';
+      const g = m.get(cle) ?? {
+        cle, nom: v.clientNom || '—', dossiers: [] as Vente[],
+        total: 0, verse: 0, reste: 0,
+      };
+      g.dossiers.push(v);
+      g.total += valeurVente(v.lignes);
+      g.verse += (v.avanceVersee ?? 0);
+      g.reste += resteDe(v);
+      m.set(cle, g);
+    }
+    /* Le plus gros reste dû en tête : c'est lui qu'on vient surveiller. */
+    return [...m.values()].sort((a, b) => b.reste - a.reste);
+  })();
 
   function Th({ cle, label }: { cle: NonNullable<typeof tri>; label: string }) {
     return (
@@ -755,7 +806,7 @@ export default function OngletCycleVente({ siteId, userId, role, sites, titre }:
             {LIBELLES_VENTE[vue]}
             {/* La carte Livré ne porte que le jour : sans cette mention, son
                 montant se lirait comme un cumul. */}
-            {vue === 'livre' && <span className="font-medium text-gray-400"> aujourd'hui</span>}
+            {vue === 'livre' && !dateFiltreVal && <span className="font-medium text-gray-400"> aujourd'hui</span>}
           </p>
           {/* Seuls devis et commande s'ouvrent : les autres états sont atteints
               par le cycle, jamais créés. Le bouton suit donc la carte active,
@@ -863,10 +914,111 @@ export default function OngletCycleVente({ siteId, userId, role, sites, titre }:
           </div>
         )}
 
+        {/* La bascule, sous la barre de recherche, sur sa propre ligne :
+            lire la même liste dossier par dossier, ou regroupée par client.
+            Réservée là où les montants s'affichent. */}
+        {listeVue.length > 0 && montreArgent && (
+          <div className="mb-4 flex rounded-xl border border-gray-200 p-0.5 w-fit dark:border-gray-700">
+            {([['document', 'Document'], ['client', 'Par personne']] as const).map(([v, lbl]) => (
+              <button key={v} type="button" onClick={() => setVueParQui(v)}
+                className={`rounded-lg px-3 py-1.5 text-xs font-bold transition-colors ${
+                  vueParQui === v
+                    ? 'bg-indigo-600 text-white'
+                    : 'text-gray-500 hover:text-indigo-600'}`}>
+                {lbl}
+              </button>
+            ))}
+          </div>
+        )}
+
         {affiches.length === 0 ? (
           <p className="text-xs text-gray-400 text-center py-8">
             {q ? 'Aucun résultat.' : 'Aucun dossier.'}
           </p>
+        ) : vueParQui === 'client' && montreArgent ? (
+          /* ————— Vue par personne : un client, ses cumuls, ses dossiers —————
+             Même modèle de tableau que la vue Document : en-tête indigo,
+             cellules centrées, lignes séparées. Le client se déplie sur ses
+             dossiers (ce que la liste plate ne sait pas faire seule). */
+          <div>
+            <p className="text-sm font-medium text-gray-500 mb-2">
+              {parClient.length} client{parClient.length > 1 ? 's' : ''}
+            </p>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm whitespace-nowrap">
+                <thead>
+                  <tr className="bg-indigo-600 text-white">
+                    {['Client', 'Dossiers', 'Total', 'Versé', 'Reste', 'Statut'].map(h => (
+                      <th key={h} className="text-center px-3 py-2.5 font-medium">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50 dark:divide-gray-800">
+                  {parClient.map(g => {
+                    const ouvert = clientOuvert === g.cle;
+                    const s = g.total > 0 && g.verse >= g.total ? 'paye'
+                      : g.verse > 0 ? 'acompte' : 'impaye';
+                    const stylePastille = s === 'paye'
+                      ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                      : s === 'acompte'
+                      ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
+                      : 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400';
+                    return (
+                      <Fragment key={g.cle}>
+                        <tr onClick={() => setClientOuvert(ouvert ? null : g.cle)}
+                          className="cursor-pointer transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/50">
+                          <td className="px-3 py-2.5 text-center">
+                            <span className="inline-flex items-center gap-1.5 font-medium text-gray-900 dark:text-gray-100">
+                              <ChevronRight size={14}
+                                className={`text-gray-400 transition-transform ${ouvert ? 'rotate-90' : ''}`} />
+                              {g.nom}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2.5 text-center text-gray-500">{g.dossiers.length}</td>
+                          <td className="px-3 py-2.5 text-center font-bold text-gray-900 dark:text-gray-100">{formatMontant(g.total)}</td>
+                          <td className="px-3 py-2.5 text-center text-gray-500">{g.verse > 0 ? formatMontant(g.verse) : '—'}</td>
+                          <td className={`px-3 py-2.5 text-center font-bold ${g.reste > 0 ? 'text-orange-500' : 'text-green-600'}`}>
+                            {g.reste > 0 ? formatMontant(g.reste) : 'Soldé'}
+                          </td>
+                          <td className="px-3 py-2.5 text-center">
+                            <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${stylePastille}`}>
+                              {s === 'paye' ? 'Payé' : s === 'acompte' ? 'Acompte' : 'Impayé'}
+                            </span>
+                          </td>
+                        </tr>
+                        {ouvert && g.dossiers.map(v => (
+                          <tr key={v.id} onClick={() => router.push(
+                            ouvrable(`/site/${(v as any).siteId ?? ctx.siteEcriture}/ventes/${v.id}?carte=${vue}${ctx.depuisEnsemble ? '&de=ensemble' : ''}`))}
+                            className="cursor-pointer bg-gray-50/50 text-xs transition-colors hover:bg-indigo-50/40 dark:bg-gray-800/30 dark:hover:bg-indigo-900/10">
+                            <td className="px-3 py-2 text-center text-gray-600 dark:text-gray-300">
+                              {v.reference}
+                              <span className="ml-2 text-gray-400">{formatDate((v as any).dateCommande ?? (v as any).dateDevis)}</span>
+                            </td>
+                            <td className="px-3 py-2 text-center text-gray-400">{v.lignes.length}</td>
+                            <td className="px-3 py-2 text-center text-gray-700 dark:text-gray-200">{formatMontant(valeurVente(v.lignes))}</td>
+                            <td className="px-3 py-2 text-center text-gray-400">{(v.avanceVersee ?? 0) > 0 ? formatMontant(v.avanceVersee) : '—'}</td>
+                            <td className={`px-3 py-2 text-center font-medium ${resteDe(v) > 0 ? 'text-orange-500' : 'text-green-600'}`}>
+                              {resteDe(v) > 0 ? formatMontant(resteDe(v)) : 'Soldé'}
+                            </td>
+                            <td className="px-3 py-2 text-center">
+                              {(() => {
+                                const sv = statutPaiement(v);
+                                return (
+                                  <span className="text-[11px] text-gray-400">
+                                    {sv === 'paye' ? 'Payé' : sv === 'acompte' ? 'Acompte' : 'Impayé'}
+                                  </span>
+                                );
+                              })()}
+                            </td>
+                          </tr>
+                        ))}
+                      </Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
         ) : (
           <ListeDossiers
             dossiers={affiches}
@@ -1122,7 +1274,7 @@ export default function OngletCycleVente({ siteId, userId, role, sites, titre }:
           },
           ...(statutPertinentPaiement ? [{
             cle: 'statut',
-            label: 'Statut',
+            label: 'Statut de paiement',
             options: [
               { cle: 'paye', label: 'Payé', n: nPaye },
               { cle: 'acompte', label: 'Acompte', n: nAcompte },
