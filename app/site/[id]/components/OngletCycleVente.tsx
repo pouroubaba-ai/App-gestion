@@ -129,13 +129,19 @@ export default function OngletCycleVente({ siteId, userId, role, sites, titre }:
    * paramètre. Le chemin vient de `depuisEnsemble` : c'est la porte par
    * laquelle on est entré, pas le nombre de sites regardés.
    */
+  /* On écrit `carte` dans l'adresse SANS navigation (replaceState), comme le
+     fait `useVueUrl` : un `router.replace` ici refaisait voir toute l'adresse
+     à Next, dont le `searchParams` est en retard — il resynchronisait alors
+     l'onglet sur une valeur périmée et la page sautait vers un autre onglet
+     (Fonds). `setVue` met à jour l'état React ; cette écriture ne fait que
+     garder l'adresse d'accord, `onglet` compris, et ne déclenche aucun
+     re-rendu de la page d'ensemble. */
   function allerCarte(cle: string) {
     const q = new URLSearchParams(window.location.search);
     q.set('onglet', 'cycle-vente');
     q.set('carte', cle);
-    router.replace(
-      `${ctx.depuisEnsemble ? '/ensemble' : `/site/${siteId}`}?${q.toString()}`,
-      { scroll: false });
+    window.history.replaceState(null, '',
+      `${window.location.pathname}?${q.toString()}`);
   }
 
   /* Les statuts retenus dans la liste. Vide = tous, l'etat au repos.
