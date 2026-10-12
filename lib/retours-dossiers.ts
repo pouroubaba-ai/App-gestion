@@ -735,9 +735,13 @@ async function reglerRetour(params: {
           totalDocument: bon.total,
           verseDocument: bon.verse,
         })
-      /* Un retour sans bon d'origine ne se rattache à aucune dette :
-         il n'a rien à éteindre, et rien ne peut en ressortir. */
-      : { eteintLaDette: d.valeurTotale, restituable: 0 };
+      /* Un retour sans bon d'origine (client de passage, vente sans dette)
+         ne se rattache à aucune dette : il n'a rien à éteindre sur ce
+         document. Toute sa valeur devient donc un surplus — réglé selon le
+         choix fait à l'ouverture (reporté sur d'autres dettes, ou rendu en
+         caisse). Sans cela, le retour prétendait éteindre une dette
+         inexistante : l'argent n'allait ni sur une dette, ni en caisse. */
+      : { eteintLaDette: 0, restituable: d.valeurTotale };
 
     deduit = partage.eteintLaDette;
 
