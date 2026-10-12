@@ -1043,7 +1043,13 @@ async function appliquerLigne(
     ? coutMoyenApresEntree(
         stockAvant, coutAvant, qteUnites, coutUnite, inconnuAvant)
     : coutAvant;
-  const nouveauStock = stockAvant + (params.sens === 'entree' ? 1 : -1) * qteUnites;
+  /* Une sortie ne retire que ce qui est là : on ne vend pas plus qu'on n'a.
+     Sans ce plancher, une vente supérieure au stock faisait tomber le rayon
+     en négatif (« tole 2 kg » livrée à 1000 sur 900 restait à -100), et le
+     négatif se reportait de mouvement en mouvement. Le stock s'arrête à zéro. */
+  const nouveauStock = params.sens === 'entree'
+    ? stockAvant + qteUnites
+    : Math.max(0, stockAvant - qteUnites);
 
   batch.set(doc(collection(db, 'mouvements')), {
     siteId: params.siteId,

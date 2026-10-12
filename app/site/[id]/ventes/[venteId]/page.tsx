@@ -1697,7 +1697,6 @@ export default function FicheVentePage() {
           <div className="space-y-2 sm:hidden">
             {vente.lignes.map((l, i) => {
               const qte = l.quantiteRecue ?? l.quantiteDemandee;
-              const dispo = stockDe(l);
               /* Le stock disponible exprimé dans l'emballage de la ligne :
                  un carton de 28 ne se compte pas en pièces. */
               const dispoEmb = dispoDansEmballage(l);
@@ -1750,8 +1749,8 @@ export default function FicheVentePage() {
                         <span className="flex items-baseline gap-1.5">
                           <span className="text-gray-400">Stock</span>
                           <span className={`font-bold ${
-                            dispo >= l.quantiteDemandee ? 'text-gray-500' : 'text-orange-500'}`}>
-                            {dispo}
+                            dispoEmb >= l.quantiteDemandee ? 'text-gray-500' : 'text-orange-500'}`}>
+                            {dispoEmb.toLocaleString('fr-FR')}
                           </span>
                         </span>
                         <span className="flex items-baseline gap-1.5">
@@ -1881,8 +1880,10 @@ export default function FicheVentePage() {
                   </th>
                   {/* Le stock disponible, compté dans l'emballage de la ligne.
                       Suit la même règle de visibilité que les colonnes de
-                      chiffres : ce rôle prépare sans voir les montants. */}
-                  {montreArgent && (
+                      chiffres : ce rôle prépare sans voir les montants. En
+                      préparation, la colonne Stock ci-dessous le montre déjà :
+                      on ne double pas. */}
+                  {montreArgent && !detaillePreparation && (
                     <th className="text-center px-3 py-2.5 font-medium">Stock</th>
                   )}
                   {/* Trois colonnes qui n'existent que pendant la préparation :
@@ -1923,8 +1924,7 @@ export default function FicheVentePage() {
               <tbody className="divide-y divide-gray-50 dark:divide-gray-800">
                 {vente.lignes.map((l, i) => {
                   const qte = l.quantiteRecue ?? l.quantiteDemandee;
-                  const dispo = stockDe(l);
-                  /* Le même stock, mais compté dans l'emballage de la ligne. */
+                  /* Le stock, compté dans l'emballage de la ligne. */
                   const dispoEmb = dispoDansEmballage(l);
                   /* Les prélèvements de cette ligne : le préparé leur somme. */
                   const lignesPrep = preparations.filter(x => x.ligneIndex === i);
@@ -1958,8 +1958,10 @@ export default function FicheVentePage() {
                       <td className="px-3 py-2.5 text-center text-gray-900 dark:text-gray-100">
                         {detaillePreparation ? l.quantiteDemandee : qte}
                       </td>
-                      {/* Le stock disponible dans l'emballage de la ligne. */}
-                      {montreArgent && (
+                      {/* Le stock disponible dans l'emballage de la ligne.
+                          Masqué en préparation : la colonne Stock dédiée le
+                          montre déjà, inutile de la doubler. */}
+                      {montreArgent && !detaillePreparation && (
                         <td className={`px-3 py-2.5 text-center ${
                           dispoEmb >= l.quantiteDemandee ? 'text-gray-500' : 'text-orange-500 font-medium'}`}>
                           {dispoEmb.toLocaleString('fr-FR')}
@@ -1968,8 +1970,8 @@ export default function FicheVentePage() {
                       {detaillePreparation && (
                         <>
                           <td className={`px-3 py-2.5 text-center ${
-                            dispo >= l.quantiteDemandee ? 'text-gray-500' : 'text-orange-500 font-medium'}`}>
-                            {dispo}
+                            dispoEmb >= l.quantiteDemandee ? 'text-gray-500' : 'text-orange-500 font-medium'}`}>
+                            {dispoEmb.toLocaleString('fr-FR')}
                           </td>
                           <td className="px-3 py-2.5 text-center">
                             <span className="inline-flex items-center gap-1.5">
