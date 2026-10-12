@@ -268,7 +268,7 @@ export default function SelecteurProduits({
                   stock: v.stock ?? 0,
                 }))
             : [{ produit: p, varianteCle: null as string | null, libelle: p.designation, stock: p.stock ?? 0 }]
-        ).slice(0, 8)
+        ).slice(0, 50)
     : [];
 
   /* une variante déjà retenue ne s'ajoute pas deux fois : on incrémente */
@@ -375,6 +375,96 @@ export default function SelecteurProduits({
     l.quantiteDemandee * (vente ? (l.prixVente ?? 0) : l.valeurUnitaire);
   const total = lignes.reduce((s, l) => s + valeurLigne(l), 0);
 
+  /* La recherche, son menu de suggestions et son chemin de création. C'est le
+     même bloc en haut de la liste et en bas : on l'écrit une fois, on le pose
+     aux deux endroits. Les deux partagent l'état du composant (`recherche`,
+     `survol`), donc taper dans l'un ou l'autre revient au même. */
+  const barreRecherche = (
+    <ChampRecherche placeholder="Rechercher un produit…"
+      valeur={recherche}
+      onChange={v => { setRecherche(v); setSurvol(0); }}
+      onKeyDown={e => {
+        if (suggestions.length === 0) return;
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          setSurvol(n => (n + 1) % suggestions.length);
+        } else if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          setSurvol(n => (n - 1 + suggestions.length) % suggestions.length);
+        } else if (e.key === 'Enter') {
+          e.preventDefault();
+          ajouterSuggestion(survol);
+        } else if (e.key === 'Escape') {
+          setRecherche('');
+        }
+      }}
+      enfants={q ? (
+        <div className="absolute z-20 left-0 right-0 top-full mt-1 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-lg max-h-72 overflow-y-auto">
+          {suggestions.length === 0 ? (
+            onCreerProduit ? (
+              /* Ce qu'on cherchait n'existe pas : on le crée ici plutôt
+                 que d'aller le saisir ailleurs — et de revenir avec un
+                 bon vide. Le nom est déjà tapé, il suffit de confirmer. */
+              <>
+              <button type="button"
+                disabled={creation !== null}
+                onClick={async () => {
+                  const nom = recherche.trim();
+                  if (!nom) return;
+                  setCreation(nom);
+                  try {
+                    await onCreerProduit(nom);
+                    setRecherche('');
+                  } finally {
+                    setCreation(null);
+                  }
+                }}
+                className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-indigo-600 transition-colors hover:bg-indigo-50 disabled:opacity-50 dark:text-indigo-400 dark:hover:bg-indigo-900/30">
+                {creation !== null
+                  ? <Loader2 size={14} className="shrink-0 animate-spin" />
+                  : <Plus size={14} className="shrink-0" />}
+                <span className="truncate">
+                  {creation !== null
+                    ? `Création de « ${creation} »…`
+                    : <>Créer « <span className="font-bold">{recherche.trim()}</span> »</>}
+                </span>
+              </button>
+              {/* La même référence vient souvent en gamme : 15 W, 25 W,
+                  40 W. Les créer une par une obligerait à répéter la
+                  description et à inventer trois noms. */}
+              {onCreerGamme && (
+                <button type="button"
+                  onClick={() => onCreerGamme(recherche.trim())}
+                  className="flex w-full items-center gap-2 border-t border-gray-100 px-3 py-2.5 text-left text-xs text-gray-500 transition-colors hover:bg-gray-50 dark:border-gray-800 dark:text-gray-400 dark:hover:bg-gray-800">
+                  <Settings2 size={13} className="shrink-0" />
+                  <span className="truncate">
+                    Créer avec des déclinaisons (tailles, puissances…)
+                  </span>
+                </button>
+              )}
+              </>
+            ) : (
+              <p className="px-3 py-2.5 text-xs text-gray-400">Aucun résultat.</p>
+            )
+          ) : suggestions.map((sg, n) => (
+            <button key={`${sg.produit.id}-${sg.varianteCle ?? ''}`} type="button"
+              onMouseEnter={() => setSurvol(n)}
+              onClick={() => ajouterSuggestion(n)}
+              className={`w-full flex items-center justify-between gap-2 px-3 py-2 text-left text-sm transition-colors ${n === survol
+                ? 'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300'
+                : 'text-gray-700 dark:text-gray-300'}`}>
+              <span className="truncate">{sg.libelle}</span>
+              <span className="shrink-0 text-xs text-gray-400">
+                {montrerStock
+                  ? `${sg.stock.toLocaleString('fr-FR')} ${uniteLisible(sg.produit, sg.stock)}`
+                  : uniteLisible(sg.produit)}
+              </span>
+            </button>
+          ))}
+        </div>
+      ) : undefined} />
+  );
+
   return (
     <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800 shadow-sm p-5">
 
@@ -393,91 +483,15 @@ export default function SelecteurProduits({
           dessous affichera. La poser ici, au-dessus de la marchandise,
           la met là où se lit son effet. */}
       <div className="mb-4 flex flex-wrap items-start gap-2">
+      {/* La recherche vit au pied de la liste, là où l'on ajoute après avoir
+          parcouru. En haut, on ne la garde que quand cet écran ne montre pas
+          la liste (listeMasquee) ou qu'il n'y a encore aucune ligne — sinon
+          il n'y aurait nulle part où taper. */}
+      {(listeMasquee || lignes.length === 0) && (
       <div className="min-w-[200px] flex-1">
-      <ChampRecherche placeholder="Rechercher un produit…"
-        valeur={recherche}
-        onChange={v => { setRecherche(v); setSurvol(0); }}
-        onKeyDown={e => {
-          if (suggestions.length === 0) return;
-          if (e.key === 'ArrowDown') {
-            e.preventDefault();
-            setSurvol(n => (n + 1) % suggestions.length);
-          } else if (e.key === 'ArrowUp') {
-            e.preventDefault();
-            setSurvol(n => (n - 1 + suggestions.length) % suggestions.length);
-          } else if (e.key === 'Enter') {
-            e.preventDefault();
-            ajouterSuggestion(survol);
-          } else if (e.key === 'Escape') {
-            setRecherche('');
-          }
-        }}
-        enfants={q ? (
-          <div className="absolute z-20 left-0 right-0 top-full mt-1 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-lg overflow-hidden">
-            {suggestions.length === 0 ? (
-              onCreerProduit ? (
-                /* Ce qu'on cherchait n'existe pas : on le crée ici plutôt
-                   que d'aller le saisir ailleurs — et de revenir avec un
-                   bon vide. Le nom est déjà tapé, il suffit de confirmer. */
-                <>
-                <button type="button"
-                  disabled={creation !== null}
-                  onClick={async () => {
-                    const nom = recherche.trim();
-                    if (!nom) return;
-                    setCreation(nom);
-                    try {
-                      await onCreerProduit(nom);
-                      setRecherche('');
-                    } finally {
-                      setCreation(null);
-                    }
-                  }}
-                  className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-indigo-600 transition-colors hover:bg-indigo-50 disabled:opacity-50 dark:text-indigo-400 dark:hover:bg-indigo-900/30">
-                  {creation !== null
-                    ? <Loader2 size={14} className="shrink-0 animate-spin" />
-                    : <Plus size={14} className="shrink-0" />}
-                  <span className="truncate">
-                    {creation !== null
-                      ? `Création de « ${creation} »…`
-                      : <>Créer « <span className="font-bold">{recherche.trim()}</span> »</>}
-                  </span>
-                </button>
-                {/* La même référence vient souvent en gamme : 15 W, 25 W,
-                    40 W. Les créer une par une obligerait à répéter la
-                    description et à inventer trois noms. */}
-                {onCreerGamme && (
-                  <button type="button"
-                    onClick={() => onCreerGamme(recherche.trim())}
-                    className="flex w-full items-center gap-2 border-t border-gray-100 px-3 py-2.5 text-left text-xs text-gray-500 transition-colors hover:bg-gray-50 dark:border-gray-800 dark:text-gray-400 dark:hover:bg-gray-800">
-                    <Settings2 size={13} className="shrink-0" />
-                    <span className="truncate">
-                      Créer avec des déclinaisons (tailles, puissances…)
-                    </span>
-                  </button>
-                )}
-                </>
-              ) : (
-                <p className="px-3 py-2.5 text-xs text-gray-400">Aucun résultat.</p>
-              )
-            ) : suggestions.map((sg, n) => (
-              <button key={`${sg.produit.id}-${sg.varianteCle ?? ''}`} type="button"
-                onMouseEnter={() => setSurvol(n)}
-                onClick={() => ajouterSuggestion(n)}
-                className={`w-full flex items-center justify-between gap-2 px-3 py-2 text-left text-sm transition-colors ${n === survol
-                  ? 'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300'
-                  : 'text-gray-700 dark:text-gray-300'}`}>
-                <span className="truncate">{sg.libelle}</span>
-                <span className="shrink-0 text-xs text-gray-400">
-                  {montrerStock
-                    ? `${sg.stock.toLocaleString('fr-FR')} ${uniteLisible(sg.produit, sg.stock)}`
-                    : uniteLisible(sg.produit)}
-                </span>
-              </button>
-            ))}
-          </div>
-        ) : undefined} />
+      {barreRecherche}
       </div>
+      )}
       {/* Visible seulement s'il y a des frais : sans montant à
           répartir, la règle ne décide de rien. */}
       {onChangerCleFrais && partsFrais && (
@@ -882,6 +896,15 @@ export default function SelecteurProduits({
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* La même recherche, répétée sous la liste : quand elle s'allonge,
+          on ajoute un produit sans remonter tout en haut. Seulement quand la
+          liste est affichée ici et qu'elle porte déjà des lignes. */}
+      {!listeMasquee && lignes.length > 0 && (
+        <div className="relative mt-3">
+          {barreRecherche}
         </div>
       )}
 

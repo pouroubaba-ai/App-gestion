@@ -16,19 +16,20 @@ import {
   enregistrerVersement, versementsDuDossier, LIBELLES_MOTIF_VERSEMENT,
   type Versement,
 } from '@/lib/versements-collection';
-import { ChampNombre } from '@/components/Champs';
+import { ChampNombre, ChampRecherche } from '@/components/Champs';
 import {
   enregistrerPreparation, annulerPreparation, chargerPreparations,
   prepareParLigne, type Preparation,
   reserveParProduit,
 } from '@/lib/preparations';
-import { enUnitesBase } from '@/lib/mouvements';
+import { enUnitesBase, emballagesDe } from '@/lib/mouvements';
 import {
   ligneDepuisVente, synchroniserLignes, supprimerLignesDeVente,
 } from '@/lib/lignes-vente';
 import {
   ArrowLeft,
   Loader2, Check, CheckCheck, ArrowRight, Truck, X, Plus, Info, Download,
+  Pencil, Trash2,
 } from 'lucide-react';
 import { exporterPdf } from '@/lib/export-pdf';
 import { useEnteteSite } from '@/lib/use-entete-site';
@@ -162,6 +163,9 @@ export default function FicheVentePage() {
   /* La contenance d'un emballage se fige sur la ligne : il faut donc la
      connaitre au moment ou on ecrit. */
   const [emballages, setEmballages] = useState<Record<string, { nom: string; quantite: number }[]>>({});
+  /* Les produits du site, tels que les propose le sélecteur : on en a besoin
+     pour ajouter ou modifier une ligne (emballages, stock, prix). */
+  const [produits, setProduits] = useState<any[]>([]);
   /* Ce que les autres dossiers ont déjà mis de côté. Le stock ne bouge qu'à
      la livraison : sans ce compte, deux commandes promettent le même carton. */
   const [reserve, setReserve] = useState<Record<string, number>>({});
@@ -172,6 +176,28 @@ export default function FicheVentePage() {
   const [qtePreparee, setQtePreparee] = useState(0);
   const [notePreparee, setNotePreparee] = useState('');
   const [detailLigne, setDetailLigne] = useState<number | null>(null);
+
+  /* L'édition de la marchandise, réservée à qui en répond et tant que rien
+     n'est préparé ni livré. Trois gestes : modifier une ligne (un modal avec
+     quantité, emballage et prix), en ajouter une (le sélecteur de produits),
+     en supprimer une (depuis le modal, avec confirmation si des préparations
+     y sont rattachées). */
+  const [editLigne, setEditLigne] = useState<number | null>(null);
+  const [editQte, setEditQte] = useState(0);
+  const [editEmballage, setEditEmballage] = useState<string | null>(null);
+  const [editPrix, setEditPrix] = useState(0);
+  const [editCout, setEditCout] = useState(0);
+  /* L'ajout se fait à la barre de recherche sous le tableau : on tape, on
+     clique une suggestion, la ligne s'ajoute et le champ se vide pour
+     enchaîner. `survolAjout` suit l'entrée mise en avant au clavier. */
+  const [rechercheAjout, setRechercheAjout] = useState('');
+  const [survolAjout, setSurvolAjout] = useState(0);
+  /* La suppression d'une ligne qui porte des préparations vivantes se
+     confirme : l'accepter les annule aussi. */
+  const [confirmSuppr, setConfirmSuppr] = useState<number | null>(null);
+  /* Retirer la dernière ligne viderait la commande : on confirme, et
+     accepter annule le dossier plutôt que de le laisser sans marchandise. */
+  const [confirmVider, setConfirmVider] = useState(false);
 
   /* Marquer prêt fige le préparé et arrête le travail : le modal montre
      toujours ce qu'on valide, écart ou non. */
@@ -325,6 +351,7 @@ export default function FicheVentePage() {
     });
     setStocks(parCle);
     setEmballages(parProduit);
+    setProduits(produits);
 
     /* Seuls les dossiers en préparation ou prêts retiennent du stock : un
        dossier livré est déjà sorti, un dossier annulé ne promet plus rien. */
@@ -338,6 +365,19 @@ export default function FicheVentePage() {
   /** Stock disponible pour une ligne : celui de la variante s'il y en a une. */
   function stockDe(l: { produitId: string; varianteCle?: string | null }): number {
     return stocks[l.varianteCle ? `${l.produitId}:${l.varianteCle}` : l.produitId] ?? 0;
+  }
+
+  /**
+   * Le stock disponible, mais compté dans l'emballage de la ligne : le stock
+   * se tient en unités de base, et un carton de 28 ne se compte pas en
+   * pièces. 840 pièces font 30 cartons, pas 840.
+   */
+  function dispoDansEmballage(
+    l: { produitId: string; varianteCle?: string | null; emballage?: string | null },
+  ): number {
+    const contenance = l.emballage
+      ? enUnitesBase(1, l.emballage, emballages[l.produitId] ?? []) : 1;
+    return Math.floor(stockDe(l) / Math.max(1, contenance));
   }
 
   /**
@@ -962,6 +1002,49 @@ export default function FicheVentePage() {
   /* La saisie des quantités trouvées n'a lieu que pendant la préparation :
      avant, rien n'est rassemblé ; après, c'est figé. */
   const enPreparation = vente.etat === 'preparation';
+  /* Modifier la marchandise : réservé à l'admin (role null) et au gérant,
+     et seulement tant que rien n'est préparé — un devis, une commande, une
+     préparation en cours. Un bon de commande d'ordre n'est pas touché ici :
+     sa marchandise appartient au dossier d'en face. */
+  const peutEditerLignes = (role === null || role === 'gerant')
+    && (vente.etat === 'devis' || vente.etat === 'commande' || vente.etat === 'preparation')
+    && (vente as any).ordre !== true
+    && !ordreSuit;
+
+  /* Les suggestions de la barre d'ajout, bâties comme dans le sélecteur de
+     produits : un produit à variantes donne une entrée par variante, et on
+     cherche dans le nom, la catégorie et les libellés de variante. */
+  const qAjout = rechercheAjout.trim().toLowerCase();
+  const suggestionsAjout = qAjout
+    ? produits
+        .filter(p => p.designation.toLowerCase().includes(qAjout)
+          || (p.categorie ?? '').toLowerCase().includes(qAjout)
+          || (p.variantes ?? []).some((v: any) =>
+            Object.values(v.selection).join(' / ').toLowerCase().includes(qAjout)))
+        .flatMap((p: any) =>
+          p.variantes && p.variantes.length > 0
+            ? p.variantes
+                .filter((v: any) => p.designation.toLowerCase().includes(qAjout)
+                  || (p.categorie ?? '').toLowerCase().includes(qAjout)
+                  || Object.values(v.selection).join(' / ').toLowerCase().includes(qAjout))
+                .map((v: any) => ({
+                  produit: p, varianteCle: v.cle as string | null,
+                  libelle: `${p.designation} · ${Object.values(v.selection).join(' / ')}`,
+                  stock: v.stock ?? 0,
+                }))
+            : [{ produit: p, varianteCle: null as string | null,
+                 libelle: p.designation, stock: p.stock ?? 0 }])
+        .slice(0, 50)
+    : [];
+
+  /** Ajoute la suggestion visée, puis vide le champ pour enchaîner. */
+  function ajouterSuggestionAjout(n: number) {
+    const s = suggestionsAjout[n];
+    if (!s) return;
+    ajouterProduitLigne(s.produit, s.varianteCle);
+    setRechercheAjout('');
+    setSurvolAjout(0);
+  }
   /* Un dossier pret se lit comme un dossier en preparation : meme colonnes,
      meme historique. Seule la saisie s'arrete — le prepare y est fige, et la
      prochaine etape est la livraison. */
@@ -1041,6 +1124,220 @@ export default function FicheVentePage() {
     } finally {
       setEnCours(false);
     }
+  }
+
+  /**
+   * Écrit un nouveau tableau de lignes sur le dossier et réaligne l'index des
+   * produits promis. On met à jour l'état local sans recharger : la liste des
+   * produits et les stocks n'ont pas bougé.
+   */
+  function appliquerLignes(nouvelles: any[]) {
+    if (!vente) return;
+    setErreur('');
+    /* Silence et vitesse : le tableau montre le nouvel état tout de suite,
+       l'écriture serveur part derrière. On garde l'ancien tableau pour
+       revenir en arrière si elle échoue. */
+    const avant = vente.lignes;
+    const site = vente.siteId;
+    const client = { id: vente.clientId ?? null, nom: vente.clientNom };
+    setVente(v => (v ? ({ ...v, lignes: nouvelles } as Vente) : v));
+
+    void (async () => {
+      try {
+        await updateDoc(doc(db, 'ventes', venteId), { lignes: nouvelles });
+        /* La collection des produits promis doit suivre : sans cela, le stock
+           réservé mentirait sur ce qui est encore engagé. */
+        await synchroniserLignes({
+          venteId,
+          lignes: nouvelles.map((l, i) => ligneDepuisVente({
+            siteId: site, venteId, ligneIndex: i, ligne: l,
+            emballages: emballages[l.produitId] ?? [],
+            clientId: client.id, clientNom: client.nom,
+          })),
+        });
+      } catch (e: any) {
+        setVente(v => (v ? ({ ...v, lignes: avant } as Vente) : v));
+        setErreur(e?.message ?? 'Enregistrement impossible.');
+      }
+    })();
+  }
+
+  /* Les préparations vivantes rattachées à une ligne : supprimer celle-ci les
+     annulerait, d'où la confirmation. */
+  function prepsVivantesDe(i: number): Preparation[] {
+    return preparations.filter(p => p.ligneIndex === i && !p.annulee);
+  }
+
+  /**
+   * Ajoute une ligne en fin de tableau — aucun index ne se décale. L'ajout
+   * est silencieux : la ligne apparaît tout de suite, l'écriture suit. Si le
+   * produit (et sa variante) est déjà sur une ligne, on incrémente plutôt.
+   */
+  function ajouterProduitLigne(p: any, varianteCle: string | null) {
+    if (!vente) return;
+    const existante = vente.lignes.findIndex(l =>
+      l.produitId === p.id && (l.varianteCle ?? null) === varianteCle);
+    if (existante >= 0) {
+      appliquerLignes(vente.lignes.map((l, i) => i === existante
+        ? { ...l, quantiteDemandee: l.quantiteDemandee + 1 } : l));
+      return;
+    }
+    const v = varianteCle ? p.variantes?.find((x: any) => x.cle === varianteCle) : undefined;
+    const ligne = {
+      produitId: p.id,
+      designation: p.designation,
+      varianteCle,
+      varianteLibelle: v ? Object.values(v.selection).join(' / ') : null,
+      quantiteDemandee: 1,
+      unite: p.unite ?? null,
+      emballage: null,
+      valeurUnitaire: v ? v.coutMoyen : (p.coutMoyen ?? 0),
+      prixVente: (v?.prixVente || p.prixVente) || null,
+    };
+    appliquerLignes([...vente.lignes, ligne]);
+  }
+
+  /** Ouvre le modal d'édition d'une ligne, préchargé de ses valeurs. */
+  function ouvrirEditLigne(i: number) {
+    const l = vente!.lignes[i];
+    setEditLigne(i);
+    setEditQte(l.quantiteDemandee);
+    setEditEmballage(l.emballage ?? null);
+    setEditPrix(l.prixVente ?? 0);
+    setEditCout(l.valeurUnitaire ?? 0);
+  }
+
+  /**
+   * Change l'emballage dans le modal d'édition. Le prix, le coût et la
+   * quantité suivent la contenance, à l'identique de `changerEmballage` du
+   * sélecteur de produits.
+   */
+  function changerEmballageEdit(nom: string | null) {
+    const l = vente!.lignes[editLigne!];
+    const liste = emballages[l.produitId] ?? [];
+    const avant = editEmballage
+      ? (liste.find(e => e.nom === editEmballage)?.quantite ?? 1) : 1;
+    const apres = nom
+      ? (liste.find(e => e.nom === nom)?.quantite ?? 1) : 1;
+    setEditEmballage(nom);
+    setEditCout((editCout / avant) * apres);
+    setEditPrix((editPrix / avant) * apres);
+    /* La quantité se re-cappe au stock disponible dans le nouveau contenant. */
+    const dispo = stockDe(l);
+    const max = Math.max(1, Math.floor(dispo / Math.max(1, apres)));
+    setEditQte(q => Math.max(1, Math.min(q, max)));
+  }
+
+  /** Enregistre les modifications d'une ligne, en silence (écriture derrière). */
+  function enregistrerEditLigne() {
+    if (!vente || editLigne == null) return;
+    const nouvelles = vente.lignes.map((l, i) => i === editLigne
+      ? { ...l, quantiteDemandee: Math.max(1, editQte),
+          emballage: editEmballage, prixVente: editPrix || null,
+          valeurUnitaire: editCout }
+      : l);
+    setEditLigne(null);
+    appliquerLignes(nouvelles);
+  }
+
+  /**
+   * Supprime une ligne. Les préparations sont indexées par la POSITION de la
+   * ligne : retirer la ligne i annule les préparations de cette ligne et
+   * décrémente l'index de toutes celles qui la suivent, sinon le journal
+   * pointerait sur la mauvaise marchandise.
+   */
+  function supprimerLigne(i: number) {
+    if (!vente) return;
+    setErreur('');
+
+    /* Ce qu'on écrira derrière : annuler les préparations de la ligne
+       retirée, décaler l'index de celles qui la suivent. */
+    const aAnnuler = preparations.filter(
+      p => p.ligneIndex === i && !p.annulee && !p.id.startsWith('tmp-'));
+    const aDecaler = preparations.filter(
+      p => p.ligneIndex > i && !p.id.startsWith('tmp-'));
+
+    /* Silence et vitesse : le journal et le tableau se recalent à l'écran
+       tout de suite. On garde l'ancien journal pour revenir si ça échoue. */
+    const prepsAvant = preparations;
+    const annuleSet = new Set(aAnnuler.map(p => p.id));
+    setPreparations(ps => ps.map(p => {
+      if (annuleSet.has(p.id)) return { ...p, annulee: true };
+      if (p.ligneIndex > i && !p.id.startsWith('tmp-')) {
+        return { ...p, ligneIndex: p.ligneIndex - 1 };
+      }
+      return p;
+    }));
+    setEditLigne(null);
+    setConfirmSuppr(null);
+
+    /* La ligne disparaît et le tableau se réaligne (écriture `lignes`
+       déléguée à `appliquerLignes`, elle aussi silencieuse). */
+    appliquerLignes(vente.lignes.filter((_, j) => j !== i));
+
+    void (async () => {
+      try {
+        const auteur = aAnnuler.length > 0
+          ? await auteurCourant(vente.siteId, user!.uid) : null;
+        for (const p of aAnnuler) {
+          await annulerPreparation({
+            preparationId: p.id, par: user!.uid,
+            parNom: auteur?.utilisateurNom,
+          });
+        }
+        for (const p of aDecaler) {
+          await updateDoc(doc(db, 'preparations', p.id), { ligneIndex: p.ligneIndex - 1 });
+        }
+      } catch (e: any) {
+        setPreparations(prepsAvant);
+        setErreur(e?.message ?? 'Suppression impossible.');
+      }
+    })();
+  }
+
+  /**
+   * Le geste de suppression.
+   *
+   * Retirer la dernière ligne viderait la commande : on confirme à part, et
+   * accepter annule le dossier. Sinon, on confirme seulement si la ligne
+   * porte des préparations vivantes.
+   */
+  function demanderSuppression(i: number) {
+    if (vente!.lignes.length <= 1) { setConfirmVider(true); return; }
+    if (prepsVivantesDe(i).length > 0) setConfirmSuppr(i);
+    else supprimerLigne(i);
+  }
+
+  /**
+   * Vide la commande en l'annulant, comme le fait `annuler()` pour une vente :
+   * on passe le dossier à « annulé » et on retire ses lignes du compte des
+   * produits promis. Les préparations vivantes sont d'abord annulées — un
+   * dossier annulé ne retient plus de stock.
+   */
+  async function viderCommande() {
+    if (!vente || enCours) return;
+    setEnCours(true);
+    setErreur('');
+    try {
+      const aAnnuler = preparations.filter(
+        p => !p.annulee && !p.id.startsWith('tmp-'));
+      const auteur = aAnnuler.length > 0
+        ? await auteurCourant(vente.siteId, user!.uid) : null;
+      for (const p of aAnnuler) {
+        await annulerPreparation({
+          preparationId: p.id, par: user!.uid, parNom: auteur?.utilisateurNom,
+        });
+      }
+      await updateDoc(doc(db, 'ventes', venteId), { etat: 'annule' });
+      /* Plus rien n'est promis : les lignes sortent du compte. */
+      await supprimerLignesDeVente(venteId);
+      setEditLigne(null);
+      setConfirmVider(false);
+      await charger();
+    } catch (e: any) {
+      setErreur(e?.message ?? 'Annulation impossible.');
+    }
+    setEnCours(false);
   }
 
   /* L'export PDF du dossier. Le titre suit l'état, via le libellé déjà
@@ -1401,6 +1698,9 @@ export default function FicheVentePage() {
             {vente.lignes.map((l, i) => {
               const qte = l.quantiteRecue ?? l.quantiteDemandee;
               const dispo = stockDe(l);
+              /* Le stock disponible exprimé dans l'emballage de la ligne :
+                 un carton de 28 ne se compte pas en pièces. */
+              const dispoEmb = dispoDansEmballage(l);
               const lignesPrep = preparations.filter(x => x.ligneIndex === i);
               const prepareLigne = prepareDe(l, i);
               const manque = Math.max(0, l.quantiteDemandee - prepareLigne);
@@ -1433,6 +1733,18 @@ export default function FicheVentePage() {
                         {detaillePreparation ? l.quantiteDemandee : qte}
                       </span>
                     </span>
+                    {/* Le stock disponible, dans l'emballage de la ligne.
+                        Hors préparation, c'est le seul repère de stock : on
+                        le montre dès qu'on a le droit de voir les chiffres. */}
+                    {montreArgent && !detaillePreparation && (
+                      <span className="flex items-baseline gap-1.5">
+                        <span className="text-gray-400">Stock</span>
+                        <span className={`font-bold ${
+                          dispoEmb >= l.quantiteDemandee ? 'text-gray-500' : 'text-orange-500'}`}>
+                          {dispoEmb.toLocaleString('fr-FR')}
+                        </span>
+                      </span>
+                    )}
                     {detaillePreparation && (
                       <>
                         <span className="flex items-baseline gap-1.5">
@@ -1530,6 +1842,22 @@ export default function FicheVentePage() {
                       </button>
                     </div>
                   )}
+
+                  {/* Les actions d'édition à la fin de la carte, en pleine
+                      largeur : modifier ou retirer la ligne. */}
+                  {peutEditerLignes && (
+                    <div className="mt-2.5 flex items-center gap-1.5 border-t border-black/[0.06] pt-2.5 dark:border-white/10">
+                      <button onClick={() => ouvrirEditLigne(i)}
+                        className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-gray-300 px-2.5 py-2 text-xs font-bold text-gray-600 transition-colors hover:border-indigo-400 hover:text-indigo-600 dark:border-gray-600 dark:text-gray-300">
+                        <Pencil size={12} /> Modifier
+                      </button>
+                      <button onClick={() => demanderSuppression(i)}
+                        title="Supprimer la ligne"
+                        className="flex shrink-0 items-center rounded-lg border border-gray-300 px-3 py-2 text-xs font-bold text-red-500 transition-colors hover:border-red-400 hover:bg-red-50 dark:border-gray-600 dark:hover:bg-red-900/20">
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -1551,6 +1879,12 @@ export default function FicheVentePage() {
                   <th className="text-center px-3 py-2.5 font-medium">
                     {detaillePreparation ? 'Demandé' : 'Quantité'}
                   </th>
+                  {/* Le stock disponible, compté dans l'emballage de la ligne.
+                      Suit la même règle de visibilité que les colonnes de
+                      chiffres : ce rôle prépare sans voir les montants. */}
+                  {montreArgent && (
+                    <th className="text-center px-3 py-2.5 font-medium">Stock</th>
+                  )}
                   {/* Trois colonnes qui n'existent que pendant la préparation :
                       ce qu'on a, ce qu'on a trouvé, ce qui manque. */}
                   {detaillePreparation && (
@@ -1579,12 +1913,19 @@ export default function FicheVentePage() {
                   {detaillePreparation && (
                     <th className="sticky right-0 bg-indigo-600 px-3 py-2.5" />
                   )}
+                  {/* Dernière colonne : modifier ou retirer la ligne. Admin et
+                      gérant seulement, tant que la marchandise se modifie. */}
+                  {peutEditerLignes && (
+                    <th className="text-center px-3 py-2.5 font-medium">Actions</th>
+                  )}
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50 dark:divide-gray-800">
                 {vente.lignes.map((l, i) => {
                   const qte = l.quantiteRecue ?? l.quantiteDemandee;
                   const dispo = stockDe(l);
+                  /* Le même stock, mais compté dans l'emballage de la ligne. */
+                  const dispoEmb = dispoDansEmballage(l);
                   /* Les prélèvements de cette ligne : le préparé leur somme. */
                   const lignesPrep = preparations.filter(x => x.ligneIndex === i);
                   const prepareLigne = prepareDe(l, i);
@@ -1617,6 +1958,13 @@ export default function FicheVentePage() {
                       <td className="px-3 py-2.5 text-center text-gray-900 dark:text-gray-100">
                         {detaillePreparation ? l.quantiteDemandee : qte}
                       </td>
+                      {/* Le stock disponible dans l'emballage de la ligne. */}
+                      {montreArgent && (
+                        <td className={`px-3 py-2.5 text-center ${
+                          dispoEmb >= l.quantiteDemandee ? 'text-gray-500' : 'text-orange-500 font-medium'}`}>
+                          {dispoEmb.toLocaleString('fr-FR')}
+                        </td>
+                      )}
                       {detaillePreparation && (
                         <>
                           <td className={`px-3 py-2.5 text-center ${
@@ -1686,10 +2034,29 @@ export default function FicheVentePage() {
                           )}
                         </td>
                       )}
+                      {/* Modifier ou retirer la ligne : la dernière colonne. */}
+                      {peutEditerLignes && (
+                        <td className="px-3 py-2.5">
+                          <div className="flex items-center justify-center gap-1.5">
+                            <button onClick={() => ouvrirEditLigne(i)}
+                              title="Modifier la ligne"
+                              className="rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-indigo-50 hover:text-indigo-600 dark:hover:bg-indigo-900/20">
+                              <Pencil size={14} />
+                            </button>
+                            <button onClick={() => demanderSuppression(i)}
+                              title="Supprimer la ligne"
+                              className="rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20">
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        </td>
+                      )}
                     </tr>
                     {detailLigne === i && (
                       <tr>
-                        <td colSpan={detaillePreparation ? 11 : 10} className="px-3 pb-3">
+                        <td colSpan={4 + (montreArgent ? 4 : 0)
+                          + (detaillePreparation ? 4 : 0)
+                          + (peutEditerLignes ? 1 : 0)} className="px-3 pb-3">
                           <div className="rounded-xl bg-gray-50 p-3 dark:bg-gray-800/50">
                             <p className="mb-2 text-xs font-bold uppercase text-gray-400">Préparations</p>
                             <div className="flex flex-col gap-1.5">
@@ -1732,6 +2099,52 @@ export default function FicheVentePage() {
               </tbody>
             </table>
           </div>
+
+          {/* Ajouter un produit : une barre de recherche sous le tableau. On
+              tape, on clique une suggestion, la ligne s'ajoute en fin de
+              tableau et le champ se vide pour enchaîner — aucun modal à
+              ouvrir et fermer à chaque produit. */}
+          {peutEditerLignes && (
+            <div className="mt-3 max-w-sm">
+              <ChampRecherche placeholder="Ajouter un produit…"
+                valeur={rechercheAjout}
+                onChange={v => { setRechercheAjout(v); setSurvolAjout(0); }}
+                onKeyDown={e => {
+                  if (suggestionsAjout.length === 0) return;
+                  if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    setSurvolAjout(n => (n + 1) % suggestionsAjout.length);
+                  } else if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    setSurvolAjout(n => (n - 1 + suggestionsAjout.length) % suggestionsAjout.length);
+                  } else if (e.key === 'Enter') {
+                    e.preventDefault();
+                    ajouterSuggestionAjout(survolAjout);
+                  } else if (e.key === 'Escape') {
+                    setRechercheAjout('');
+                  }
+                }}
+                enfants={qAjout ? (
+                  <div className="absolute z-20 left-0 right-0 top-full mt-1 max-h-72 overflow-y-auto rounded-xl border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-900">
+                    {suggestionsAjout.length === 0 ? (
+                      <p className="px-3 py-2.5 text-xs text-gray-400">Aucun résultat.</p>
+                    ) : suggestionsAjout.map((sg, n) => (
+                      <button key={`${sg.produit.id}-${sg.varianteCle ?? ''}`} type="button"
+                        onMouseEnter={() => setSurvolAjout(n)}
+                        onClick={() => ajouterSuggestionAjout(n)}
+                        className={`flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm transition-colors ${n === survolAjout
+                          ? 'bg-indigo-50 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300'
+                          : 'text-gray-700 dark:text-gray-300'}`}>
+                        <span className="truncate">{sg.libelle}</span>
+                        <span className="shrink-0 text-xs text-gray-400">
+                          {sg.stock.toLocaleString('fr-FR')}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                ) : undefined} />
+            </div>
+          )}
 
           {erreur && <p className="text-xs text-red-500 mt-3">{erreur}</p>}
 
@@ -2138,6 +2551,174 @@ export default function FicheVentePage() {
                 ))}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {/* Modifier une ligne : quantité, emballage, prix. Le total de la ligne
+          se recalcule en direct, et la suppression part d'ici. */}
+      {editLigne !== null && vente && (() => {
+        const l = vente.lignes[editLigne];
+        if (!l) return null;
+        const liste = emballagesDe(emballages[l.produitId], l.varianteCle);
+        const vivantes = prepsVivantesDe(editLigne);
+        /* Le stock disponible, dans l'emballage choisi dans ce modal : il
+           suit le contenant que l'on règle ici, pas celui déjà enregistré. */
+        const contenanceEdit = editEmballage
+          ? enUnitesBase(1, editEmballage, emballages[l.produitId] ?? []) : 1;
+        const dispoEdit = Math.floor(stockDe(l) / Math.max(1, contenanceEdit));
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+            <div className="w-full max-w-sm rounded-2xl bg-white p-6 dark:bg-gray-900">
+              <div className="mb-4 flex items-center justify-between">
+                <p className="text-sm font-bold text-gray-900 dark:text-gray-100">Modifier la ligne</p>
+                <button onClick={() => setEditLigne(null)}
+                  className="p-1 text-gray-400 hover:text-gray-600"><X size={16} /></button>
+              </div>
+
+              <p className="mb-4 text-sm font-medium text-gray-900 dark:text-gray-100">
+                {l.designation}
+                {l.varianteLibelle && <span className="ml-1.5 text-gray-400">{l.varianteLibelle}</span>}
+              </p>
+
+              {/* L'emballage : en changer refait le prix, le coût et la
+                  quantité au prorata de la contenance. */}
+              {liste.length > 0 && (
+                <div className="mb-3">
+                  <label className="mb-1.5 block text-xs font-bold text-gray-500 dark:text-gray-400">
+                    Emballage
+                  </label>
+                  <div className="flex flex-wrap gap-1">
+                    <button onClick={() => changerEmballageEdit(null)}
+                      className={`rounded-lg px-2 py-1 text-xs font-bold transition-colors ${!editEmballage
+                        ? 'bg-indigo-600 text-white'
+                        : 'border border-gray-200 text-gray-500 hover:border-indigo-400 dark:border-gray-700'}`}>
+                      {l.unite ?? 'unité'}
+                    </button>
+                    {liste.map(e => (
+                      <button key={e.nom} onClick={() => changerEmballageEdit(e.nom)}
+                        className={`rounded-lg px-2 py-1 text-xs font-bold transition-colors ${editEmballage === e.nom
+                          ? 'bg-indigo-600 text-white'
+                          : 'border border-gray-200 text-gray-500 hover:border-indigo-400 dark:border-gray-700'}`}>
+                        {e.nom.toLowerCase()}×{e.quantite}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="mb-1.5 block text-xs font-bold text-gray-500 dark:text-gray-400">
+                    Quantité
+                  </label>
+                  <ChampNombre valeur={editQte} min={1} onChange={setEditQte}
+                    className="w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100" />
+                </div>
+                {montreArgent && (
+                  <div>
+                    <label className="mb-1.5 block text-xs font-bold text-gray-500 dark:text-gray-400">
+                      Prix de vente
+                    </label>
+                    <ChampNombre valeur={editPrix} onChange={setEditPrix}
+                      className="w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100" />
+                  </div>
+                )}
+              </div>
+
+              {/* Le stock disponible dans l'emballage choisi : il dit si la
+                  quantité saisie tient dans ce qu'on a en magasin. */}
+              <div className="mt-3 flex items-baseline justify-between rounded-xl bg-gray-50 px-3 py-2 dark:bg-gray-800/60">
+                <span className="text-xs text-gray-400">Stock</span>
+                <span className={`text-sm font-bold tabular-nums ${
+                  dispoEdit >= editQte ? 'text-gray-900 dark:text-gray-100' : 'text-orange-500'}`}>
+                  {dispoEdit.toLocaleString('fr-FR')} {editEmballage
+                    ? `${editEmballage.toLowerCase()}${dispoEdit > 1 ? 's' : ''}`
+                    : (l.unite ?? 'unité')}
+                </span>
+              </div>
+
+              {/* Le total de la ligne, en direct : c'est ce qu'on arbitre. */}
+              {montreArgent && (
+                <div className="mt-2 flex items-baseline justify-between rounded-xl bg-gray-50 px-3 py-2 dark:bg-gray-800/60">
+                  <span className="text-xs text-gray-400">Total de la ligne</span>
+                  <span className="text-sm font-bold text-gray-900 dark:text-gray-100 tabular-nums">
+                    {formatMontant(Math.max(1, editQte) * editPrix)}
+                  </span>
+                </div>
+              )}
+
+              <div className="mt-4 flex items-center justify-between gap-2">
+                <button onClick={() => demanderSuppression(editLigne)} disabled={enCours}
+                  className="flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-bold text-red-500 transition-colors hover:bg-red-50 disabled:opacity-40 dark:hover:bg-red-900/20">
+                  <Trash2 size={14} /> Supprimer
+                </button>
+                <div className="flex gap-2">
+                  <button onClick={() => setEditLigne(null)} disabled={enCours}
+                    className="rounded-xl px-4 py-2 text-sm font-bold text-gray-500 transition-colors hover:bg-gray-50 dark:hover:bg-gray-800">
+                    Annuler
+                  </button>
+                  <button onClick={enregistrerEditLigne} disabled={enCours}
+                    className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-indigo-700 disabled:opacity-40">
+                    {enCours ? 'Enregistrement…' : 'Enregistrer'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Le rappel du lien préparation : un produit préparé ne se
+                  supprime pas sans que ces préparations tombent. */}
+              {vivantes.length > 0 && (
+                <p className="mt-3 text-[11px] text-gray-400">
+                  Cette ligne a {vivantes.reduce((n, p) => n + p.quantite, 0).toLocaleString('fr-FR')} préparé(s).
+                </p>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* La ligne porte des préparations vivantes : la supprimer les annule. */}
+      {confirmSuppr !== null && vente && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-sm rounded-2xl bg-white p-6 dark:bg-gray-900">
+            <p className="mb-2 text-sm font-bold text-gray-900 dark:text-gray-100">Supprimer la ligne</p>
+            <p className="mb-4 text-xs text-gray-500 dark:text-gray-400">
+              Ce produit a {prepsVivantesDe(confirmSuppr).reduce((n, p) => n + p.quantite, 0).toLocaleString('fr-FR')} préparé(s).
+              Supprimer la ligne annulera aussi ces préparations. Confirmer ?
+            </p>
+            <div className="flex gap-2">
+              <button onClick={() => setConfirmSuppr(null)} disabled={enCours}
+                className="flex-1 rounded-xl px-4 py-2 text-sm font-bold text-gray-500 transition-colors hover:bg-gray-50 dark:hover:bg-gray-800">
+                Annuler
+              </button>
+              <button onClick={() => supprimerLigne(confirmSuppr)} disabled={enCours}
+                className="flex-1 rounded-xl bg-red-600 px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-red-700 disabled:opacity-40">
+                {enCours ? 'Suppression…' : 'Supprimer'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Retirer la dernière ligne viderait la commande : on annule le
+          dossier plutôt que de le laisser sans marchandise. */}
+      {confirmVider && vente && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-sm rounded-2xl bg-white p-6 dark:bg-gray-900">
+            <p className="mb-2 text-sm font-bold text-gray-900 dark:text-gray-100">Supprimer ce produit</p>
+            <p className="mb-4 text-xs text-gray-500 dark:text-gray-400">
+              Supprimer ce produit viderait la commande — elle sera alors annulée. Confirmer ?
+            </p>
+            <div className="flex gap-2">
+              <button onClick={() => setConfirmVider(false)} disabled={enCours}
+                className="flex-1 rounded-xl px-4 py-2 text-sm font-bold text-gray-500 transition-colors hover:bg-gray-50 dark:hover:bg-gray-800">
+                Annuler
+              </button>
+              <button onClick={viderCommande} disabled={enCours}
+                className="flex-1 rounded-xl bg-red-600 px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-red-700 disabled:opacity-40">
+                {enCours ? 'Annulation…' : 'Annuler la commande'}
+              </button>
+            </div>
           </div>
         </div>
       )}
