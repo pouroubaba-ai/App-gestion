@@ -711,7 +711,42 @@ async function reglerRetour(params: {
   let rembourse = 0;
   let parts: PartFacture[] = [];
 
-  if (d.type !== 'transfert' && d.partenaireId) {
+  /* Client de passage : il n'a pas de compte, donc pas de dette à éteindre
+     ni de partenaire à créditer. Mais s'il a payé son achat au comptant, un
+     retour doit lui rendre son argent, en caisse. Sans ce cas, le règlement
+     exigeait un partenaireId et sautait tout : la marchandise rentrait, et
+     rien ne sortait de la caisse. On rembourse ce qu'il avait réellement
+     versé sur le bon d'origine. */
+  if (d.type === 'client' && !d.partenaireId) {
+    const bonId = d.venteId ?? null;
+    const bon = bonId ? await lireBon(bonId, 'client') : null;
+    /* On ne rend que ce qui est entré : plafonné au versé du bon, et à la
+       valeur retournée. Un achat à crédit (rien versé) ne rend rien. */
+    const aRendre = bon
+      ? Math.min(d.valeurTotale, bon.verse)
+      : d.valeurTotale;
+    if (aRendre > 0) {
+      await enregistrerVersement({
+        siteId: d.siteId,
+        userId: params.parUid,
+        /* Pas de compte client : identifiant vide, le nom reste en clair. */
+        partenaireId: '',
+        partenaireNom: d.partenaireNom ?? null,
+        role: 'client',
+        montant: aRendre,
+        date: d.date,
+        motif: 'remboursement',
+        sens: 'sortie',
+        venteId: bonId ?? undefined,
+        reference: d.reference,
+        par: params.parUid,
+        utilisateurNom: params.parNom ?? null,
+        utilisateurFonction: params.utilisateurFonction ?? null,
+        adminUid: params.adminUid ?? null,
+      });
+      rembourse = aRendre;
+    }
+  } else if (d.type !== 'transfert' && d.partenaireId) {
     const role = d.type === 'client' ? 'client' : 'fournisseur';
     const bonId = d.achatId ?? d.venteId ?? null;
     const bon = bonId ? await lireBon(bonId, role) : null;
