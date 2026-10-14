@@ -26,7 +26,7 @@
 
 import {
   collection, query, where, getDocs, addDoc, doc, updateDoc,
-  serverTimestamp,
+  serverTimestamp, runTransaction,
 } from 'firebase/firestore';
 import { db } from './firebase';
 import {
@@ -269,8 +269,40 @@ export async function autoriser(params: {
   const { mouvement: m } = params;
   if (m.etat !== 'en_attente') return;
 
+  /* Verrou atomique contre le double-clic.
+   *
+   * Sans lui, deux clics rapprochés (ou un ré-essai réseau) lisaient tous
+   * les deux `en_attente` — l'état ne changeait qu'à la toute fin — et
+   * écrivaient CHACUN leur mouvement de caisse : un règlement de 500 000 est
+   * ainsi entré deux fois dans le tiroir. La transaction relit l'état sur le
+   * serveur et pose un drapeau en une seule opération : le premier appel le
+   * pose et continue, le second le voit déjà posé et renonce. */
+  try {
+    await runTransaction(db, async (tx) => {
+      const ref = doc(db, 'mouvements_attente', m.id);
+      const snap = await tx.get(ref);
+      const d = snap.data() as any;
+      if (!snap.exists() || d.etat !== 'en_attente' || d.autorisationEnCours === true) {
+        throw new Error('__deja_en_cours__');
+      }
+      tx.update(ref, { autorisationEnCours: true });
+    });
+  } catch (e: any) {
+    /* Un autre clic a déjà pris la main : on ne refait pas l'écriture. */
+    if (e?.message === '__deja_en_cours__') return;
+    throw e;
+  }
+
   const montant = params.montantAutorise ?? m.montant;
-  if (montant < 0) throw new Error('Le montant ne peut pas être négatif.');
+  if (montant < 0) {
+    /* Le verrou est posé : on le relâche avant de refuser, sinon la ligne
+       resterait bloquée sur une erreur de saisie. */
+    await updateDoc(doc(db, 'mouvements_attente', m.id),
+      { autorisationEnCours: false }).catch(() => {});
+    throw new Error('Le montant ne peut pas être négatif.');
+  }
+
+  try {
 
   const jour = aujourdhui();
 
@@ -357,11 +389,23 @@ export async function autoriser(params: {
     constat: params.constat?.trim() || null,
     mouvementCaisseId,
     mouvementEcartId,
+    /* Le verrou a fait son office : la ligne est autorisée. */
+    autorisationEnCours: false,
   });
 
   /* La file a changé : les pastilles la comptent depuis la barre, qui
      n'apprendrait rien sans ce mot. */
   signalerAttente();
+
+  } catch (e) {
+    /* Une écriture a échoué en cours de route : on relâche le verrou pour
+       que l'autorisation puisse être retentée, au lieu de laisser la ligne
+       bloquée. Le mouvement de caisse éventuellement déjà écrit se corrige
+       à part — mais ne pas relâcher ici condamnerait la ligne pour de bon. */
+    await updateDoc(doc(db, 'mouvements_attente', m.id),
+      { autorisationEnCours: false }).catch(() => {});
+    throw e;
+  }
 }
 
 /**
