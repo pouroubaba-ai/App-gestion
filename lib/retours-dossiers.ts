@@ -657,12 +657,15 @@ async function confirmerVraiment(params: {
      versement partait deux fois. */
   /* Le stock ne se rejoue pas : s'il est deja ecrit, on passe. C'est ce
      qui permet de reprendre un dossier interrompu sans faire rentrer la
-     marchandise une seconde fois. */
-  if (d.type !== 'transfert' && d.partenaireId && d.stockEcrit !== true) {
+     marchandise une seconde fois.
+     On ne conditionne PAS au partenaireId : un retour de client de passage
+     (sans compte) remet quand même la marchandise au rayon. L'y lier faisait
+     qu'un tel retour remboursait l'argent sans jamais rentrer le stock. */
+  if (d.type !== 'transfert' && d.stockEcrit !== true) {
     await enregistrerRetour({
       siteId: d.siteId,
       userId: params.parUid,
-      partenaireId: d.partenaireId,
+      partenaireId: d.partenaireId ?? '',
       partenaireNom: d.partenaireNom ?? null,
       role: d.type === 'client' ? 'client' : 'fournisseur',
       lignes: d.lignes.map(l => ({
