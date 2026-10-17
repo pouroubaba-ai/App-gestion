@@ -684,7 +684,7 @@ export default function OngletHistorique({ siteId, userId, sites, titre }: Props
                     /* Un mouvement est un fait, pas une porte : il ne mène ni
                        au produit ni au dossier. On le lit, c'est tout. */
                     <tr key={l.id}
-                      className="border-b border-gray-50 dark:border-gray-800 transition-colors">
+                      className="border-b border-gray-50 dark:border-gray-800 transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/50">
                       <td className="px-3 py-2.5 text-center font-medium text-gray-900 dark:text-gray-100">
                         {l.produitNom}
                         {l.varianteLibelle && <span className="text-gray-400 font-normal"> · {l.varianteLibelle}</span>}
@@ -715,6 +715,32 @@ export default function OngletHistorique({ siteId, userId, sites, titre }: Props
                     </tr>
                   ))}
                 </tbody>
+                {/* Ligne de total : la somme de ce que la liste affiche.
+                    Le libellé occupe toutes les colonnes jusqu'au montant,
+                    le total se lit sous la colonne Total. Le nombre de
+                    colonnes avant le total dépend de la vue (Site en
+                    ensemble, Prix unitaire sur les sorties). */}
+                <tfoot>
+                  <tr className="border-t-2 border-gray-200 bg-gray-50 font-bold dark:border-gray-700 dark:bg-gray-800/40">
+                    {/* Libellé jusqu'à la colonne Emballage : Produit, [Site],
+                        Date, Motif, Partenaire, Fonction, Auteur, Emballage. */}
+                    <td className="px-3 py-3 text-right text-gray-500"
+                      colSpan={8 + (ctx.ensemble ? 1 : 0)}>
+                      Total · {mouvementsAffiches.length} mouvement{mouvementsAffiches.length > 1 ? 's' : ''}
+                    </td>
+                    {/* Somme des quantités, sous la colonne Qté. */}
+                    <td className="px-3 py-3 text-center text-gray-900 dark:text-gray-100">
+                      {formatQte(mouvementsAffiches.reduce((s, l) => s + (l.quantite ?? 0), 0))}
+                    </td>
+                    {/* Coût unitaire : rien à totaliser (c'est un prix, pas une somme). */}
+                    <td className="px-3 py-3" />
+                    {sens === 'sortie' && <td className="px-3 py-3" />}
+                    {/* Somme des totaux, sous la colonne Total. */}
+                    <td className="px-3 py-3 text-center text-gray-900 dark:text-gray-100">
+                      {formatMontant(mouvementsAffiches.reduce((s, l) => s + (l.valeurTotale ?? 0), 0))}
+                    </td>
+                  </tr>
+                </tfoot>
               </table>
             </div>
           )
