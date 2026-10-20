@@ -458,7 +458,12 @@ export default function FicheAchatPage() {
   /* Le cycle suit la marchandise : elle arrive, on la traite, on l'accepte.
      Trois gestes distincts, parce qu'entre chacun il reste quelque chose à
      faire — et que le stock, lui, n'entre qu'à la fin. */
-  const peutReceptionner = achat.etat === 'en_attente';
+  /* Un achat né d'un transfert de dépôt ne se réceptionne pas à la main :
+     sa marchandise arrive par le transfert, qui la fait entrer en stock à
+     sa confirmation. Déclarer reçu l'achat lui-même ferait un double
+     mouvement. Le bouton disparaît donc pour ces achats. */
+  const vientDunTransfert = !!(achat as any).ordreLien?.transfertId;
+  const peutReceptionner = achat.etat === 'en_attente' && !vientDunTransfert;
   const peutTraiter = achat.etat === 'recu';
   /* Confirmer constate l'arrivée de la marchandise : c'est le geste du
      responsable des commandes, jamais celui qui a passé la commande. */
