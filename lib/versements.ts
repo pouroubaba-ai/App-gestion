@@ -104,6 +104,31 @@ export async function couvertureTiers(
     .map(e => ({ id: e.id, date: e.date, verse: e.verse ?? 0, reste: e.reste ?? 0 }))
     .sort((a, b) => a.date.localeCompare(b.date));
 
+  /* Ce qu'un retour a déjà éteint sur chaque dossier, par `deduit` — la
+     même lecture que les soldes et l'imputation. Sans cela, le reste d'un
+     document ignorait la part retournée : il prétendait devoir plus que le
+     dû net, et l'argent s'imputait sur une dette déjà soldée par la
+     marchandise rendue. On ne retire que la part retournée, jamais le
+     document entier. */
+  const deduitParDossier = new Map<string, number>();
+  try {
+    const retSnap = await getDocs(query(
+      collection(db, 'retours_dossiers'),
+      where('siteId', '==', siteId),
+      where('partenaireId', '==', partenaireId)));
+    for (const d of retSnap.docs) {
+      const r = d.data() as any;
+      if (r.etat !== 'recu' && r.etat !== 'livre' && r.etat !== 'traite') continue;
+      const cle = r.venteId ?? r.achatId;
+      const deduit = r.deduit ?? 0;
+      if (!cle || !(deduit > 0)) continue;
+      deduitParDossier.set(cle, (deduitParDossier.get(cle) ?? 0) + deduit);
+    }
+  } catch {
+    /* Sans les retours, on ne réduit pas le reste du document : mieux vaut
+       un reste trop large qu'un versement perdu sur un dossier soldé. */
+  }
+
   const documents = dSnap.docs
     /* Meme regle qu'a l'imputation : seuls les dossiers conclus doivent
        de l'argent. Un devis, une commande pas encore livree ou une vente
@@ -113,11 +138,14 @@ export async function couvertureTiers(
     .map(d => {
       const x = d.data() as any;
       const total = valeurDossier(x, role);
+      /* La part retournée vient grossir le « déjà réglé » du document :
+         total - verse - retour donne ce qu'il reste vraiment à payer. */
+      const retour = deduitParDossier.get(d.id) ?? 0;
       return {
         id: d.id,
         reference: x.reference ?? '—',
         total,
-        verse: x.avanceVersee ?? 0,
+        verse: (x.avanceVersee ?? 0) + retour,
         date: x.dateConfirmation ?? x.dateLivraison ?? x.dateCommande ?? '',
       };
     })
