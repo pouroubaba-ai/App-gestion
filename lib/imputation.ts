@@ -73,6 +73,29 @@ export async function dossiersOuverts(
     where('siteId', '==', siteId),
     where(champ, '==', partenaireId)));
 
+  /* Ce qu'un retour a déjà éteint sur chaque dossier, par `deduit` — la
+     même lecture que les soldes. Sans cela, `reste` ignorait les retours :
+     un versement s'imputait sur un dossier déjà soldé par la marchandise
+     rendue, s'inscrivait dans l'historique, et n'allégeait aucune dette. */
+  const deduitParDossier = new Map<string, number>();
+  try {
+    const retSnap = await getDocs(query(
+      collection(db, 'retours_dossiers'),
+      where('siteId', '==', siteId),
+      where('partenaireId', '==', partenaireId)));
+    for (const d of retSnap.docs) {
+      const r = d.data() as any;
+      if (r.etat !== 'recu' && r.etat !== 'livre' && r.etat !== 'traite') continue;
+      const cle = r.venteId ?? r.achatId;
+      const deduit = r.deduit ?? 0;
+      if (!cle || !(deduit > 0)) continue;
+      deduitParDossier.set(cle, (deduitParDossier.get(cle) ?? 0) + deduit);
+    }
+  } catch {
+    /* Sans les retours, on ne réduit pas le reste : une dette trop large
+       vaut mieux qu'un versement perdu sur un dossier soldé. */
+  }
+
   return snap.docs
     /* Un paiement ne se pose que sur un dossier conclu.
      *
@@ -89,7 +112,8 @@ export async function dossiersOuverts(
     .map(d => {
       const x = d.data() as any;
       const total = valeurLignes(x.lignes ?? [], role, x);
-      const reste = Math.max(0, total - (x.avanceVersee ?? 0));
+      const retour = deduitParDossier.get(d.id) ?? 0;
+      const reste = Math.max(0, total - (x.avanceVersee ?? 0) - retour);
       const date = role === 'fournisseur'
         ? (x.dateConfirmation ?? x.dateReception ?? x.dateCommande ?? null)
         : (x.dateLivraison ?? x.dateCommande ?? null);
