@@ -839,8 +839,13 @@ export default function FicheAchatPage() {
                 confirmation, donc « en attente », « reçu » et « en traitement » s'annulent
                 sans laisser de stock fantôme. Une fois confirmé, la marchandise est en rayon
                 — on ne défait plus par un simple changement d'état. */}
+            {/* Un achat né d'un transfert de dépôt engage le stock d'un autre
+                site : l'annuler touche le dépôt. Le gérant ne doit pas pouvoir
+                l'annuler — seul le propriétaire (role null) le peut. Pour lui,
+                le bouton disparaît. */}
             {achat.etat !== 'confirme' && achat.etat !== 'annule'
-              && peutAnnulerDossier(role as Role | null) && (
+              && peutAnnulerDossier(role as Role | null)
+              && !((achat as any).ordreLien?.transfertId && role === 'gerant') && (
               <button onClick={annuler} disabled={enCours}
                 className="px-4 py-2 text-sm font-bold text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-50 rounded-xl transition-colors">
                 Annuler

@@ -1067,8 +1067,14 @@ export default function FicheVentePage() {
   }
   /* Annuler revient sur un engagement pris envers le client : cela relève
      de qui répond du site, pas de qui fait avancer les dossiers. */
+  /* Un bon de commande lié à un transfert de dépôt engage le stock d'un
+     autre site : l'annuler emporte le transfert et touche le dépôt. Le
+     gérant ne doit donc pas pouvoir l'annuler — seul le propriétaire
+     (role null) le peut. Pour lui, le bouton disparaît. */
+  const lieAUnTransfertDepot = !!(vente as any).ordreLien?.transfertId;
   const peutAnnuler = vente.etat !== 'livre' && vente.etat !== 'annule'
     && peutAnnulerDossier(role as Role | null)
+    && !(lieAUnTransfertDepot && role === 'gerant')
     /* Le bon de commande d'un ordre ne renonce pas de son propre chef :
        il n'a pas de client et ne porte aucune dette, il n'est que l'outil
        de travail de la source. Ce qui s'annule de ce côté, c'est le

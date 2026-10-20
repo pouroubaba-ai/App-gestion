@@ -972,8 +972,16 @@ export default function OngletRecouvrements({ siteId, userId, onCount, sites, ti
     if (!ligneActive) return { promis: 0, poche: null as number | null, plafond: 0 };
     const promis = ligneActive.convenu ?? ligneActive.valeur;
     const restePromis = Math.max(0, promis - ligneActive.verse);
+    /* La dette réelle du client, toutes factures confondues et nette des
+       retours : c'est elle qui commande, jamais la valeur figée de
+       l'échéance. Une échéance créée à 582 000 puis allégée par un retour de
+       96 000 ne doit plus laisser encaisser que 486 000 — sinon le surplus
+       entre en caisse sans éteindre aucune dette. On plafonne donc aussi sur
+       ce dû réel. */
+    const detteReelle = soldes?.[ligneActive.role as Role]
+      ?.get(ligneActive.partenaireId)?.reste ?? restePromis;
     if (ligneActive.role === 'client') {
-      return { promis, poche: null, plafond: restePromis };
+      return { promis, poche: null, plafond: Math.min(restePromis, detteReelle) };
     }
     const poche = enPochePourEcheance(missions, ligneActive.id, userId);
     /* Déjà remis sur cette échéance : ce qui reste en main s'en déduit. */
