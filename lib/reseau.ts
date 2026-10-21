@@ -149,12 +149,23 @@ export async function reprendreVentesComptoir(params: {
     }
   }
 
+  /* DÉSACTIVÉ : la reprise automatique recréait un versement dès qu'une
+     facture portait un `avanceVersee` sans versement en face — ce qui est
+     le cas normal d'un recouvrement, qui impute sur `avanceVersee` sans
+     écrire de versement par facture. Elle fabriquait donc des versements
+     « traceurs » (motif 'vente', hors caisse) qui réapparaissaient après
+     chaque suppression et polluaient l'historique et les totaux.
+     La vraie correction est en amont : que le recouvrement écrive un
+     versement par facture. Tant que ce n'est pas le cas, on ne recolle
+     plus automatiquement — un versement réellement manquant se ressaisit
+     à la main.
   reprises += await recollerVersements({
     ventes: livrees.docs.map(d => ({ id: d.id, ...(d.data() as any) })),
     siteId: params.siteId,
     userId: params.userId,
     auteur,
   });
+  */
 
   return reprises;
 }
