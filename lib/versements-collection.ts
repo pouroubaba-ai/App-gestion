@@ -357,10 +357,29 @@ export async function verserSurTiers(saisie: {
   const cible = saisie.venteId ?? saisie.achatId ?? null;
   if (cible) ouverts = ouverts.filter(o => o.id === cible);
 
+  /* Une avance sur une commande PAS ENCORE LIVRÉE est un cas légitime : le
+     client paie d'avance. Mais une commande non livrée n'est pas une dette
+     (`conclu` ne compte que les ventes livrées), donc elle n'apparaît pas
+     dans `dossiersOuverts` et son plafond tomberait à 0 — l'avance serait
+     refusée. On va alors chercher le reste du dossier visé sur son propre
+     total (valeur − déjà versé − retours), même non conclu. */
+  let resteCible = ouverts[0]?.reste ?? 0;
+  if (cible && ouverts.length === 0) {
+    const { valeurDossier } = await import('./ouverture');
+    const col = saisie.role === 'fournisseur' ? 'achats' : 'ventes';
+    const dSnap = await getDoc(doc(db, col, cible));
+    if (dSnap.exists()) {
+      const x = dSnap.data() as any;
+      const total = valeurDossier(x, saisie.role);
+      resteCible = Math.max(0, total - (x.avanceVersee ?? 0));
+      if (resteCible > 0) {
+        ouverts = [{ id: cible, reference: x.reference ?? null, date: null, reste: resteCible }];
+      }
+    }
+  }
+
   /* Le plafond effectif : la dette globale, ou le reste du seul dossier visé. */
-  const plafond = cible
-    ? (ouverts[0]?.reste ?? 0)
-    : detteGlobale;
+  const plafond = cible ? resteCible : detteGlobale;
   const aImputer = Math.min(saisie.montant, plafond);
   if (aImputer <= 0) return { id: null, impute: 0, plafond };
 
