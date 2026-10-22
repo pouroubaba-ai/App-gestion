@@ -3,7 +3,6 @@ import { useEffect, useRef, useState } from 'react';
 import { useVueUrl } from '@/lib/vue-url';
 import {
   collection, query, where, getDocs, addDoc, updateDoc, deleteDoc, doc, serverTimestamp,
-  increment,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { formatMontant, abregeMontant, dansNJours, ecartJours } from '@/lib/format';
@@ -20,8 +19,7 @@ import {
   type PropsPortee,
 } from './ContexteSites';
 import { lireParSite } from '@/lib/portee';
-import { dossiersOuverts, repartir } from '@/lib/imputation';
-import { ecrireEnCaisse } from '@/lib/ecrire-caisse';
+import { verserSurTiers } from '@/lib/versements-collection';
 import {
   peutPlanifierRecouvrement, peutReglerFournisseur, type RoleSite,
 } from '@/lib/roles';
@@ -521,85 +519,36 @@ export default function OngletRecouvrements({ siteId, userId, onCount, sites, ti
     const val = Math.min(parseFloat(valeurVersement) || 0, bornesVersement.plafond);
     if (!val || val <= 0) return;
     setSavingVersement(true);
-    const newVerse = ligneActive.verse + val;
-    const newReste = Math.max(ligneActive.valeur - newVerse, 0);
     const heure = heureNow();
-
-    /* L'argent encaissé passe par la caisse, et non à côté d'elle.
-     *
-     * Ce versement n'écrivait que dans son journal : la dette baissait,
-     * mais aucun franc n'apparaissait nulle part. Le site ne voyait pas
-     * entrer ce qu'il venait de recevoir, et personne n'avait à rendre
-     * compte de l'avoir porté.
-     *
-     * `ecrireEnCaisse` tranche seul : si le site a un caissier et que ce
-     * n'est pas lui qui saisit, le mouvement part en attente — c'est la
-     * remise, que le caissier confirme en recevant l'argent. Sans
-     * caissier, l'argent entre directement comme avant. C'est ce qui
-     * permet d'ouvrir ce volet à tous les rôles : celui qui encaisse ne
-     * s'atteste plus lui-même.
-     *
-     * Le sens suit qui doit : un client rend ce qu'il devait, c'est une
-     * entrée ; un fournisseur qu'on règle, une sortie. */
     const versClient = ligneActive.role === 'client';
 
-    /* La dette du tiers doit baisser, pas seulement le journal.
-     *
-     * Ce versement n'écrivait que dans `recouvrement_journal` : son
-     * échéance passait à « reste 0 », mais les dossiers du client
-     * gardaient leur `avanceVersee` à zéro — et c'est elle qui fait la
-     * créance. L'écran annonçait donc 13 650 encaissés et 13 650 encore
-     * dus, pour le même argent. Deux comptabilités côte à côte qui ne se
-     * parlaient pas.
-     *
-     * On impute donc les dossiers ouverts, du plus ancien au plus
-     * récent, comme le fait n'importe quel règlement. Et sans attendre
-     * le caissier : le client a payé, sa dette est éteinte à cet
-     * instant. Ce que le caissier confirme, c'est que l'argent est
-     * arrivé au tiroir — pas que le client s'est acquitté. */
-    const imputation = await (async () => {
-      try {
-        /* Le site de l'échéance, jamais la portée : en vue d'ensemble
-           celle-ci couvre plusieurs sites, et les dossiers à imputer
-           sont ceux du site où la créance est née. */
-        const siteEcheance = ligneActive.siteId;
-        if (!siteEcheance) return [];
-        const ouverts = await dossiersOuverts(
-          siteEcheance, ligneActive.partenaireId,
-          ligneActive.role === 'client' ? 'client' : 'fournisseur');
-        return repartir(val, ouverts).parts;
-      } catch { return []; }
-    })();
+    /* Un recouvrement passe désormais par le point d'entrée unique :
+       `verserSurTiers` écrit UN seul versement entier dans `versements`
+       (avec la liste de ses imputations), plafonne sur la dette réelle —
+       retours compris — et écrit la caisse une seule fois. On ne touche
+       plus `recouvrement_versements` ni les `avanceVersee` à la main : la
+       collection `versements` est la seule source de vérité. */
+    const siteEcheance = ligneActive.siteId ?? ctx.siteEcriture ?? '';
+    const { impute } = await verserSurTiers({
+      siteId: siteEcheance,
+      userId,
+      partenaireId: ligneActive.partenaireId,
+      partenaireNom: ligneActive.nomPartenaire ?? null,
+      role: versClient ? 'client' : 'fournisseur',
+      montant: val,
+      date: todayStr(),
+      heure,
+      motif: 'recouvrement',
+      echeanceId: ligneActive.id,
+    });
 
-    await Promise.all([
-      addDoc(collection(db, 'recouvrement_versements'), {
-        journalId: ligneActive.id, siteId: ligneActive.siteId ?? siteId, userId,
-        heure, montant: val, resteApres: newReste,
-        date: todayStr(), createdAt: serverTimestamp(),
-      }),
-      updateDoc(doc(db, 'recouvrement_journal', ligneActive.id), { verse: newVerse, reste: newReste }),
-      /* Chaque dossier reçoit sa part. `increment` additionne sur le
-         serveur : deux versements simultanés s'ajoutent au lieu de
-         s'écraser. */
-      ...imputation.map(part => updateDoc(
-        doc(db, versClient ? 'ventes' : 'achats', part.dossierId),
-        { avanceVersee: increment(part.impute) })),
-      ecrireEnCaisse({
-        siteId: ligneActive.siteId ?? siteId,
-        sens: versClient ? 'entree' : 'sortie',
-        motif: versClient ? 'client' : 'fournisseur',
-        detail: `Recouvrement · ${ligneActive.nomPartenaire ?? '—'}`,
-        montant: val,
-        date: todayStr(),
-        partenaireId: ligneActive.partenaireId,
-        /* Pas de `documentId` : il n'irait avec aucun `documentType`
-           connu — une échéance de recouvrement n'est ni une vente ni un
-           achat — et l'écran qui ouvre le dossier d'une remise chercherait
-           un document introuvable. Le partenaire et le détail suffisent à
-           dire d'où vient l'argent. */
-      } as any, userId),
-    ]);
-    const nouveau: VersementDetail = { id: Date.now().toString(), heure, montant: val, resteApres: newReste };
+    /* L'échéance suit ce qui a vraiment été imputé (jamais plus que le dû). */
+    const newVerse = ligneActive.verse + impute;
+    const newReste = Math.max(ligneActive.valeur - newVerse, 0);
+    await updateDoc(doc(db, 'recouvrement_journal', ligneActive.id),
+      { verse: newVerse, reste: newReste });
+
+    const nouveau: VersementDetail = { id: Date.now().toString(), heure, montant: impute, resteApres: newReste };
     setVersements(prev => [...prev, nouveau]);
     setLigneActive(prev => prev ? { ...prev, verse: newVerse, reste: newReste } : prev);
     setRecouvrements(prev => prev.map(r => r.id === ligneActive.id ? { ...r, verse: newVerse, reste: newReste } : r));

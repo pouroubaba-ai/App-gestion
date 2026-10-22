@@ -17,7 +17,7 @@ import BlocIdentite from '../../components/BlocIdentite';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { formatMontant } from '@/lib/format';
 import {
-  enregistrerVersement, versementsDuDossier,
+  verserSurTiers, versementsDuDossier,
   LIBELLES_MOTIF_VERSEMENT, type Versement,
 } from '@/lib/versements-collection';
 import {
@@ -742,27 +742,29 @@ export default function FicheAchatPage() {
         }, user!.uid, activite?.adminUid ?? null);
       }
 
-      await enregistrerVersement({
-        adminUid: activite?.adminUid ?? null,
+      /* Point d'entrée unique : plafonne sur le RESTE de CET achat, retours
+         compris (le `achatId` borne l'imputation à ce dossier). Hors caisse
+         (origine admin), le tiroir ne bouge pas : seule la dette s'éteint. */
+      const auteurAchat = await auteurCourant(achat!.siteId, user!.uid);
+      const { impute } = await verserSurTiers({
         siteId: achat!.siteId, userId: user!.uid,
-        date: dateVersement,
-        montant: nouveauVersement,
-        /* payer un fournisseur sort de l'argent */
-        sens: 'sortie',
-        /* figé à la saisie : avant réception c'est une avance, après un règlement */
-        motif: achat!.etat === 'confirme' ? 'reglement' : 'avance',
         partenaireId: achat!.fournisseurId ?? '',
         partenaireNom: achat!.fournisseurNom ?? null,
         role: 'fournisseur',
+        montant: nouveauVersement,
+        date: dateVersement,
+        motif: achat!.etat === 'confirme' ? 'reglement' : 'avance',
         achatId,
-        reference: achat!.reference ?? null,
-        par: user!.uid,
-        origine,
-        /* Hors caisse, le tiroir ne bouge pas : seule la dette
-           s'éteint. */
+        adminUid: activite?.adminUid ?? null,
         sansCaisse: origine === 'admin',
-        ...(await auteurCourant(achat!.siteId, user!.uid)),
+        utilisateurNom: auteurAchat.utilisateurNom ?? null,
+        utilisateurFonction: auteurAchat.utilisateurFonction ?? null,
       });
+      if (impute <= 0) {
+        setErreur('Cet achat ne doit plus rien (retours compris).');
+        setEnCours(false);
+        return;
+      }
       setNouveauVersement(0);
       setOrigine('caisse');
       setAvecApport(false);

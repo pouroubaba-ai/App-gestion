@@ -78,9 +78,16 @@ export interface Versement {
   partenaireId: string;
   partenaireNom?: string | null;
   role: RoleTiers;
-  /** le dossier réglé ; l'un ou l'autre, jamais les deux */
+  /** le dossier réglé ; l'un ou l'autre, jamais les deux.
+     Sur un versement global (option 2), ils restent nuls : les factures
+     touchées sont listées dans `imputations`. */
   achatId?: string | null;
   venteId?: string | null;
+  /** Les factures que ce versement a soldées, et à hauteur de combien.
+     Un versement reste UN bloc entier dans l'historique ; cette liste dit,
+     en coulisses, comment il s'est réparti — pour la traçabilité, sans
+     multiplier les lignes. */
+  imputations?: { dossierId: string; reference: string | null; montant: number }[] | null;
   /** l'échéance honorée, quand le motif est `recouvrement` */
   echeanceId?: string | null;
   /** le mouvement de caisse jumeau, pour pouvoir remonter au registre */
@@ -291,6 +298,141 @@ export async function enregistrerVersement(saisie: SaisieVersement): Promise<Ver
   await lot.commit();
 
   return { id: ref.id, ...saisie, heure, mouvementCaisseId } as Versement;
+}
+
+/**
+ * LE point d'entrée unique pour encaisser/régler un tiers.
+ *
+ * Un versement est UN fait entier : il s'écrit comme une seule ligne dans
+ * `versements`, quel que soit le nombre de factures qu'il solde. La liste
+ * `imputations` dit, en coulisses, comment il s'est réparti — l'historique
+ * n'affiche qu'un bloc, la traçabilité reste.
+ *
+ * Trois garde-fous, les mêmes pour tout le monde (fiche d'une facture,
+ * versement global, recouvrement) :
+ *  1. Le montant ne dépasse JAMAIS la dette réelle, retours déduits
+ *     (`soldeTiers.reste` tient déjà compte des retours).
+ *  2. Il s'impute sur les dossiers ouverts, du plus ancien au plus récent,
+ *     dont le reste est déjà net de la part retournée (`dossiersOuverts`).
+ *  3. L'argent passe une seule fois par la caisse.
+ *
+ * `venteId`/`achatId` passé en option ne fait que BORNER l'imputation à ce
+ * dossier (versement depuis la fiche d'une facture) ; sans lui, on règle la
+ * dette globale.
+ */
+export async function verserSurTiers(saisie: {
+  siteId: string;
+  userId: string;
+  partenaireId: string;
+  partenaireNom?: string | null;
+  role: RoleTiers;
+  montant: number;
+  date: string;
+  heure?: string;
+  /** motif du versement ; par défaut 'recouvrement' pour un règlement de dette */
+  motif?: MotifVersement;
+  /** l'échéance de recouvrement honorée, s'il y en a une */
+  echeanceId?: string | null;
+  /** borne l'imputation à CE seul dossier (versement depuis une fiche) */
+  venteId?: string | null;
+  achatId?: string | null;
+  adminUid?: string | null;
+  utilisateurNom?: string | null;
+  utilisateurFonction?: string | null;
+  /** la caisse est écrite ailleurs ; rattacher ce mouvement au lieu d'en créer un */
+  mouvementCaisseId?: string | null;
+  sansCaisse?: boolean;
+}): Promise<{ id: string | null; impute: number; plafond: number }> {
+  if (saisie.montant <= 0) throw new Error('Le montant doit être positif.');
+
+  const { soldeTiers } = await import('./soldes');
+  const { dossiersOuverts } = await import('./imputation');
+
+  /* 1. Plafond : la dette réelle, retours compris. Jamais au-delà. */
+  const solde = await soldeTiers(saisie.siteId, saisie.partenaireId, saisie.role);
+  const detteGlobale = Math.max(0, solde.reste);
+
+  /* 2. Les dossiers à régler, plus ancien d'abord, reste net de retour. */
+  let ouverts = await dossiersOuverts(saisie.siteId, saisie.partenaireId, saisie.role);
+  const cible = saisie.venteId ?? saisie.achatId ?? null;
+  if (cible) ouverts = ouverts.filter(o => o.id === cible);
+
+  /* Le plafond effectif : la dette globale, ou le reste du seul dossier visé. */
+  const plafond = cible
+    ? (ouverts[0]?.reste ?? 0)
+    : detteGlobale;
+  const aImputer = Math.min(saisie.montant, plafond);
+  if (aImputer <= 0) return { id: null, impute: 0, plafond };
+
+  /* Répartition sur les dossiers. */
+  let reste = aImputer;
+  const imputations: { dossierId: string; reference: string | null; montant: number }[] = [];
+  for (const o of ouverts) {
+    if (reste <= 0) break;
+    const part = Math.min(reste, o.reste);
+    if (part <= 0) continue;
+    imputations.push({ dossierId: o.id, reference: o.reference ?? null, montant: part });
+    reste -= part;
+  }
+
+  const sensEntree = saisie.role === 'client';
+  const heure = saisie.heure ?? new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+
+  /* 3. La caisse : une seule fois, sauf si l'appelant l'a déjà écrite. */
+  let mouvementCaisseId = saisie.mouvementCaisseId ?? null;
+  if (!saisie.sansCaisse) {
+    const ecr = await ecrireEnCaisse({
+      siteId: saisie.siteId,
+      sens: sensEntree ? 'entree' : 'sortie',
+      motif: sensEntree ? 'client' : 'fournisseur',
+      sousMotif: 'Recouvrement',
+      detail: saisie.partenaireNom ?? null,
+      montant: aImputer,
+      date: saisie.date,
+      utilisateur: saisie.userId,
+      utilisateurNom: saisie.utilisateurNom ?? null,
+      utilisateurFonction: saisie.utilisateurFonction ?? null,
+      partenaireId: saisie.partenaireId,
+    } as any, saisie.userId, saisie.adminUid ?? null);
+    mouvementCaisseId = ecr?.applique ? ecr.id : null;
+  }
+
+  /* UN seul versement, entier, avec la liste de ses imputations. */
+  const lot = writeBatch(db);
+  const ref = doc(collection(db, 'versements'));
+  lot.set(ref, {
+    siteId: saisie.siteId,
+    userId: saisie.userId,
+    date: saisie.date,
+    heure,
+    montant: aImputer,
+    sens: sensEntree ? 'entree' : 'sortie',
+    motif: saisie.motif ?? 'recouvrement',
+    partenaireId: saisie.partenaireId,
+    partenaireNom: saisie.partenaireNom ?? null,
+    role: saisie.role,
+    achatId: cible && saisie.achatId ? cible : null,
+    venteId: cible && saisie.venteId ? cible : null,
+    imputations,
+    echeanceId: saisie.echeanceId ?? null,
+    mouvementCaisseId,
+    origine: 'caisse',
+    importation: false,
+    par: saisie.userId,
+    utilisateurNom: saisie.utilisateurNom ?? null,
+    utilisateurFonction: saisie.utilisateurFonction ?? null,
+    createdAt: serverTimestamp(),
+  });
+
+  /* Chaque facture reçoit sa part : la dette baisse. increment additionne
+     au serveur, donc deux versements concurrents ne s'écrasent pas. */
+  const col = saisie.role === 'fournisseur' ? 'achats' : 'ventes';
+  for (const im of imputations) {
+    lot.update(doc(db, col, im.dossierId), { avanceVersee: increment(im.montant) });
+  }
+
+  await lot.commit();
+  return { id: ref.id, impute: aImputer, plafond };
 }
 
 /** Tous les versements d'un site, du plus récent au plus ancien. */

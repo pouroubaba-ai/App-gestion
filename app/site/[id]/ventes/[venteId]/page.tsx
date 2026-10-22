@@ -13,7 +13,7 @@ import { auteurCourant, auteurEtape } from '@/lib/auteur';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { formatMontant } from '@/lib/format';
 import {
-  enregistrerVersement, versementsDuDossier, LIBELLES_MOTIF_VERSEMENT,
+  verserSurTiers, versementsDuDossier, LIBELLES_MOTIF_VERSEMENT,
   type Versement,
 } from '@/lib/versements-collection';
 import { ChampNombre, ChampRecherche } from '@/components/Champs';
@@ -873,29 +873,32 @@ export default function FicheVentePage() {
     if (!vente || nouveauVersement <= 0) return;
     setEnCours(true);
     try {
-      await enregistrerVersement({
-        adminUid: activite?.adminUid ?? null,
+      /* Un versement sur la fiche d'une facture passe par le point d'entrée
+         unique : `verserSurTiers` plafonne sur le RESTE de CETTE facture,
+         retours compris (le `venteId` borne l'imputation à ce dossier), et
+         écrit un seul versement dans `versements`. On ne verse jamais plus
+         que ce que la facture doit encore. */
+      const auteur = await auteurCourant(vente.siteId, user!.uid);
+      const { impute } = await verserSurTiers({
         siteId: vente.siteId, userId: user!.uid,
-        date: dateVersement,
-        montant: nouveauVersement,
-        /* encaisser un client fait entrer de l'argent */
-        sens: 'entree',
-        /* Le motif est figé à la saisie, et trois cas se distinguent :
-           tant que la marchandise n'est pas partie, l'argent est en dépôt —
-           c'est une avance ; payé le jour où elle part, il achète — c'est
-           une vente ; payé plus tard, il éteint une dette déjà née — c'est
-           un règlement. */
-        motif: vente.etat !== 'livre' ? 'avance'
-          : dateVersement === (vente.dateLivraison ?? '') ? 'vente'
-          : 'reglement',
         partenaireId: vente.clientId ?? '',
         partenaireNom: vente.clientNom ?? null,
         role: 'client',
+        montant: nouveauVersement,
+        date: dateVersement,
+        motif: vente.etat !== 'livre' ? 'avance'
+          : dateVersement === (vente.dateLivraison ?? '') ? 'vente'
+          : 'reglement',
         venteId,
-        reference: vente.reference ?? null,
-        par: user!.uid,
-        ...(await auteurCourant(vente.siteId, user!.uid)),
+        adminUid: activite?.adminUid ?? null,
+        utilisateurNom: auteur.utilisateurNom ?? null,
+        utilisateurFonction: auteur.utilisateurFonction ?? null,
       });
+      if (impute <= 0) {
+        setErreur('Cette facture ne doit plus rien (retours compris).');
+        setEnCours(false);
+        return;
+      }
       setModalVersement(false);
       setNouveauVersement(0);
       await charger();

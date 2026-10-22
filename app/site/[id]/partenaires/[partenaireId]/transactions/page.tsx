@@ -185,55 +185,29 @@ export default function TransactionsPage() {
 
   useEffect(() => {
     if (!user) return;
-    Promise.all([
-      getDocs(query(
-        collection(db, 'recouvrement_journal'),
-        where('partenaireId', '==', partenaireId),
-        where('siteId', '==', siteId),
-      )),
-      getDocs(query(
-        collection(db, 'recouvrement_versements'),
-        where('siteId', '==', siteId),
-      )),
-      /* Tous les autres versements : avances, règlements, remboursements,
-         retours, compensations. L'onglet ne lisait que les encaissements
-         d'échéance, et annonçait donc « Aucun versement » à un partenaire
-         qui en portait plusieurs — la fiche, elle, les comptait. */
-      getDocs(query(
-        collection(db, 'versements'),
-        where('siteId', '==', siteId),
-        where('partenaireId', '==', partenaireId),
-      )),
-    ]).then(([jSnap, vSnap, ordSnap]) => {
-      const echeances = new Map(jSnap.docs.map(d => [d.id, d.data()]));
-      setVersements(vSnap.docs
-        .map(d => ({ id: d.id, ...d.data() } as any))
-        .filter(v => echeances.has(v.journalId))
-        .map(v => {
-          const e = echeances.get(v.journalId)!;
-          return {
-            id: v.id,
-            date: v.date ?? e.date,
-            heure: v.heure ?? '',
-            montant: v.montant ?? 0,
-            role: e.role as Role,
-            dateEcheance: e.date,
-          } as Versement;
-        })
-        .concat(ordSnap.docs.map(d => {
-          const x = d.data() as any;
-          return {
-            id: d.id,
-            date: x.date ?? '',
-            heure: x.heure ?? '',
-            montant: x.montant ?? 0,
-            role: x.role as Role,
-            motif: x.motif ?? null,
-            reference: x.reference ?? null,
-            utilisateurNom: x.utilisateurNom ?? null,
-            utilisateurFonction: x.utilisateurFonction ?? null,
-          } as Versement;
-        }))
+    /* La collection `versements` est la seule source de vérité : tout
+       versement y vit, quelle que soit son origine (comptoir, règlement,
+       recouvrement). On ne lit plus `recouvrement_versements` — l'ancienne
+       collection dédiée a été migrée. */
+    getDocs(query(
+      collection(db, 'versements'),
+      where('siteId', '==', siteId),
+      where('partenaireId', '==', partenaireId),
+    )).then((snap) => {
+      setVersements(snap.docs.map(d => {
+        const x = d.data() as any;
+        return {
+          id: d.id,
+          date: x.date ?? '',
+          heure: x.heure ?? '',
+          montant: x.montant ?? 0,
+          role: x.role as Role,
+          motif: x.motif ?? null,
+          reference: x.reference ?? null,
+          utilisateurNom: x.utilisateurNom ?? null,
+          utilisateurFonction: x.utilisateurFonction ?? null,
+        } as Versement;
+      })
         /* du plus récent au plus ancien : on vient voir ce qui vient d'entrer */
         .sort((a, b) => (b.date ?? '').localeCompare(a.date ?? '')));
     });
