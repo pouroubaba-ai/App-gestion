@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useVueUrl } from '@/lib/vue-url';
 import {
   collection, query, where, getDocs, addDoc, updateDoc, deleteDoc, doc, serverTimestamp,
+  increment,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { formatMontant, abregeMontant, dansNJours, ecartJours } from '@/lib/format';
@@ -21,7 +22,6 @@ import {
 import { lireParSite } from '@/lib/portee';
 import { dossiersOuverts, repartir } from '@/lib/imputation';
 import { ecrireEnCaisse } from '@/lib/ecrire-caisse';
-import { enregistrerVersement as ecrireVersementDossier } from '@/lib/versements-collection';
 import {
   peutPlanifierRecouvrement, peutReglerFournisseur, type RoleSite,
 } from '@/lib/roles';
@@ -571,35 +571,6 @@ export default function OngletRecouvrements({ siteId, userId, onCount, sites, ti
       } catch { return []; }
     })();
 
-    /* La caisse d'abord, seule : son mouvement porte l'argent, et c'est
-       lui que chaque versement de répartition rattachera. L'écrire en
-       même temps que les versements laisserait ceux-ci sans `mouvementCaisseId`. */
-    const ecritureCaisse = await ecrireEnCaisse({
-      siteId: ligneActive.siteId ?? siteId,
-      sens: versClient ? 'entree' : 'sortie',
-      motif: versClient ? 'client' : 'fournisseur',
-      detail: `Recouvrement · ${ligneActive.nomPartenaire ?? '—'}`,
-      montant: val,
-      date: todayStr(),
-      partenaireId: ligneActive.partenaireId,
-      /* Pas de `documentId` : il n'irait avec aucun `documentType`
-         connu — une échéance de recouvrement n'est ni une vente ni un
-         achat — et l'écran qui ouvre le dossier d'une remise chercherait
-         un document introuvable. Le partenaire et le détail suffisent à
-         dire d'où vient l'argent. */
-    } as any, userId);
-    const mouvementCaisseId = ecritureCaisse?.applique ? ecritureCaisse.id : null;
-
-    /* Un recouvrement s'enregistre maintenant comme n'importe quel
-       versement : UNE ligne par facture imputée, dans la collection
-       `versements`. `enregistrerVersement` incrémente aussi `avanceVersee`
-       du dossier — on ne le fait donc plus à la main ici, sinon le total
-       doublerait. `sansCaisse` évite de réécrire la caisse (déjà faite
-       ci-dessus) et rattache le mouvement déjà créé.
-
-       Avant, le recouvrement n'incrémentait que `avanceVersee` sans
-       écrire de versement : la facture se soldait sans ligne en face, et
-       la reprise automatique « recollait » un versement fantôme. */
     await Promise.all([
       addDoc(collection(db, 'recouvrement_versements'), {
         journalId: ligneActive.id, siteId: ligneActive.siteId ?? siteId, userId,
@@ -607,24 +578,26 @@ export default function OngletRecouvrements({ siteId, userId, onCount, sites, ti
         date: todayStr(), createdAt: serverTimestamp(),
       }),
       updateDoc(doc(db, 'recouvrement_journal', ligneActive.id), { verse: newVerse, reste: newReste }),
-      ...imputation.map(part => ecrireVersementDossier({
-        siteId: ligneActive!.siteId ?? siteId,
-        userId,
-        date: todayStr(),
-        heure,
-        montant: part.impute,
+      /* Chaque dossier reçoit sa part. `increment` additionne sur le
+         serveur : deux versements simultanés s'ajoutent au lieu de
+         s'écraser. */
+      ...imputation.map(part => updateDoc(
+        doc(db, versClient ? 'ventes' : 'achats', part.dossierId),
+        { avanceVersee: increment(part.impute) })),
+      ecrireEnCaisse({
+        siteId: ligneActive.siteId ?? siteId,
         sens: versClient ? 'entree' : 'sortie',
-        motif: 'recouvrement',
-        partenaireId: ligneActive!.partenaireId,
-        partenaireNom: ligneActive!.nomPartenaire ?? null,
-        role: versClient ? 'client' : 'fournisseur',
-        achatId: versClient ? null : part.dossierId,
-        venteId: versClient ? part.dossierId : null,
-        reference: part.reference ?? null,
-        sansCaisse: true,
-        mouvementCaisseId,
-        par: userId,
-      } as any)),
+        motif: versClient ? 'client' : 'fournisseur',
+        detail: `Recouvrement · ${ligneActive.nomPartenaire ?? '—'}`,
+        montant: val,
+        date: todayStr(),
+        partenaireId: ligneActive.partenaireId,
+        /* Pas de `documentId` : il n'irait avec aucun `documentType`
+           connu — une échéance de recouvrement n'est ni une vente ni un
+           achat — et l'écran qui ouvre le dossier d'une remise chercherait
+           un document introuvable. Le partenaire et le détail suffisent à
+           dire d'où vient l'argent. */
+      } as any, userId),
     ]);
     const nouveau: VersementDetail = { id: Date.now().toString(), heure, montant: val, resteApres: newReste };
     setVersements(prev => [...prev, nouveau]);
