@@ -239,8 +239,14 @@ export default function TransactionsPage() {
     });
   }, [user, siteId, partenaireId]);
 
+  /* Un retour de marchandise n'est pas un versement : il n'y a pas eu
+     d'argent, c'est de la marchandise rendue. Il a son propre onglet
+     (colonne Retour, côté Document). L'afficher ici le ferait passer pour
+     un paiement et gonflerait le total des versements. On l'exclut donc de
+     la liste et de son total. */
   const versementsRole = useMemo(
-    () => versements.filter(v => v.role === role), [versements, role]);
+    () => versements.filter(v =>
+      v.role === role && v.motif !== 'retour_marchandise'), [versements, role]);
 
   /* Les lignes du rôle affiché, retours exclus : un retour est un mouvement
      à part, on le montre à côté de ce qu'il annule, pas comme une vente. */
