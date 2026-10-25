@@ -16,7 +16,7 @@ import BlocIdentite from '../../components/BlocIdentite';
 import {
   ArrowLeft,
   Loader2, Check, ArrowDownLeft, Truck, AlertTriangle, ShieldCheck, Package,
-  CheckCheck, Info, Plus, X, Download,
+  CheckCheck, Info, Plus, X, Download, RotateCcw,
 } from 'lucide-react';
 import { exporterPdf } from '@/lib/export-pdf';
 import { useEnteteSite } from '@/lib/use-entete-site';
@@ -111,6 +111,10 @@ export default function FicheTransfertPage() {
      on ne refuse pas en silence — on lui montre l'écart et on lui demande
      s'il veut clore là-dessus. */
   const [modalEcart, setModalEcart] = useState(false);
+  /* Prévient celui qui expédie un écart : le document ira en attente de
+     confirmation du propriétaire avant de partir. */
+  const [modalExpeditionEcart, setModalExpeditionEcart] = useState(false);
+  const [lignesExpedition, setLignesExpedition] = useState<Transfert['lignes']>([]);
   const [enCours, setEnCours] = useState(false);
   const [erreur, setErreur] = useState('');
 
@@ -571,34 +575,42 @@ export default function FicheTransfertPage() {
   async function expedier() {
     /* Un bouton caché n'est pas une règle : la garde tient aussi ici. */
     if (!aDeclareExp) { setErreur('Chargez la marchandise avant d\'expédier.'); return; }
+    const charge = recuParLigne(receptions, 'expedition');
+    const lignes = transfert!.lignes.map((l, i) => ({ ...l, quantiteExpediee: charge[i] ?? 0 }));
+
+    /* Expédier autre chose que le demandé est une décision de répartition
+       qui revient à l'administration. Dès qu'il y a écart et que celui qui
+       expédie ne peut pas arbitrer, on le PRÉVIENT d'abord : un modal lui
+       explique que le document partira en attente de confirmation du
+       propriétaire, et ne sera pas expédié tant que celui-ci n'a pas tranché.
+       Il confirme en connaissance de cause. */
+    const ecarteExpedition = aUnEcartExpedition(lignes);
+    if (ecarteExpedition && !peutArbitrerEcart(ROLE_COURANT)) {
+      setLignesExpedition(lignes);
+      setModalExpeditionEcart(true);
+      return;
+    }
+
+    await appliquerExpedition(lignes, false);
+  }
+
+  /* Écrit l'expédition. `enAttente` vrai : écart non arbitré, le dossier
+     part en « à confirmer » (le stock ne bouge pas, il attend le
+     propriétaire). Faux : expédition de plein droit. */
+  async function appliquerExpedition(lignes: Transfert['lignes'], enAttente: boolean) {
     setEnCours(true); setErreur('');
     try {
-      /* Les quantités se figent ici : elles viennent des déclarations, jamais
-         d'une saisie. C'est le départ qui arrête le compte. */
-      const charge = recuParLigne(receptions, 'expedition');
-      const lignes = transfert!.lignes.map((l, i) => ({ ...l, quantiteExpediee: charge[i] ?? 0 }));
-
-      /* Expédier autre chose que le demandé est une décision de répartition
-         qui revient à l'administration : sans contrôle, le site source
-         pourrait envoyer moins (ou autre) que commandé, sans que personne
-         n'arbitre. Même règle qu'à la réception : dès qu'il y a écart et que
-         celui qui expédie ne peut pas arbitrer, le dossier n'est pas expédié
-         de plein droit — il attend la confirmation du propriétaire. */
-      const ecarteExpedition = aUnEcartExpedition(lignes);
-      if (ecarteExpedition && !peutArbitrerEcart(ROLE_COURANT)) {
-        await updateDoc(doc(db, 'transferts', transfertId), {
-          etat: 'a_confirmer', lignes,
-          dateExpedition: aujourdhui(), parExpedition: user!.uid,
-          ecartExpedition: true,
-        });
-        await charger();
-        return;
-      }
-
-      await updateDoc(doc(db, 'transferts', transfertId), {
-        etat: 'expedie', lignes,
-        dateExpedition: aujourdhui(), parExpedition: user!.uid,
-      });
+      await updateDoc(doc(db, 'transferts', transfertId), enAttente
+        ? {
+            etat: 'a_confirmer', lignes,
+            dateExpedition: aujourdhui(), parExpedition: user!.uid,
+            ecartExpedition: true,
+          }
+        : {
+            etat: 'expedie', lignes,
+            dateExpedition: aujourdhui(), parExpedition: user!.uid,
+          });
+      setModalExpeditionEcart(false);
       await charger();
     } catch (e: any) { setErreur(e?.message ?? 'Échec.'); }
     finally { setEnCours(false); }
@@ -748,6 +760,30 @@ export default function FicheTransfertPage() {
     finally { setEnCours(false); }
   }
 
+  /* L'admin ne valide pas forcément l'écart : il peut refuser l'expédition
+     telle quelle et la renvoyer au responsable de commande pour qu'il la
+     reprenne. Le dossier retombe en « préparation », les quantités
+     expédiées et le drapeau d'écart sont effacés — le responsable recharge
+     et ré-expédie. Réservé à qui peut arbitrer. */
+  async function renvoyerEnTraitement() {
+    if (!transfert || enCours) return;
+    if (!peutArbitrerEcart(ROLE_COURANT)) {
+      setErreur("Renvoyer une expédition revient au propriétaire.");
+      return;
+    }
+    setEnCours(true); setErreur('');
+    try {
+      await updateDoc(doc(db, 'transferts', transfertId), {
+        etat: 'preparation',
+        ecartExpedition: false,
+        dateExpedition: null, parExpedition: null,
+        lignes: transfert.lignes.map(l => ({ ...l, quantiteExpediee: null })),
+      });
+      await charger();
+    } catch (e: any) { setErreur(e?.message ?? 'Échec.'); }
+    finally { setEnCours(false); }
+  }
+
   async function annuler() {
     /* La garde tient aussi ici : cacher le bouton ne protège que l'écran,
        et la fonction reste appelable par d'autres chemins. */
@@ -880,6 +916,13 @@ export default function FicheTransfertPage() {
               <button onClick={arreterComptes} disabled={enCours}
                 className="flex items-center gap-1.5 px-4 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-sm font-bold rounded-xl transition-colors">
                 {enCours ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Confirmer
+              </button>
+            )}
+            {peutConfirmerIci && (transfert as any).ecartExpedition
+              && !(transfert as any).ecartExpeditionValide && (
+              <button onClick={renvoyerEnTraitement} disabled={enCours}
+                className="flex items-center gap-1.5 px-4 py-2 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white text-sm font-bold rounded-xl transition-colors">
+                <RotateCcw size={14} /> Renvoyer au traitement
               </button>
             )}
             {peutConfirmerIci && (
@@ -1788,6 +1831,41 @@ export default function FicheTransfertPage() {
           </div>
         );
       })()}
+
+      {modalExpeditionEcart && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 dark:bg-gray-900">
+            <div className="mb-3 flex items-start gap-2">
+              <AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-500" />
+              <p className="text-sm font-bold text-gray-900 dark:text-gray-100">
+                Expédier une quantité différente de la demande ?
+              </p>
+            </div>
+
+            <p className="mb-4 rounded-xl bg-amber-50 px-3 py-2.5 text-xs leading-snug text-amber-700 dark:bg-amber-900/10 dark:text-amber-400">
+              Ce que vous chargez ne correspond pas à ce qui a été demandé.
+              Le document ne partira pas tout de suite : il passera en attente
+              de confirmation du propriétaire, qui validera l'expédition ou la
+              renverra au traitement. Rien ne sort du stock tant qu'il n'a pas
+              tranché.
+            </p>
+
+            <div className="flex gap-2">
+              <button onClick={() => setModalExpeditionEcart(false)} disabled={enCours}
+                className="flex-1 rounded-xl py-2 text-sm font-bold text-gray-500 transition-colors hover:bg-gray-50 disabled:opacity-40 dark:hover:bg-gray-800">
+                Annuler
+              </button>
+              <button
+                onClick={() => appliquerExpedition(lignesExpedition, true)}
+                disabled={enCours}
+                className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-amber-500 py-2 text-sm font-bold text-white transition-colors hover:bg-amber-600 disabled:opacity-40">
+                {enCours ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+                Envoyer en confirmation
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

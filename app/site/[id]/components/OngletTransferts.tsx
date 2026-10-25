@@ -68,8 +68,23 @@ function formatDate(s?: string | null): string {
    est arrive a bon port, celui qui recoit ce qu'il a fini de compter. Le
    retirer ne cachait pas un geste — il n'y en a plus — mais la preuve que
    le travail a abouti. */
-const ETAPES_ENVOI: EtatTransfert[] = ['en_cours', 'preparation', 'confirme'];
-const ETAPES_RECEPTION: EtatTransfert[] = ['expedie', 'recu', 'traitement', 'confirme'];
+/* `a_confirmer` côté envoi : un transfert dont l'expédition diffère du
+   demandé attend l'arbitrage. Il concerne la source — le responsable de
+   commande qui l'a chargé doit le revoir dans ses dossiers en cours. */
+const ETAPES_ENVOI: EtatTransfert[] = ['en_cours', 'preparation', 'a_confirmer', 'confirme'];
+const ETAPES_RECEPTION: EtatTransfert[] = ['expedie', 'recu', 'traitement', 'a_confirmer', 'confirme'];
+
+/* Un `a_confirmer` d'expédition appartient à la source ; un `a_confirmer`
+   de réception appartient au destinataire. Le départage se fait sur le
+   drapeau `ecartExpedition`. */
+function concerneLenvoi(t: Transfert): boolean {
+  if (t.etat !== 'a_confirmer') return ETAPES_ENVOI.includes(t.etat);
+  return (t as any).ecartExpedition === true && !(t as any).ecartExpeditionValide;
+}
+function concerneLaReception(t: Transfert): boolean {
+  if (t.etat !== 'a_confirmer') return ETAPES_RECEPTION.includes(t.etat);
+  return !((t as any).ecartExpedition === true) || (t as any).ecartExpeditionValide === true;
+}
 
 const EMOJIS_ETAT: Record<EtatTransfert, string> = {
   en_cours: '🕓',
@@ -174,8 +189,8 @@ export default function OngletTransferts({ siteId, userId, sites, role, titre }:
   const duSens = ctx.ensemble
     ? transferts
     : transferts.filter(t => sens === 'transfert'
-        ? dedans.includes(t.siteSourceId)
-        : dedans.includes(t.siteDestId));
+        ? (dedans.includes(t.siteSourceId) && concerneLenvoi(t))
+        : (dedans.includes(t.siteDestId) && concerneLaReception(t)));
 
   const parEtat = (e: EtatTransfert) => duSens.filter(t => t.etat === e);
 
@@ -296,11 +311,11 @@ export default function OngletTransferts({ siteId, userId, sites, role, titre }:
           { cle: 'transfert' as const, label: 'Transferts',
             n: transferts.filter(t => dedans.includes(t.siteSourceId)
               && t.etat !== 'confirme'
-              && ETAPES_ENVOI.includes(t.etat)).length },
+              && concerneLenvoi(t)).length },
           { cle: 'reception' as const, label: 'Réceptions',
             n: transferts.filter(t => dedans.includes(t.siteDestId)
               && t.etat !== 'confirme'
-              && ETAPES_RECEPTION.includes(t.etat)).length },
+              && concerneLaReception(t)).length },
         ]).map(o => (
           <button key={o.cle}
             /* Pas de remise à « En attente » : cette étape n'existe pas du
