@@ -1856,16 +1856,27 @@ export default function FicheTransfertPage() {
             <div className="mb-3 flex items-start gap-2">
               <AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-500" />
               <p className="text-sm font-bold text-gray-900 dark:text-gray-100">
-                Expédier une quantité différente de la demande ?
+                L'expédition diffère de la demande
               </p>
             </div>
 
-            <p className="mb-4 rounded-xl bg-amber-50 px-3 py-2.5 text-xs leading-snug text-amber-700 dark:bg-amber-900/10 dark:text-amber-400">
-              Ce que vous chargez ne correspond pas à ce qui a été demandé.
-              Le document ne partira pas tout de suite : il passera en attente
-              de confirmation du propriétaire, qui validera l'expédition ou la
-              renverra au traitement. Rien ne sort du stock tant qu'il n'a pas
-              tranché.
+            {/* On nomme l'écart, ligne par ligne : demandé → expédié. */}
+            <div className="mb-3 space-y-1">
+              {lignesExpedition
+                .filter(l => l.quantiteExpediee != null
+                  && l.quantiteExpediee !== (l.quantiteDemandee ?? l.quantiteExpediee))
+                .map((l, k) => (
+                  <div key={k} className="flex items-center justify-between rounded-lg bg-gray-50 px-3 py-1.5 text-xs dark:bg-gray-800">
+                    <span className="text-gray-700 dark:text-gray-300">{l.designation}</span>
+                    <span className="font-bold text-amber-600 dark:text-amber-400">
+                      {l.quantiteDemandee} demandé → {l.quantiteExpediee} chargé
+                    </span>
+                  </div>
+                ))}
+            </div>
+
+            <p className="mb-4 text-xs text-gray-500 dark:text-gray-400">
+              Le document partira en attente de confirmation du propriétaire.
             </p>
 
             <div className="flex gap-2">
