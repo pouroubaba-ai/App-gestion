@@ -700,6 +700,27 @@ export function aUnEcartExpedition(lignes: LigneFlux[]): boolean {
 }
 
 /**
+ * Le compte des produits en écart À L'EXPÉDITION : demandé vs expédié.
+ * À ce stade la marchandise n'est pas reçue — comparer au reçu (comme
+ * `produitsEnEcart`) inventerait un manque total. Un produit manque ici
+ * seulement si l'expédié est inférieur au demandé ; il est en surplus s'il
+ * dépasse.
+ */
+export function produitsEnEcartExpedition(
+  lignes: LigneFlux[] | null | undefined,
+): { manque: number; surplus: number } {
+  return (lignes ?? []).reduce((acc, l) => {
+    if (l.quantiteExpediee == null) return acc;
+    const demande = l.quantiteDemandee ?? l.quantiteExpediee;
+    const expedie = l.quantiteExpediee;
+    if (expedie === demande) return acc;
+    return expedie < demande
+      ? { ...acc, manque: acc.manque + 1 }
+      : { ...acc, surplus: acc.surplus + 1 };
+  }, { manque: 0, surplus: 0 });
+}
+
+/**
  * L'écart se lit dans deux sens opposés qu'il ne faut pas compenser :
  * un fournisseur qui livre systématiquement moins ne pose pas le même
  * problème qu'un qui livre trop. Additionnés, les deux s'annuleraient

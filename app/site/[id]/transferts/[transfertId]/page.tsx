@@ -22,7 +22,8 @@ import { exporterPdf } from '@/lib/export-pdf';
 import { useEnteteSite } from '@/lib/use-entete-site';
 import {
   Transfert, EtatTransfert, LIBELLES_TRANSFERT,
-  ecartValeur, aUnEcart, aUnEcartExpedition, lignesEnEcart, produitsEnEcart, confirmerTransfert,
+  ecartValeur, aUnEcart, aUnEcartExpedition, lignesEnEcart, produitsEnEcart,
+  produitsEnEcartExpedition, confirmerTransfert,
   peutExpedier, peutRecevoir, peutArbitrerEcart, peutAnnulerTransfert, Role,
   libelleTransfert, valeurEnvoyee,
 } from '@/lib/flux-marchandise';
@@ -364,9 +365,14 @@ export default function FicheTransfertPage() {
   }
 
   /* L'étape que les déclarations alimentent, selon où en est le dossier :
-     la source charge avant l'expédition, le destinataire compte après. */
+     la source charge avant l'expédition, le destinataire compte après.
+     Un « à confirmer » né d'un écart d'expédition reste du côté expédition
+     (la marchandise n'est pas partie, rien n'a été reçu) — sinon le compte
+     se ferait sur le reçu inexistant et afficherait de faux manques. */
   const etapeCourante: 'expedition' | 'reception' =
-    (transfert?.etat === 'en_cours' || transfert?.etat === 'preparation')
+    (transfert?.etat === 'en_cours' || transfert?.etat === 'preparation'
+      || (transfert?.etat === 'a_confirmer' && (transfert as any).ecartExpedition
+          && !(transfert as any).ecartExpeditionValide))
       ? 'expedition' : 'reception';
 
   /**
@@ -1060,15 +1066,27 @@ export default function FicheTransfertPage() {
         )}
 
         {transfert.etat === 'a_confirmer' && (transfert as any).ecartExpedition
-          && !(transfert as any).ecartExpeditionValide && (
-          <div className="flex items-start gap-2 px-4 py-3 mb-4 bg-purple-50 dark:bg-purple-900/10 border border-purple-200 dark:border-purple-800/30 rounded-2xl">
-            <ShieldCheck size={15} className="text-purple-500 shrink-0 mt-0.5" />
-            <p className="text-xs text-purple-700 dark:text-purple-400">
-              La quantité expédiée diffère de ce qui a été demandé. L'expédition
-              attend la validation du propriétaire avant de partir.
-            </p>
-          </div>
-        )}
+          && !(transfert as any).ecartExpeditionValide && (() => {
+          /* Le compte se fait sur demandé vs expédié — jamais sur le reçu,
+             qui n'existe pas encore à ce stade. */
+          const { manque, surplus } = produitsEnEcartExpedition(transfert.lignes);
+          return (
+            <div className="flex items-start gap-2 px-4 py-3 mb-4 bg-purple-50 dark:bg-purple-900/10 border border-purple-200 dark:border-purple-800/30 rounded-2xl">
+              <ShieldCheck size={15} className="text-purple-500 shrink-0 mt-0.5" />
+              <div className="text-xs text-purple-700 dark:text-purple-400">
+                <p className="mb-0.5 font-bold">
+                  Expédition différente de la demande
+                  {manque > 0 && <> · {manque} en moins</>}
+                  {surplus > 0 && <> · {surplus} en surplus</>}
+                </p>
+                <p>
+                  L'expédition attend la validation du propriétaire avant de
+                  partir. Il peut la valider ou la renvoyer au traitement.
+                </p>
+              </div>
+            </div>
+          );
+        })()}
         {transfert.etat === 'a_confirmer' && !(transfert as any).ecartExpedition && (
           <div className="flex items-start gap-2 px-4 py-3 mb-4 bg-purple-50 dark:bg-purple-900/10 border border-purple-200 dark:border-purple-800/30 rounded-2xl">
             <ShieldCheck size={15} className="text-purple-500 shrink-0 mt-0.5" />
