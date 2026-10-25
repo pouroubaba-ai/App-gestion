@@ -680,6 +680,26 @@ export function aUnEcart(lignes: LigneFlux[]): boolean {
 }
 
 /**
+ * L'écart à l'EXPÉDITION : ce que la source charge, comparé à ce qui a été
+ * demandé. Le site qui expédie peut envoyer autre chose que le demandé —
+ * sans contrôle, il décide seul d'une répartition qui revient à
+ * l'administration. On le traite comme l'écart de réception : dès qu'il
+ * existe, le transfert attend l'arbitrage du propriétaire.
+ */
+export function lignesEnEcartExpedition(
+  lignes: LigneFlux[] | null | undefined,
+): LigneFlux[] {
+  return (lignes ?? []).filter(l =>
+    l.quantiteExpediee != null &&
+    l.quantiteExpediee !== (l.quantiteDemandee ?? l.quantiteExpediee)
+  );
+}
+
+export function aUnEcartExpedition(lignes: LigneFlux[]): boolean {
+  return lignesEnEcartExpedition(lignes).length > 0;
+}
+
+/**
  * L'écart se lit dans deux sens opposés qu'il ne faut pas compenser :
  * un fournisseur qui livre systématiquement moins ne pose pas le même
  * problème qu'un qui livre trop. Additionnés, les deux s'annuleraient

@@ -22,7 +22,7 @@ import { exporterPdf } from '@/lib/export-pdf';
 import { useEnteteSite } from '@/lib/use-entete-site';
 import {
   Transfert, EtatTransfert, LIBELLES_TRANSFERT,
-  ecartValeur, aUnEcart, lignesEnEcart, produitsEnEcart, confirmerTransfert,
+  ecartValeur, aUnEcart, aUnEcartExpedition, lignesEnEcart, produitsEnEcart, confirmerTransfert,
   peutExpedier, peutRecevoir, peutArbitrerEcart, peutAnnulerTransfert, Role,
   libelleTransfert, valeurEnvoyee,
 } from '@/lib/flux-marchandise';
@@ -577,6 +577,24 @@ export default function FicheTransfertPage() {
          d'une saisie. C'est le départ qui arrête le compte. */
       const charge = recuParLigne(receptions, 'expedition');
       const lignes = transfert!.lignes.map((l, i) => ({ ...l, quantiteExpediee: charge[i] ?? 0 }));
+
+      /* Expédier autre chose que le demandé est une décision de répartition
+         qui revient à l'administration : sans contrôle, le site source
+         pourrait envoyer moins (ou autre) que commandé, sans que personne
+         n'arbitre. Même règle qu'à la réception : dès qu'il y a écart et que
+         celui qui expédie ne peut pas arbitrer, le dossier n'est pas expédié
+         de plein droit — il attend la confirmation du propriétaire. */
+      const ecarteExpedition = aUnEcartExpedition(lignes);
+      if (ecarteExpedition && !peutArbitrerEcart(ROLE_COURANT)) {
+        await updateDoc(doc(db, 'transferts', transfertId), {
+          etat: 'a_confirmer', lignes,
+          dateExpedition: aujourdhui(), parExpedition: user!.uid,
+          ecartExpedition: true,
+        });
+        await charger();
+        return;
+      }
+
       await updateDoc(doc(db, 'transferts', transfertId), {
         etat: 'expedie', lignes,
         dateExpedition: aujourdhui(), parExpedition: user!.uid,
@@ -698,6 +716,27 @@ export default function FicheTransfertPage() {
        bloquerait un dossier que plus personne ne discute. */
     setEnCours(true); setErreur('');
     try {
+      /* Un « à confirmer » d'EXPÉDITION n'est pas une clôture : la
+         marchandise vient de partir, elle n'est pas encore reçue. L'admin
+         valide seulement que la source avait le droit d'expédier autre
+         chose que le demandé — le dossier reprend alors son cours normal
+         vers la réception. On ne touche pas au stock ici (il ne bouge qu'à
+         la confirmation finale, après réception). */
+      if (transfert!.etat === 'a_confirmer' && (transfert as any).ecartExpedition) {
+        if (!peutArbitrerEcart(ROLE_COURANT)) {
+          setErreur("Valider un écart d'expédition revient au propriétaire.");
+          setEnCours(false);
+          return;
+        }
+        await updateDoc(doc(db, 'transferts', transfertId), {
+          etat: 'expedie',
+          ecartExpeditionValide: true,
+        });
+        await charger();
+        setEnCours(false);
+        return;
+      }
+
       await confirmerTransfert({
         transfert: transfert!, userId: user!.uid, par: user!.uid,
         noteArbitrage: transfert!.noteArbitrage ?? (noteArbitrage.trim() || null),
@@ -846,7 +885,9 @@ export default function FicheTransfertPage() {
             {peutConfirmerIci && (
               <button onClick={confirmer} disabled={enCours}
                 className="flex items-center gap-1.5 px-4 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-sm font-bold rounded-xl transition-colors">
-                {enCours ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Confirmer
+                {enCours ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+                {(transfert as any).ecartExpedition && !(transfert as any).ecartExpeditionValide
+                  ? "Valider l'expédition" : 'Confirmer'}
               </button>
             )}
           </div>
@@ -975,7 +1016,17 @@ export default function FicheTransfertPage() {
           </div>
         )}
 
-        {transfert.etat === 'a_confirmer' && (
+        {transfert.etat === 'a_confirmer' && (transfert as any).ecartExpedition
+          && !(transfert as any).ecartExpeditionValide && (
+          <div className="flex items-start gap-2 px-4 py-3 mb-4 bg-purple-50 dark:bg-purple-900/10 border border-purple-200 dark:border-purple-800/30 rounded-2xl">
+            <ShieldCheck size={15} className="text-purple-500 shrink-0 mt-0.5" />
+            <p className="text-xs text-purple-700 dark:text-purple-400">
+              La quantité expédiée diffère de ce qui a été demandé. L'expédition
+              attend la validation du propriétaire avant de partir.
+            </p>
+          </div>
+        )}
+        {transfert.etat === 'a_confirmer' && !(transfert as any).ecartExpedition && (
           <div className="flex items-start gap-2 px-4 py-3 mb-4 bg-purple-50 dark:bg-purple-900/10 border border-purple-200 dark:border-purple-800/30 rounded-2xl">
             <ShieldCheck size={15} className="text-purple-500 shrink-0 mt-0.5" />
             <p className="text-xs text-purple-700 dark:text-purple-400">
