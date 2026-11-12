@@ -110,6 +110,10 @@ const ONGLETS_PAR_ROLE: Record<RoleSite, string[] | null> = {
   commandes: [
     'cycle-vente', 'achats', 'importations', 'transferts', 'retours',
     'mouvements-stock',
+    /* L'historique des mouvements de marchandise de son site : ce qui est
+       entré, ce qui est sorti, par quel document. La marge et le coût y
+       sont masqués — il suit la marchandise, pas l'argent. */
+    'historique',
   ],
   /* Trois écrans pour un seul métier : ce qu'il y a dans le tiroir, ce qui
      y est passé, ce qui attend d'y entrer. Le caissier travaille au

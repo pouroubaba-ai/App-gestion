@@ -14,9 +14,14 @@ import {
   type PropsPortee,
 } from './ContexteSites';
 import { lireParSite } from '@/lib/portee';
+import type { RoleSite } from '@/lib/roles';
 
 interface Props extends PropsPortee {
   userId: string;
+  /* Le rôle de qui regarde. Le responsable des commandes suit la
+     marchandise, pas l'argent : on lui montre les mouvements, mais ni la
+     marge ni le coût — ce sont les chiffres du propriétaire. */
+  role?: RoleSite | null;
 }
 
 type Sens = 'entree' | 'sortie';
@@ -135,7 +140,11 @@ function formatQte(n: number): string {
   return Math.trunc(n).toLocaleString('fr-FR');
 }
 
-export default function OngletHistorique({ siteId, userId, sites, titre }: Props) {
+export default function OngletHistorique({ siteId, userId, sites, titre, role }: Props) {
+  /* Le responsable des commandes ne voit ni marge ni coût : son métier est
+     la marchandise qui circule, pas ce qu'elle rapporte. Les autres (admin,
+     gérant) gardent la vue complète. */
+  const montreArgent = role !== 'commandes';
   const ctx = useSites(siteId, sites);
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -539,9 +548,9 @@ export default function OngletHistorique({ siteId, userId, sites, titre }: Props
                 vide: c.entrees === 0, ton: 'text-green-600' },
               { label: `Sorties · ${c.nbSorties}`, valeur: formatMontant(c.sorties),
                 vide: c.sorties === 0, ton: 'text-gray-900 dark:text-gray-100' },
-              { label: 'Marge', valeur: formatMontant(c.marge),
+              ...(montreArgent ? [{ label: 'Marge', valeur: formatMontant(c.marge),
                 vide: c.marge === 0,
-                ton: c.marge < 0 ? 'text-red-500' : 'text-green-600' },
+                ton: c.marge < 0 ? 'text-red-500' : 'text-green-600' }] : []),
             ],
           };
         }} />
@@ -670,7 +679,9 @@ export default function OngletHistorique({ siteId, userId, sites, titre }: Props
                     <th className="text-center px-3 py-2.5 font-medium">Auteur</th>
                     <th className="text-center px-3 py-2.5 font-medium">Emballage</th>
                     <Th cle="quantite" label="Qté" />
-                    <th className="text-center px-3 py-2.5 font-medium">Coût unitaire</th>
+                    {montreArgent && (
+                      <th className="text-center px-3 py-2.5 font-medium">Coût unitaire</th>
+                    )}
                     {/* Une sortie se valorise au prix obtenu : sans lui, la
                         ligne ne dit pas ce que la vente a rapporté. */}
                     {sens === 'sortie' && (
@@ -705,7 +716,9 @@ export default function OngletHistorique({ siteId, userId, sites, titre }: Props
                           voisine : montrer les unités de base à côté du mot
                           « carton » ferait lire vingt-huit cartons pour un. */}
                       <td className="px-3 py-2.5 text-center text-gray-900 dark:text-gray-100">{formatQte(l.quantite)}</td>
-                      <td className="px-3 py-2.5 text-center text-gray-500">{formatMontant(l.cout ?? l.valeurUnitaire)}</td>
+                      {montreArgent && (
+                        <td className="px-3 py-2.5 text-center text-gray-500">{formatMontant(l.cout ?? l.valeurUnitaire)}</td>
+                      )}
                       {sens === 'sortie' && (
                         <td className="px-3 py-2.5 text-center text-gray-900 dark:text-gray-100">
                           {formatMontant(l.valeurUnitaire)}
@@ -733,7 +746,7 @@ export default function OngletHistorique({ siteId, userId, sites, titre }: Props
                       {formatQte(mouvementsAffiches.reduce((s, l) => s + (l.quantite ?? 0), 0))}
                     </td>
                     {/* Coût unitaire : rien à totaliser (c'est un prix, pas une somme). */}
-                    <td className="px-3 py-3" />
+                    {montreArgent && <td className="px-3 py-3" />}
                     {sens === 'sortie' && <td className="px-3 py-3" />}
                     {/* Somme des totaux, sous la colonne Total. */}
                     <td className="px-3 py-3 text-center text-gray-900 dark:text-gray-100">
@@ -771,7 +784,7 @@ export default function OngletHistorique({ siteId, userId, sites, titre }: Props
                     {/* Ce que le document a laissé. Il n'existe que sur une
                         sortie : une entrée fait rentrer de la marchandise, elle
                         ne dégage rien tant qu'elle n'est pas revendue. */}
-                    {sens === 'sortie' && (
+                    {sens === 'sortie' && montreArgent && (
                       <th className="text-center px-3 py-2.5 font-medium">Marge</th>
                     )}
                     <Th cle="valeur" label="Total" />
@@ -803,7 +816,7 @@ export default function OngletHistorique({ siteId, userId, sites, titre }: Props
                       </td>
                       <td className="px-3 py-2.5 text-center text-gray-500">{formatDate(d.date)}</td>
                       <td className="px-3 py-2.5 text-center text-gray-900 dark:text-gray-100">{d.produits}</td>
-                      {sens === 'sortie' && (
+                      {sens === 'sortie' && montreArgent && (
                         <td className={`px-3 py-2.5 text-center font-bold ${d.marge < 0
                           ? 'text-red-500'
                           : d.marge > 0 ? 'text-green-600' : 'text-gray-300 dark:text-gray-700'}`}>

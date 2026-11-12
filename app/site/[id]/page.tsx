@@ -443,7 +443,7 @@ export default function SiteFichePage() {
           {ongletCourant === 'importations' && (
             <OngletImportations siteId={siteId} userId={user!.uid} role={role} />
           )}
-          {ongletCourant === 'historique' && <OngletHistorique siteId={siteId} userId={user!.uid} />}
+          {ongletCourant === 'historique' && <OngletHistorique siteId={siteId} userId={user!.uid} role={role} />}
           {ongletCourant === 'cycle-vente' && (
             <OngletCycleVente siteId={siteId} userId={user!.uid} role={role} />
           )}
