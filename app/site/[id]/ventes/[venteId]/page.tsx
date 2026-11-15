@@ -535,7 +535,16 @@ export default function FicheVentePage() {
     if (!vente || lignePreparee == null || qtePreparee <= 0) return;
     const l = vente.lignes[lignePreparee];
     const i = lignePreparee;
-    const quantite = qtePreparee;
+    /* On ne prépare jamais plus que la commande : les préparations
+       s'additionnent, donc on borne au reste à préparer. Préparer au-delà
+       ferait sortir d'un transfert d'ordre une marchandise que la commande
+       du client ne justifie pas. */
+    const resteAPreparer = Math.max(0, (l.quantiteDemandee ?? 0) - (prepareParIdx[i] ?? 0));
+    if (resteAPreparer <= 0) {
+      setErreur('Cette ligne est déjà entièrement préparée.');
+      return;
+    }
+    const quantite = Math.min(qtePreparee, resteAPreparer);
     const note = notePreparee.trim() || null;
     const date = aujourdhui();
 
@@ -707,9 +716,13 @@ export default function FicheVentePage() {
            la clôture du bon suit la confirmation. */
         await updateDoc(doc(db, 'transferts', lienOrdre.transfertId), {
           /* Ce qui part est ce qui a ete prepare, pas ce qui a ete
-             demande. */
+             demande — mais JAMAIS plus que demande. Un ordre n'existe que
+             pour servir la commande du client : en sortir davantage ferait
+             quitter le depot une marchandise que rien ne justifie. On peut
+             preparer moins (rupture), jamais plus que la commande. */
           lignes: vente.lignes.map(l => {
-            const remis = l.quantiteRecue ?? l.quantiteDemandee;
+            const prepare = l.quantiteRecue ?? l.quantiteDemandee;
+            const remis = Math.min(prepare, l.quantiteDemandee ?? prepare);
             return { ...l, quantiteExpediee: remis, quantiteRecue: remis };
           }),
         });
