@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState, Fragment } from 'react';
+import { useEffect, useState, useRef, Fragment } from 'react';
 import {
   doc, getDoc, updateDoc, addDoc, collection, serverTimestamp, query, where, getDocs,
 } from 'firebase/firestore';
@@ -133,6 +133,10 @@ export default function FicheVentePage() {
       .then(setRole).catch(() => {}).finally(() => setRoleLu(true));
   }, [user, siteId, activite?.adminUid]);
   const [enCours, setEnCours] = useState(false);
+  /* Verrou ciblé pour « compléter » : un ref, pas un state, pour bloquer le
+     second clic sans attendre un re-rendu (deux clics peuvent partir dans le
+     même tick). */
+  const completerEnCours = useRef(false);
   /* Ce qui reste dû par le client une fois livré. Tant qu'il est posé, on
      demande comment cette créance sera recouvrée. */
   const [aPlanifier, setAPlanifier] = useState<number | null>(null);
@@ -422,8 +426,12 @@ export default function FicheVentePage() {
   async function completer(ligneIndex: number | null) {
     /* Une écriture en cours n'a pas encore rafraîchi l'affichage : le bouton
        montre toujours l'ancien reste. Sans cette garde, deux clics rapides
-       déclarent deux fois la même chose. */
-    if (!vente || enCours) return;
+       déclarent deux fois la même chose.
+       Le verrou ciblé `completerEnCours` bloque le second déclenchement sans
+       geler tout l'écran (on avait retiré le `enCours` global pour ça). Le
+       plafond serveur reste le vrai filet : il tranche même deux appareils. */
+    if (!vente || enCours || completerEnCours.current) return;
+    completerEnCours.current = true;
     /* Une ligne sans stock n'est pas une erreur : on complète ce qu'on peut
        et on laisse le reste manquant. */
     const dejaPris: Record<string, number> = {};
@@ -438,7 +446,7 @@ export default function FicheVentePage() {
       aEcrire.push({ i, quantite: q });
     });
 
-    if (aEcrire.length === 0) return;
+    if (aEcrire.length === 0) { completerEnCours.current = false; return; }
     const date = aujourdhui();
 
     /* Silence et vitesse : on inscrit les préparations à l'écran tout de
@@ -482,6 +490,8 @@ export default function FicheVentePage() {
           varianteCle: l.varianteCle ?? null,
           designation: l.designation,
           quantite,
+          /* Le plafond : on ne prépare jamais plus que la commande. */
+          quantiteDemandee: l.quantiteDemandee,
           ...emballageDe(l, quantite),
           date,
           utilisateur: user!.uid,
@@ -497,6 +507,8 @@ export default function FicheVentePage() {
     } catch (e: any) {
       setPreparations(p => p.filter(x => !tmpIds.has(x.id)));
       setErreur(e?.message ?? 'Enregistrement impossible.');
+    } finally {
+      completerEnCours.current = false;
     }
   }
 
@@ -574,6 +586,8 @@ export default function FicheVentePage() {
         varianteCle: l.varianteCle ?? null,
         designation: l.designation,
         quantite,
+        /* Le plafond : on ne prépare jamais plus que la commande. */
+        quantiteDemandee: l.quantiteDemandee,
         ...emballageDe(l, quantite),
         date,
         utilisateur: user!.uid,

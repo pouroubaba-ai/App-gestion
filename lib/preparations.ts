@@ -1,6 +1,6 @@
 import {
   collection, query, where, getDocs, addDoc, updateDoc, doc,
-  serverTimestamp,
+  serverTimestamp, runTransaction,
 } from 'firebase/firestore';
 import { db } from './firebase';
 import type { Auteur } from './auteur';
@@ -60,7 +60,11 @@ export interface Preparation {
 
 export type SaisiePreparation =
   Omit<Preparation, 'id' | 'heure' | 'annulee' | 'annuleeLe' | 'annuleePar'>
-  & { heure?: string };
+  & { heure?: string;
+      /* Le plafond : on ne prépare jamais plus que la commande. Fourni par
+         l'appelant (la quantité demandée de la ligne). Sans lui, pas de
+         plafond — compatible avec les écritures qui ne le passent pas. */
+      quantiteDemandee?: number };
 
 function maintenant() {
   return new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
@@ -69,9 +73,51 @@ function maintenant() {
 /** Enregistre une préparation. Elle s'ajoute, elle ne remplace rien. */
 export async function enregistrerPreparation(saisie: SaisiePreparation): Promise<string> {
   if (saisie.quantite <= 0) throw new Error('La quantité doit être positive.');
+  const { quantiteDemandee, ...aEcrire } = saisie;
+
+  /* Le plafond au CUMUL, côté serveur, dans une transaction.
+   *
+   * Le champ à l'écran borne un geste, mais pas la somme de plusieurs : un
+   * double-clic, ou deux appareils, laissaient deux préparations de 20
+   * passer pour une commande de 20 — et 40 quittaient le dépôt. La
+   * transaction relit toutes les préparations non annulées de la ligne,
+   * les additionne, et refuse ce qui dépasserait la demande. Deux clics
+   * concurrents ne peuvent plus se croiser : le second voit le premier. */
+  if (quantiteDemandee != null) {
+    const dejaQ = query(
+      collection(db, 'preparations'),
+      where('documentId', '==', saisie.documentId),
+      where('ligneIndex', '==', saisie.ligneIndex));
+    const dejaSnap = await getDocs(dejaQ);
+    const ref = doc(collection(db, 'preparations'));
+    await runTransaction(db, async (tx) => {
+      /* On relit chaque préparation dans la transaction : c'est elle qui
+         rend la somme fiable face à deux écritures simultanées. */
+      let deja = 0;
+      for (const d of dejaSnap.docs) {
+        const fresh = await tx.get(d.ref);
+        const x = fresh.data() as any;
+        if (fresh.exists() && !x?.annulee) deja += x?.quantite ?? 0;
+      }
+      const reste = Math.max(0, quantiteDemandee - deja);
+      if (saisie.quantite > reste) {
+        throw new Error(
+          reste <= 0
+            ? 'Cette ligne est déjà entièrement préparée.'
+            : `Au plus ${reste} à préparer sur cette ligne (${deja} déjà préparé).`);
+      }
+      tx.set(ref, {
+        ...aEcrire,
+        heure: saisie.heure ?? maintenant(),
+        annulee: false, annuleeLe: null, annuleePar: null,
+        createdAt: serverTimestamp(),
+      });
+    });
+    return ref.id;
+  }
 
   const ref = await addDoc(collection(db, 'preparations'), {
-    ...saisie,
+    ...aEcrire,
     heure: saisie.heure ?? maintenant(),
     annulee: false,
     annuleeLe: null,
