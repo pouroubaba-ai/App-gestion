@@ -43,6 +43,9 @@ interface Mouvement {
   prixVente: number;
   date: string;
   nomPartenaire?: string;
+  /* Le nom figé sur la ligne au moment du geste. C'est lui qui garde la
+     mémoire d'un partenaire supprimé : la fiche disparaît, pas l'archive. */
+  partenaireNom?: string | null;
   /* le dossier d'origine ; absent des lignes saisies à la main */
   achatId?: string | null;
   venteId?: string | null;
@@ -354,7 +357,14 @@ export default function TransactionsSitePage() {
       setPartenaires(parts);
       setMouvements(movDocs.map(d => {
         const data = { id: d.id, ...d.data() } as Mouvement;
-        return { ...data, nomPartenaire: nomMap.get(data.partenaireId) ?? '—' };
+        /* On préfère la fiche (nom à jour), mais on retombe sur le nom figé
+           sur la ligne quand le partenaire a été supprimé : sa dette et son
+           histoire restent lisibles, au lieu d'un « — » anonyme. */
+        return {
+          ...data,
+          nomPartenaire: nomMap.get(data.partenaireId)
+            ?? (data as any).partenaireNom ?? '—',
+        };
       }));
 
       setVerseParDoc(Object.fromEntries([
